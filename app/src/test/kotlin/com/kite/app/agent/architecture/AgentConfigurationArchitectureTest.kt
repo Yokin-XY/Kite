@@ -30,8 +30,30 @@ class AgentConfigurationArchitectureTest {
             }
 
         assertTrue(
-            "显示层不得绕过 AgentConfigurationApi：\n${violations.joinToString("\n")}",
+            "显示层不得绕过 Agent SDK 端口：\n${violations.joinToString("\n")}",
             violations.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `runsurface provider actions use catalog api instead of native configuration api`() {
+        val source = source(
+            "app/src/main/java/com/kite/app/feature/runsurface/RunAgentSurfaceBinding.kt",
+        ).readText()
+        val forbidden = listOf(
+            "AgentConfigurationIntent.ConfigureProvider",
+            "AgentConfigurationIntent.RemoveProvider",
+            "AgentConfigurationIntent.SelectModel",
+        )
+        val violations = forbidden.filter(source::contains)
+
+        assertTrue(
+            "Provider 保存、删除和选择只能进入 AgentProviderCatalogApi：$violations",
+            violations.isEmpty(),
+        )
+        assertTrue(
+            "显示层必须依赖统一 Provider 目录端口",
+            source.contains("AgentProviderCatalogApi"),
         )
     }
 

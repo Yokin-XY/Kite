@@ -15,7 +15,8 @@ import org.json.JSONObject
  *
  * 这不是会话或用户配置事实源：不保存 sessionId、消息、密钥或草稿选择，只让输入草稿在不修改
  * Agent 状态的前提下先展示已知的模式、即时配置和命令。缓存只保存 Agent 真实公布且已经过
- * Adapter 映射的选项；发送时仍会由当前连接复核并应用，不把缓存当成 Agent 状态。
+ * Adapter 映射的选项；权限和推理强度固定归 [AgentProviderCatalogStore]，这里仅保留模型、模式、
+ * 命令和其他协议能力。发送时仍会由当前连接复核并应用，不把缓存当成 Agent 状态。
  */
 class AgentDraftCapabilityCacheStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -65,6 +66,10 @@ class AgentDraftCapabilityCacheStore(context: Context) {
         put(KEY_VERSION, VERSION)
         put(KEY_CONFIGURATION, JSONArray().apply {
             configuration
+                .filterNot { option ->
+                    option.category == AgentConfigCategory.Permission ||
+                        option.category == AgentConfigCategory.ThoughtLevel
+                }
                 .take(MAX_CONFIGURATION)
                 .forEach { option -> put(option.toJson()) }
         })
@@ -215,8 +220,8 @@ class AgentDraftCapabilityCacheStore(context: Context) {
         const val KEY_INPUT_HINT = "inputHint"
         const val TYPE_SELECT = "select"
         const val TYPE_TOGGLE = "toggle"
-        // v5 允许输入草稿复用已映射的推理档位；旧缓存按合同版本重新生成。
-        const val VERSION = 5
+        // v6 把权限与推理强度移入统一 Provider 目录；这里只缓存其余协议能力。
+        const val VERSION = 6
         const val MAX_CONFIGURATION = 32
         const val MAX_CATALOGS = 32
         const val MAX_CHOICES = 256

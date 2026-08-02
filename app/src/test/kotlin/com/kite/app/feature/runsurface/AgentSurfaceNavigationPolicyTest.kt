@@ -6,6 +6,7 @@ import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentCommand
 import com.kite.app.agent.contract.AgentSessionPhase
@@ -24,11 +25,13 @@ import com.kite.app.agent.store.AgentArchivedSessionMetadata
 import com.kite.app.agent.store.AgentArchivedSessionSourceState
 import com.kite.app.agent.store.AgentModelLibraryProviderPreference
 import com.kite.app.agent.store.AgentModelLibrarySnapshot
+import com.kite.app.agent.store.AgentProviderCatalogStore
 import com.kite.app.agent.registration.KiteAgentRegistry
 import com.kite.app.agent.registration.AgentOfficialAccountCommand
 import com.kite.app.agent.registration.AgentOfficialAccountSpec
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.AdapterBackedAgentConfigurationApi
+import com.kite.app.agent.sdk.configuration.StoreBackedAgentProviderCatalogApi
 import com.kite.app.theme.KiteTheme
 import androidx.appcompat.app.AppCompatActivity
 import org.junit.Assert.assertEquals
@@ -827,18 +830,6 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
-    fun `持久默认提示明确不会改变当前会话`() {
-        assertEquals(
-            "智谱 GLM 已设为默认；正在进行的会话不会改变",
-            AgentPersistentDefaultPolicy.savedMessage("智谱 GLM", currentAgent = true)
-        )
-        assertEquals(
-            "供应商资料已保存；下次打开该 Agent 时使用",
-            AgentPersistentDefaultPolicy.configurationSavedMessage("供应商资料已保存", currentAgent = false)
-        )
-    }
-
-    @Test
     fun `空白草稿目录读取原生默认且其他选择不改默认`() {
         val snapshot = AgentLiveConfigSnapshot(
             agentId = "opencode",
@@ -883,7 +874,7 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
-    fun `空白草稿合并Agent发现的免费模型且不写入持久默认`() {
+    fun `空白草稿只显示已经保存到Kite目录的免费模型`() {
         val snapshot = AgentLiveConfigSnapshot(
             agentId = "opencode",
             adapterId = "opencode",
@@ -896,20 +887,12 @@ class AgentSurfaceNavigationPolicyTest {
                     id = "zhipu",
                     displayName = "智谱 GLM",
                     models = listOf(AgentProviderModelSummary("glm-5.2", "GLM-5.2"))
-                )
-            )
-        )
-        val discovered = AgentConfigOption.Select(
-            id = "model",
-            name = "模型",
-            category = AgentConfigCategory.Model,
-            currentValue = "opencode/big-pickle",
-            choices = listOf(
-                AgentConfigChoice(
-                    value = "opencode/big-pickle",
-                    name = "Big Pickle",
-                    groupId = "opencode",
-                    groupName = "OpenCode Zen"
+                ),
+                AgentProviderSummary(
+                    id = "opencode",
+                    displayName = "OpenCode Zen",
+                    models = listOf(AgentProviderModelSummary("big-pickle", "Big Pickle")),
+                    source = AgentModelSource.Free,
                 )
             )
         )
@@ -917,7 +900,6 @@ class AgentSurfaceNavigationPolicyTest {
         val option = AgentDraftModelPolicy.option(
             snapshot,
             selected = null,
-            discovered = discovered,
             library = AgentModelLibrarySnapshot(
                 providers = mapOf(
                     "opencode" to AgentModelLibraryProviderPreference(
@@ -927,7 +909,7 @@ class AgentSurfaceNavigationPolicyTest {
             )
         )!!
         val freeChoice = option.choices.single { it.groupId == "opencode" }
-        val selection = AgentDraftModelPolicy.selection(snapshot, freeChoice.value, option.choices)
+        val selection = AgentDraftModelPolicy.selection(snapshot, freeChoice.value)
 
         assertEquals(listOf("智谱 GLM", "OpenCode Zen"), option.choices.mapNotNull { it.groupName }.distinct())
         assertEquals("免费轻量", freeChoice.name)
@@ -949,6 +931,12 @@ class AgentSurfaceNavigationPolicyTest {
                     id = "custom",
                     displayName = "自定义",
                     models = listOf(AgentProviderModelSummary("default", "Default"))
+                ),
+                AgentProviderSummary(
+                    id = "openai",
+                    displayName = "OpenAI",
+                    models = listOf(AgentProviderModelSummary("gpt-5.6", "GPT-5.6")),
+                    source = AgentModelSource.OfficialLogin,
                 )
             )
         )
@@ -958,24 +946,9 @@ class AgentSurfaceNavigationPolicyTest {
             modelGroupIds = listOf("openai"),
             login = AgentOfficialAccountCommand(listOf("codex", "login")),
         )
-        val discovered = AgentConfigOption.Select(
-            id = "model",
-            name = "模型",
-            category = AgentConfigCategory.Model,
-            currentValue = "openai/gpt-5.6",
-            choices = listOf(
-                AgentConfigChoice(
-                    value = "openai/gpt-5.6",
-                    name = "GPT-5.6",
-                    groupId = "openai",
-                    groupName = "OpenAI",
-                )
-            )
-        )
         val option = AgentDraftModelPolicy.option(
             snapshot,
             selected = null,
-            discovered = discovered,
             library = AgentModelLibrarySnapshot(
                 providers = mapOf(
                     "__kite_official__:chatgpt" to AgentModelLibraryProviderPreference(
@@ -987,7 +960,7 @@ class AgentSurfaceNavigationPolicyTest {
         )!!
 
         val officialChoice = option.choices.single { it.groupId == "openai" }
-        val selection = AgentDraftModelPolicy.selection(snapshot, officialChoice.value, option.choices)
+        val selection = AgentDraftModelPolicy.selection(snapshot, officialChoice.value)
 
         assertEquals("日常", officialChoice.name)
         assertEquals("openai/gpt-5.6", officialChoice.description)
@@ -1016,6 +989,10 @@ class AgentSurfaceNavigationPolicyTest {
                 commandRunner = { AgentOfficialAccountCommandResult(0, "") },
             ),
             agentConfigurationApi = AdapterBackedAgentConfigurationApi(AgentConfigAdapterRegistry(emptyList())),
+            agentProviderCatalogApi = StoreBackedAgentProviderCatalogApi(
+                AgentProviderCatalogStore(activity),
+                AgentConfigAdapterRegistry(emptyList()),
+            ),
         )
 
         binding.showSessionDrawerForTesting()
@@ -1059,6 +1036,10 @@ class AgentSurfaceNavigationPolicyTest {
                 commandRunner = { AgentOfficialAccountCommandResult(0, "") },
             ),
             agentConfigurationApi = AdapterBackedAgentConfigurationApi(AgentConfigAdapterRegistry(emptyList())),
+            agentProviderCatalogApi = StoreBackedAgentProviderCatalogApi(
+                AgentProviderCatalogStore(activity),
+                AgentConfigAdapterRegistry(emptyList()),
+            ),
         )
         val identities = binding.sessionControlIdentityForTesting()
 

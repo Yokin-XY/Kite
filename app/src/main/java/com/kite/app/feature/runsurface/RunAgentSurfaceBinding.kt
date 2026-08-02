@@ -82,7 +82,6 @@ import com.kite.app.agent.config.AgentMcpDraft
 import com.kite.app.agent.config.AgentMcpOperation
 import com.kite.app.agent.config.AgentMcpSummary
 import com.kite.app.agent.config.AgentMcpTransport
-import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.AgentPersistentConfigCapability
 import com.kite.app.agent.config.AgentPermissionProfileSummary
 import com.kite.app.agent.config.AgentProviderCredentialChange
@@ -109,7 +108,8 @@ import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
 import com.kite.app.agent.sdk.configuration.AgentConfigurationIntent
 import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
-import com.kite.app.agent.sdk.configuration.AgentModelSelection
+import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
+import com.kite.app.agent.sdk.configuration.toConfigurationProjection
 import com.kite.app.agent.sdk.configuration.AgentSessionControlApi
 import com.kite.app.agent.sdk.configuration.RuntimeBackedAgentSessionControlApi
 import com.kite.app.agent.sdk.configuration.configurationTarget
@@ -158,6 +158,7 @@ internal class RunAgentSurfaceBinding(
     private val agentRegistry: KiteAgentRegistry,
     private val officialAccountManager: AgentOfficialAccountManager,
     private val agentConfigurationApi: AgentConfigurationApi,
+    private val agentProviderCatalogApi: AgentProviderCatalogApi,
     private val agentSessionControlApi: AgentSessionControlApi = RuntimeBackedAgentSessionControlApi(),
 ) : RunSurfaceBinding {
     private val isDark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
@@ -250,6 +251,7 @@ internal class RunAgentSurfaceBinding(
     private var providerPageAgentId: String? = null
     private var providerPageTarget: AgentConfigurationTarget? = null
     private var providerPageSnapshot: AgentLiveConfigSnapshot? = null
+    private var providerCatalogLoadRevision: Long = 0L
     private var skillPageAgentId: String? = null
     private var skillPageTarget: AgentConfigurationTarget? = null
     private var skillPageSnapshot: AgentLiveConfigSnapshot? = null
@@ -405,7 +407,7 @@ internal class RunAgentSurfaceBinding(
             ?: state.statusLabel)
         if (prepareInitialEntryDraftIfNeeded()) return
         subscribe(content.providerId, content.sessionId)
-        if (content.sessionId == null) loadDraftModelCatalog()
+        loadDraftModelCatalog()
         updateComposer()
     }
 
@@ -1165,9 +1167,6 @@ internal class RunAgentSurfaceBinding(
 
     private fun loadDraftModelCatalog(force: Boolean = false) {
         val targetAgentId = agentId?.takeIf(String::isNotBlank) ?: return
-        val runtime = AgentRuntimeRegistry.session(instanceId)
-            ?.takeIf { it.generation == generation && it.isDraft }
-            ?: return
         if (
             !force &&
             draftModelAgentId == targetAgentId &&
@@ -1181,30 +1180,24 @@ internal class RunAgentSurfaceBinding(
         draftModelLoadJob = lifecycleOwner.lifecycleScope.launch {
             val loaded = withContext(Dispatchers.IO) {
                 val entry = agentRegistry.snapshot().entry(targetAgentId)
-                entry?.registration?.officialAccounts.orEmpty() to entry
-                    ?.configurationTarget()
-                    ?.let { agentConfigurationApi.read(it) }
+                val target = entry?.configurationTarget()
+                entry?.registration?.officialAccounts.orEmpty() to target?.let { configurationTarget ->
+                    agentProviderCatalogApi.snapshot(configurationTarget)
+                        .toConfigurationProjection(configurationTarget)
+                }
             }
             if (
                 requestRevision != draftModelLoadRevision ||
-                agentId != targetAgentId ||
-                AgentRuntimeRegistry.session(instanceId)?.takeIf {
-                    it.generation == generation && it.isDraft
-                } == null
+                agentId != targetAgentId
             ) return@launch
             draftModelOfficialAccounts = loaded.first
-            val snapshot = (loaded.second as? AgentConfigReadResult.Ready)?.snapshot
+            val snapshot = loaded.second
             draftModelSnapshot = snapshot
             if (snapshot != null) {
                 val current = AgentRuntimeRegistry.draftModelSelection(instanceId, generation)
-                val discovered = AgentRuntimeRegistry.draftCapabilityCatalog(instanceId, generation)
-                    ?.configuration
-                    ?.filterIsInstance<AgentConfigOption.Select>()
-                    ?.firstOrNull { it.category == AgentConfigCategory.Model }
                 val available = AgentDraftModelPolicy.option(
                     snapshot,
                     current,
-                    discovered,
                     modelLibraryStore.snapshot(targetAgentId),
                     draftModelOfficialAccounts,
                 )
@@ -1219,7 +1212,7 @@ internal class RunAgentSurfaceBinding(
     private fun usePersistentSnapshotAsDraftDefault(targetAgentId: String, snapshot: AgentLiveConfigSnapshot) {
         if (targetAgentId != agentId) return
         val runtime = AgentRuntimeRegistry.session(instanceId)
-            ?.takeIf { it.generation == generation && it.isDraft }
+            ?.takeIf { it.generation == generation }
             ?: return
         draftModelAgentId = targetAgentId
         draftModelSnapshot = snapshot
@@ -2807,14 +2800,15 @@ internal class RunAgentSurfaceBinding(
         snapshot: AgentLiveConfigSnapshot
     ): List<SettingsRow> = buildList {
         val capabilities = agentConfigurationApi.capabilities(target) ?: return@buildList
+        val providerSnapshot = agentProviderCatalogApi.snapshot(target).toConfigurationProjection(target)
         val supportsProviders = capabilities.supports(AgentPersistentConfigCapability.Provider)
         val officialAccounts = selected.registration.officialAccounts
         if (supportsProviders || officialAccounts.isNotEmpty()) {
-            val providerSummary = snapshot.providers.takeIf { it.isNotEmpty() }
+            val providerSummary = providerSnapshot.providers.takeIf { it.isNotEmpty() }
                 ?.joinToString("、") { provider ->
                     "${provider.displayName}（${provider.models.size} 个模型）"
                 }
-                ?: snapshot.providerIds.takeIf { it.isNotEmpty() }?.joinToString("、")
+                ?: providerSnapshot.providerIds.takeIf { it.isNotEmpty() }?.joinToString("、")
             val accountSummary = officialAccounts.takeIf { it.isNotEmpty() }
                 ?.joinToString("、") { account ->
                     val status = officialAccountManager.state(
@@ -2831,7 +2825,7 @@ internal class RunAgentSurfaceBinding(
                     capabilities.supports(AgentPersistentConfigCapability.ProviderProfiles) ||
                     officialAccounts.isNotEmpty()
                 ) {
-                    { showProviderManager(selected, target, snapshot) }
+                    { openProviderManager(selected, target) }
                 } else null
             ))
         }
@@ -3398,6 +3392,51 @@ internal class RunAgentSurfaceBinding(
             return
         }
         showCoreDocumentManager(selected, target, reload = false)
+    }
+
+    private fun openProviderManager(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+    ) {
+        val targetAgentId = selected.registration.definition.agentId
+        val requestRevision = ++providerCatalogLoadRevision
+        navigationScreen = AgentNavigationScreen.ProviderList
+        navigationHost.removeAllViews()
+        navigationHost.addView(
+            LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(agentPageBackground)
+                addView(buildAgentSubpageHeader(
+                    title = "模型库",
+                    backDescription = "返回 Agent 设置",
+                    onBack = ::returnFromProviderManager,
+                ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
+                addView(settingsMessage("正在更新免费模型目录…"), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f,
+                ))
+            },
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+        )
+        navigationHost.visibility = View.VISIBLE
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val opened = withContext(Dispatchers.IO) {
+                agentProviderCatalogApi.openProviderManager(target)
+            }
+            if (
+                requestRevision != providerCatalogLoadRevision ||
+                selectedSettingsAgentId != targetAgentId
+            ) return@launch
+            val projection = opened.snapshot.toConfigurationProjection(target)
+            if (targetAgentId == agentId) draftModelSnapshot = projection
+            showProviderManager(selected, target, projection)
+            opened.warnings.firstOrNull()?.let { warning ->
+                Toast.makeText(context, warning, Toast.LENGTH_SHORT).show()
+            }
+            renderSessionConfigurationControls()
+        }
     }
 
     private fun showProviderManager(
@@ -5892,7 +5931,7 @@ internal class RunAgentSurfaceBinding(
     ) {
         showAgentDialogCard(
             title = "删除 ${providers.size} 个供应商？",
-            message = "会移除这些供应商的 Agent 原生资料和凭据；免费内置来源与当前默认供应商不会删除。",
+            message = "会从 Kite 目录移除这些用户供应商和安全凭据；免费与官方来源不会删除。",
             actions = listOf(
                 AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
                 AgentDialogAction("删除", UiActionRole.Danger) { dialog, button ->
@@ -5900,12 +5939,10 @@ internal class RunAgentSurfaceBinding(
                     button.alpha = 0.45f
                     button.text = "删除中…"
                     dialog.dismiss()
-                    applyPersistentProviderChanges(
+                    removeCatalogProviders(
                         selected,
                         target,
-                        snapshot,
-                        providers.map { AgentConfigurationIntent.RemoveProvider(it.id, removeCredential = true) },
-                        "供应商资料已删除"
+                        providers.map(AgentModelProviderProjection::id),
                     )
                 }
             )
@@ -6208,7 +6245,7 @@ internal class RunAgentSurfaceBinding(
                     status.visibility = View.VISIBLE
                     return@setOnClickListener
                 }
-                status.text = "正在安全写入 Agent 原生配置…"
+                status.text = "正在保存到 Kite…"
                 status.setTextColor(tokens.textSecondary)
                 status.visibility = View.VISIBLE
                 isEnabled = false
@@ -6216,19 +6253,16 @@ internal class RunAgentSurfaceBinding(
                 providerEditorSaveAction = this
                 val credential = credentialInput.credentialChange()
                 keyInput.setText("")
-                applyPersistentProviderChange(
+                saveCatalogProvider(
                     selected = selected,
                     target = target,
-                    snapshot = snapshot,
-                    intent = AgentConfigurationIntent.ConfigureProvider(
-                        provider = AgentProviderDraft(
-                            id = id,
-                            displayName = name,
-                            baseUrl = url,
-                            models = models
-                        ),
-                        credential = credential
+                    provider = AgentProviderDraft(
+                        id = id,
+                        displayName = name,
+                        baseUrl = url,
+                        models = models,
                     ),
+                    credential = credential,
                     successMessage = "供应商资料已更新",
                     onApplied = { appliedProviderId ->
                         modelLibraryStore.assignProviderGroup(targetAgentId, appliedProviderId, selectedGroupId)
@@ -6270,18 +6304,12 @@ internal class RunAgentSurfaceBinding(
     ) {
         showAgentDialogCard(
             title = "删除 ${provider.displayName}？",
-            message = "供应商资料和它在 Agent 原生认证文件中的 API Key 都会移除；其他供应商不受影响。",
+            message = "会从 Kite 的供应商目录和安全凭据中移除；其他供应商不受影响。",
             actions = listOf(
                 AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
                 AgentDialogAction("删除", UiActionRole.Danger) { dialog, _ ->
                     dialog.dismiss()
-                applyPersistentProviderChange(
-                    selected,
-                    target,
-                    snapshot,
-                    AgentConfigurationIntent.RemoveProvider(provider.id, removeCredential = true),
-                    "供应商资料已删除"
-                )
+                    removeCatalogProvider(selected, target, provider.id)
                 }
             )
         )
@@ -6294,127 +6322,96 @@ internal class RunAgentSurfaceBinding(
         provider: AgentModelProviderProjection,
         model: AgentConfigChoice
     ) {
-        val option = providerManagerModelOption(selected.registration.definition.agentId)
         val snapshotProvider = snapshot.providers.firstOrNull { it.id == provider.id }
         val snapshotContainsModel = snapshotProvider?.models?.any { candidate ->
             model.value == "${provider.id}/${candidate.id}" || model.value == candidate.id
         } == true
-        if (option == null && !snapshotContainsModel) {
-            Toast.makeText(context, "当前 Agent 不能把这个模型保存为默认", Toast.LENGTH_SHORT).show()
+        if (!snapshotContainsModel) {
+            Toast.makeText(context, "Kite 目录中已没有这个模型", Toast.LENGTH_SHORT).show()
             return
         }
-        val selection = AgentModelSelection(
-            configId = option?.id ?: NATIVE_MODEL_CONFIG_ID,
-            sourceId = provider.id,
-            modelId = model.value.removePrefix("${provider.id}/"),
-            nativeValue = model.value,
-            source = provider.source,
-        )
+        val modelId = model.value.removePrefix("${provider.id}/")
         val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++settingsLoadRevision
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
-            val outcome = withContext(Dispatchers.IO) {
-                agentConfigurationApi.apply(
-                    target,
-                    snapshot.revision,
-                    listOf(AgentConfigurationIntent.SelectModel(selection)),
-                )
+            val selectedInCatalog = withContext(Dispatchers.IO) {
+                agentProviderCatalogApi.selectModel(target, provider.id, modelId)
             }
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
-            persistentConfigAgentId = targetAgentId
-            persistentConfigResult = outcome.current
-            val refreshedSnapshot = when (val refreshed = outcome.current) {
-                is AgentConfigReadResult.Ready -> refreshed.snapshot
-                else -> null
-            }
-            if (refreshedSnapshot != null) providerPageSnapshot = refreshedSnapshot
-            when (val applyResult = outcome.result) {
-                is AgentConfigApplyResult.Applied -> {
-                    usePersistentSnapshotAsDraftDefault(
-                        targetAgentId,
-                        refreshedSnapshot ?: applyResult.snapshot
-                    )
-                    showProviderManager(selected, target, refreshedSnapshot ?: applyResult.snapshot)
-                    val message = AgentPersistentDefaultPolicy.savedMessage(
-                        model.name,
-                        targetAgentId == agentId
-                    )
-                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                }
-                else -> {
-                    showProviderManager(selected, target, refreshedSnapshot ?: snapshot)
-                    Toast.makeText(
-                        context,
-                        applyResult.userMessage("默认模型已更新"),
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
+            if (selectedInCatalog) {
+                val projection = agentProviderCatalogApi.snapshot(target).toConfigurationProjection(target)
+                providerPageSnapshot = projection
+                usePersistentSnapshotAsDraftDefault(targetAgentId, projection)
+                showProviderManager(selected, target, projection)
+                Toast.makeText(context, "${model.name} 已设为默认", Toast.LENGTH_SHORT).show()
+            } else {
+                showProviderManager(selected, target, snapshot)
+                Toast.makeText(context, "Kite 目录中已没有这个模型", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    private fun applyPersistentProviderChange(
+    private fun saveCatalogProvider(
         selected: AgentRegistryEntry,
         target: AgentConfigurationTarget,
-        snapshot: AgentLiveConfigSnapshot,
-        intent: AgentConfigurationIntent,
+        provider: AgentProviderDraft,
+        credential: AgentProviderCredentialChange,
         successMessage: String,
         onApplied: ((String) -> Unit)? = null
     ) {
         val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++settingsLoadRevision
         navigationJob = lifecycleOwner.lifecycleScope.launch {
-            val outcome = withContext(Dispatchers.IO) {
-                agentConfigurationApi.apply(target, snapshot.revision, listOf(intent))
+            val saved = withContext(Dispatchers.IO) {
+                agentProviderCatalogApi.saveUserProvider(target, provider, credential)
             }
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
-            persistentConfigAgentId = targetAgentId
-            persistentConfigResult = outcome.current
-            val refreshedSnapshot = when (val refreshed = outcome.current) {
-                is AgentConfigReadResult.Ready -> refreshed.snapshot
-                else -> null
-            }
-            if (refreshedSnapshot != null) providerPageSnapshot = refreshedSnapshot
-            when (val applyResult = outcome.result) {
-                is AgentConfigApplyResult.Applied -> {
-                    providerEditorSaveAction = null
-                    providerEditorStatusText = null
-                    val appliedSnapshot = refreshedSnapshot ?: applyResult.snapshot
-                    val appliedProviderId = when (intent) {
-                        is AgentConfigurationIntent.ConfigureProvider -> intent.provider.id
-                        is AgentConfigurationIntent.SelectModel -> intent.selection.sourceId
-                        else -> null
-                    }
-                    if (appliedProviderId != null) onApplied?.invoke(appliedProviderId)
-                    usePersistentSnapshotAsDraftDefault(targetAgentId, appliedSnapshot)
-                    showProviderManager(selected, target, appliedSnapshot)
-                    Toast.makeText(
-                        context,
-                        AgentPersistentDefaultPolicy.configurationSavedMessage(
-                            successMessage,
-                            targetAgentId == agentId
-                        ),
-                        Toast.LENGTH_SHORT
-                    ).show()
+            if (saved != null) {
+                providerEditorSaveAction = null
+                providerEditorStatusText = null
+                onApplied?.invoke(saved.id)
+                val projection = agentProviderCatalogApi.snapshot(target).toConfigurationProjection(target)
+                providerPageSnapshot = projection
+                showProviderManager(selected, target, projection)
+                loadDraftModelCatalog(force = true)
+                Toast.makeText(context, successMessage, Toast.LENGTH_SHORT).show()
+            } else {
+                providerEditorSaveAction?.apply {
+                    isEnabled = true
+                    alpha = 1f
                 }
-                else -> {
-                    Toast.makeText(
-                        context,
-                        outcome.result.userMessage(successMessage),
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    providerEditorSaveAction?.apply {
-                        isEnabled = true
-                        alpha = 1f
-                    }
-                    providerEditorStatusText?.apply {
-                        text = outcome.result.userMessage(successMessage)
-                        setTextColor(android.graphics.Color.rgb(198, 40, 40))
-                        visibility = View.VISIBLE
-                    }
+                providerEditorStatusText?.apply {
+                    text = "供应商 ID 已被免费或官方来源占用"
+                    setTextColor(android.graphics.Color.rgb(198, 40, 40))
+                    visibility = View.VISIBLE
                 }
             }
+        }
+    }
+
+    private fun removeCatalogProvider(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        providerId: String,
+    ) {
+        val targetAgentId = selected.registration.definition.agentId
+        val requestRevision = ++settingsLoadRevision
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val removed = withContext(Dispatchers.IO) {
+                agentProviderCatalogApi.removeUserProvider(target, providerId)
+            }
+            if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
+            val projection = agentProviderCatalogApi.snapshot(target).toConfigurationProjection(target)
+            providerPageSnapshot = projection
+            showProviderManager(selected, target, projection)
+            loadDraftModelCatalog(force = true)
+            Toast.makeText(
+                context,
+                if (removed) "供应商资料已删除" else "这个供应商不能从用户目录删除",
+                Toast.LENGTH_SHORT,
+            ).show()
         }
     }
 
@@ -6588,42 +6585,29 @@ internal class RunAgentSurfaceBinding(
         }
     }
 
-    private fun applyPersistentProviderChanges(
+    private fun removeCatalogProviders(
         selected: AgentRegistryEntry,
         target: AgentConfigurationTarget,
-        snapshot: AgentLiveConfigSnapshot,
-        intents: List<AgentConfigurationIntent>,
-        successMessage: String
+        providerIds: List<String>,
     ) {
-        if (intents.isEmpty()) return
+        if (providerIds.isEmpty()) return
         val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++settingsLoadRevision
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
-            val outcome = withContext(Dispatchers.IO) {
-                agentConfigurationApi.apply(target, snapshot.revision, intents)
+            val removed = withContext(Dispatchers.IO) {
+                providerIds.count { providerId ->
+                    agentProviderCatalogApi.removeUserProvider(target, providerId)
+                }
             }
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
-            persistentConfigAgentId = targetAgentId
-            persistentConfigResult = outcome.current
-            val refreshedSnapshot = (outcome.current as? AgentConfigReadResult.Ready)?.snapshot
-            when (val result = outcome.result) {
-                is AgentConfigApplyResult.Applied -> {
-                    val applied = refreshedSnapshot ?: result.snapshot
-                    providerPageSnapshot = applied
-                    selectedProviderIds.clear()
-                    expandedProviderIds.retainAll(applied.providers.map { it.id }.toSet())
-                    usePersistentSnapshotAsDraftDefault(targetAgentId, applied)
-                    showProviderManager(selected, target, applied)
-                    Toast.makeText(context, successMessage, Toast.LENGTH_SHORT).show()
-                }
-                else -> {
-                    if (refreshedSnapshot != null) providerPageSnapshot = refreshedSnapshot
-                    selectedProviderIds.clear()
-                    showProviderManager(selected, target, refreshedSnapshot ?: snapshot)
-                    Toast.makeText(context, result.userMessage(successMessage), Toast.LENGTH_SHORT).show()
-                }
-            }
+            val projection = agentProviderCatalogApi.snapshot(target).toConfigurationProjection(target)
+            providerPageSnapshot = projection
+            selectedProviderIds.clear()
+            expandedProviderIds.retainAll(projection.providers.map { it.id }.toSet())
+            showProviderManager(selected, target, projection)
+            loadDraftModelCatalog(force = true)
+            Toast.makeText(context, "已删除 $removed 个供应商", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -6639,8 +6623,6 @@ internal class RunAgentSurfaceBinding(
             AgentDraftModelPolicy.option(
                 snapshot,
                 AgentRuntimeRegistry.draftModelSelection(runtime.instanceId, runtime.generation),
-                cached.filterIsInstance<AgentConfigOption.Select>()
-                    .firstOrNull { it.category == AgentConfigCategory.Model },
                 agentId?.let(modelLibraryStore::snapshot) ?: com.kite.app.agent.store.AgentModelLibrarySnapshot(),
                 modelLibraryOfficialAccounts(agentId),
             )
@@ -7324,12 +7306,7 @@ internal class RunAgentSurfaceBinding(
             ?: return
         val result = if (configId == AgentDraftModelPolicy.CONFIG_ID && value is AgentConfigValue.Select) {
             val snapshot = draftModelSnapshot ?: return
-            val modelChoices = draftSessionConfigurationOptions(runtime)
-                .filterIsInstance<AgentConfigOption.Select>()
-                .firstOrNull { it.id == AgentDraftModelPolicy.CONFIG_ID }
-                ?.choices
-                .orEmpty()
-            val selection = AgentDraftModelPolicy.selection(snapshot, value.value, modelChoices) ?: return
+            val selection = AgentDraftModelPolicy.selection(snapshot, value.value) ?: return
             agentSessionControlApi.selectModel(instanceId, generation, selection)
         } else {
             agentSessionControlApi.selectConfiguration(instanceId, generation, configId, value)

@@ -12,8 +12,11 @@ import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.AdapterBackedAgentConfigurationApi
 import com.kite.app.agent.config.defaultAgentConfigAdapters
 import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
+import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
 import com.kite.app.agent.sdk.configuration.AgentSessionControlApi
 import com.kite.app.agent.sdk.configuration.RuntimeBackedAgentSessionControlApi
+import com.kite.app.agent.sdk.configuration.StoreBackedAgentProviderCatalogApi
+import com.kite.app.agent.store.AgentProviderCatalogStore
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.browser.BrowserHandoffCoordinator
@@ -155,6 +158,12 @@ internal class KiteAppGraph private constructor(context: Context) {
             customStore = customAgentRegistrationStore
         )
     }
+    val agentProviderCatalogStore: AgentProviderCatalogStore by lazy {
+        AgentProviderCatalogStore(appContext)
+    }
+    val agentProviderCatalogApi: AgentProviderCatalogApi by lazy {
+        StoreBackedAgentProviderCatalogApi(agentProviderCatalogStore, agentConfigAdapterRegistry)
+    }
     val agentOfficialAccountManager: AgentOfficialAccountManager by lazy {
         AgentOfficialAccountManager(
             scope = processScope,
@@ -220,7 +229,13 @@ internal class KiteAppGraph private constructor(context: Context) {
             diagnostics,
             // 普通卡片、终端与资源运行固定走原生 PRoot。View 环境只能由更新事务等
             // 显式调用方逐次注入，不能因运行实例带有 environmentId 就全局回到 View。
-            RunExecutionEnvironmentProvider.None
+            RunExecutionEnvironmentProvider.None,
+            agentRuntime = com.kite.app.platform.runs.AndroidAgentRecipeRuntime(
+                context = appContext,
+                agentRegistry = agentRegistry,
+                agentConfigAdapters = agentConfigAdapterRegistry,
+                agentProviderCatalogApi = agentProviderCatalogApi,
+            ),
         )
     }
     val runWindowSurfaceGateway: AndroidRunWindowSurfaceGateway by lazy {

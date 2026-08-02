@@ -33,6 +33,9 @@ import com.kite.app.agent.runtime.AgentDraftCapabilityCatalog
 import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.runtime.AgentRuntimeRegistry
 import com.kite.app.agent.runtime.AgentRuntimeStartRequest
+import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
+import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
+import com.kite.app.agent.sdk.configuration.StoreBackedAgentProviderCatalogApi
 import com.kite.app.foundation.runtime.AndroidSharedStorageManager
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
@@ -48,6 +51,7 @@ import com.kite.app.agent.session.AgentSessionCommand
 import com.kite.app.agent.session.AgentSessionCommandExecutor
 import com.kite.app.agent.session.opencode.OpenCodeAgentSessionAdministrationAdapter
 import com.kite.app.agent.store.AgentDraftCapabilityCacheStore
+import com.kite.app.agent.store.AgentProviderCatalogStore
 import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.application.runs.RunStateMutation
@@ -320,6 +324,10 @@ internal class AndroidAgentRecipeRuntime(
             )
         )
     ),
+    private val agentProviderCatalogApi: AgentProviderCatalogApi = StoreBackedAgentProviderCatalogApi(
+        AgentProviderCatalogStore(context.applicationContext),
+        agentConfigAdapters,
+    ),
     sessionAdministrationAdapters: AgentSessionAdministrationAdapterRegistry? = null,
     managedPreparation: (() -> Unit)? = null,
     managedProcessLaunchPlanner: ManagedAgentProcessLaunchPlanner? = null,
@@ -572,8 +580,21 @@ internal class AndroidAgentRecipeRuntime(
             )
         }
         val configAdapter = agentConfigAdapters.adapter(resolved.configAdapterId)
+        val catalogTarget = AgentConfigurationTarget(
+            agentId = resolved.agentId ?: providerId,
+            adapterId = resolved.configAdapterId,
+        )
+        agentProviderCatalogApi.migrateLegacyUserProviders(catalogTarget)
+        configAdapter?.sessionPermissionControl()?.option()?.let { option ->
+            agentProviderCatalogApi.recordMappedControls(catalogTarget, listOf(option))
+        }
+        val storedControls = agentProviderCatalogApi.snapshot(catalogTarget).controls
         val nativeSessionConfiguration = configAdapter
             ?.readSessionConfiguration(resolved.agentId ?: providerId)
+            ?.filterNot { option ->
+                option.category == AgentConfigCategory.Permission ||
+                    option.category == AgentConfigCategory.ThoughtLevel
+            }
             .orEmpty()
         val runtimeProvider = if (configAdapter == null) {
             provider
@@ -591,7 +612,7 @@ internal class AndroidAgentRecipeRuntime(
         val initialDraftCatalog = cachedDraftCatalog.copy(
             configuration = mergeAgentSessionConfigurationOverlay(
                 options = cachedDraftCatalog.configuration,
-                native = nativeSessionConfiguration,
+                native = nativeSessionConfiguration + storedControls,
             ).options.let { options ->
                 configAdapter?.normalizePublishedSessionConfiguration(options)
                     ?: options.filterNot { it.category == AgentConfigCategory.ThoughtLevel }
@@ -615,8 +636,14 @@ internal class AndroidAgentRecipeRuntime(
                         options
                     )
                 },
+                prepareDraftModelSelection = { selection ->
+                    agentProviderCatalogApi.prepareSelectedProvider(catalogTarget, selection)
+                },
                 initialDraftCatalog = initialDraftCatalog,
-                onDraftCatalogChanged = { catalog -> draftCapabilityCache.put(draftCatalogKey, catalog) }
+                onDraftCatalogChanged = { catalog ->
+                    draftCapabilityCache.put(draftCatalogKey, catalog)
+                    agentProviderCatalogApi.recordMappedControls(catalogTarget, catalog.configuration)
+                }
             ),
             provider = runtimeProvider,
             statusSink = statusSink

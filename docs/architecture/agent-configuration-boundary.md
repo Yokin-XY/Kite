@@ -13,7 +13,8 @@ Agent 会话与设置 UI
         ↓ 只提交本轮输入草稿或持久配置意图
 Kite Agent SDK
   - AgentSessionControlApi：本轮输入草稿中的模型、权限、推理强度
-  - AgentConfigurationApi：默认模型、Provider、MCP、Skill、核心文档
+  - AgentProviderCatalogApi：Kite 保存的 Provider、模型、凭据、权限与推理目录
+  - AgentConfigurationApi：MCP、Skill、核心文档等 Agent 原生配置
         ↓ 点击发送后，按稳定 ID 把本轮草稿映射为原生动作
 ACP 或 AdapterBackedAgentConfigurationApi
         ↓ 翻译原生协议、命令、配置文件和 ID
@@ -84,6 +85,10 @@ feature/runsurface/
   RunAgentSurfaceBinding.kt          会话页面协调；只依赖 SDK，不接触 Adapter SPI
 ```
 
+`AgentProviderCatalogStore` 是 Provider 名称、URL、模型 ID、模型名称、凭据存在性、默认选择、
+权限目录和推理目录的唯一持久事实源。API Key 使用 Android Keystore 主密钥加密，不进入公开快照、
+页面状态、日志或普通 JSON。`AgentModelLibraryStore` 只保存分组、会话可见性和显示别名。
+
 ## 文件拆分规则
 
 1. 每个 Agent 的模型、权限、推理值、Provider 和原生配置规则分别放在该 Agent 的兼容目录；不再新增“所有 Agent 映射大全”。
@@ -94,14 +99,19 @@ feature/runsurface/
 
 ## 状态与交互
 
-- 页面提交用户意图，不保存第二份长期配置事实；当前本轮草稿由运行注册表统一持有。
+- 页面提交用户意图；长期 Provider 与能力事实只保存到统一目录，当前本轮草稿由运行注册表统一持有。
 - 选择模型、权限、推理强度或工作模式时只更新本轮草稿，不调用 Agent，不写原生配置。
-- 点击发送时，运行层按模型、推理强度、权限、其他配置、工作模式、消息的顺序应用草稿；具体原生值和动作由 ACP 或 Adapter 映射。
+- 点击发送时，运行层先从统一目录读取选中 Provider 的 URL、API Key 和模型，再由 Adapter 完成必要的原生配置与重连，然后按模型、推理强度、权限、其他配置、工作模式、消息的顺序应用草稿。
 - 消息发送完成后保留本轮选择供下一轮继续使用；切换到另一条历史会话时，再用该会话公布的当前值初始化它的输入草稿。
 - Agent 返回局部配置更新时，只替换它实际公布的配置项或类别，不能删除未包含在本次更新中的固定能力目录。
 - 配置缺失时隐藏对应组件，不显示“适配通过/失败”给用户。
 - 状态更新只刷新相关控件，不清空会话、不重建输入器、不改变滚动位置。
 - 页面绘制和列表绑定期间不得扫描文件、探测进程或检查网络。
+
+Provider 目录只有三种更新入口：用户自定义由 Kite 编辑页直接保存；无需登录的免费目录只在用户打开
+Provider 管理页时显式扫描并增量替换；官方登录目录只在一次官方登录成功并取得目录后保存版本，普通
+状态刷新和 Provider 管理页打开都不得重扫或改写官方版本。旧版原生自定义 Provider 只允许通过带标记的
+一次性迁移吸收，不能成为长期回填通道。
 
 ## 新 Agent 接入顺序
 

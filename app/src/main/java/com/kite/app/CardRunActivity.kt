@@ -420,6 +420,7 @@ class CardRunActivity : AppCompatActivity() {
             agentRegistry = graph.agentRegistry,
             officialAccountManager = graph.agentOfficialAccountManager,
             agentConfigurationApi = graph.agentConfigurationApi,
+            agentProviderCatalogApi = graph.agentProviderCatalogApi,
             agentSessionControlApi = graph.agentSessionControlApi,
         ).also { agentSurfaceBinding = it }
         RunSurfaceContent.InstallWizard -> createInstallWizardBinding()

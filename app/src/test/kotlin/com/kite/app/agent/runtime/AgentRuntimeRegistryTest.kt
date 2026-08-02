@@ -37,6 +37,8 @@ import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationHistoryStatus
 import com.kite.app.agent.store.AgentConversationStore
 import com.kite.app.agent.config.AgentSessionModelSelection
+import com.kite.app.agent.config.AgentSessionConfigurationEffect
+import com.kite.app.agent.sdk.configuration.AgentProviderPreparationResult
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -931,6 +933,60 @@ class AgentRuntimeRegistryTest {
         )
     }
 
+    @Test
+    fun `发送时Provider准备要求重连则新连接成功后再创建会话`() = runTest {
+        val modelOption = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "opencode/default",
+            choices = listOf(
+                AgentConfigChoice("opencode/default", "Default"),
+                AgentConfigChoice("zhipu/glm-5.2", "GLM-5.2"),
+            ),
+        )
+        val provider = FakeProvider(initialConfiguration = listOf(modelOption), requestPermission = false)
+        var prepareCalls = 0
+        AgentRuntimeRegistry.start(
+            request = AgentRuntimeStartRequest(
+                instanceId = "instance-provider-prepare",
+                generation = 1L,
+                providerId = "fake",
+                cwd = "/workspace",
+                resolveDraftModelSelection = { target, _ ->
+                    AgentSessionModelSelection("model", "${target.providerId}/${target.modelId}")
+                },
+                prepareDraftModelSelection = {
+                    prepareCalls++
+                    AgentProviderPreparationResult.Ready(
+                        effect = AgentSessionConfigurationEffect.Reconnect,
+                        nativeConfigurationChanged = true,
+                    )
+                },
+            ),
+            provider = provider,
+            statusSink = AgentRuntimeStatusSink { _, _, _ -> },
+        ) as AgentOperationResult.Success
+        AgentRuntimeRegistry.selectDraftModel(
+            "instance-provider-prepare",
+            1L,
+            AgentDraftModelSelection("zhipu", "glm-5.2", usesAgentDefault = false),
+        )
+
+        val result = AgentRuntimeRegistry.prompt(
+            "instance-provider-prepare",
+            1L,
+            listOf(AgentContent.Text("你好")),
+        )
+
+        assertTrue(result is AgentOperationResult.Success)
+        assertEquals(1, prepareCalls)
+        assertEquals(2, provider.connections.size)
+        assertTrue(provider.connections.first().disconnected.get())
+        assertEquals(listOf("new", "model", "prompt"), provider.connections.last().callOrder)
+        assertEquals(listOf("zhipu/glm-5.2"), provider.connections.last().selectedModelValues)
+    }
+
     private class FakeProvider(
         private val resumeSupported: Boolean = true,
         private val loadSupported: Boolean = true,
@@ -947,6 +1003,7 @@ class AgentRuntimeRegistryTest {
         private val requestPermission: Boolean = true
     ) : KiteAgentProvider {
         lateinit var connection: FakeConnection
+        val connections = mutableListOf<FakeConnection>()
         override val id: String = "fake"
 
         override suspend fun connect(
@@ -969,6 +1026,7 @@ class AgentRuntimeRegistryTest {
                 additionalDirectoriesSupported,
                 requestPermission
             )
+            connections += connection
             return AgentOperationResult.Success(connection)
         }
     }

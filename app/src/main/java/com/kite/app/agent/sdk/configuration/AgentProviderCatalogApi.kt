@@ -6,6 +6,7 @@ import com.kite.app.agent.config.AgentConfigApplyResult
 import com.kite.app.agent.config.AgentConfigReadResult
 import com.kite.app.agent.config.AgentCredentialPresence
 import com.kite.app.agent.config.AgentFreeProviderCatalogResult
+import com.kite.app.agent.config.AgentLiveConfigSnapshot
 import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
@@ -45,6 +46,9 @@ interface AgentProviderCatalogApi {
     /** 仅 Provider 管理页打开时调用：一次性迁移旧自定义项，并显式更新免费目录。 */
     suspend fun openProviderManager(target: AgentConfigurationTarget): AgentProviderCatalogOpenResult
 
+    /** 升级兼容：只在迁移标记缺失时吸收旧版原生自定义 Provider，不扫描免费或官方目录。 */
+    suspend fun migrateLegacyUserProviders(target: AgentConfigurationTarget): List<String>
+
     fun saveUserProvider(
         target: AgentConfigurationTarget,
         provider: AgentProviderDraft,
@@ -72,6 +76,35 @@ interface AgentProviderCatalogApi {
     ): AgentProviderPreparationResult
 }
 
+/** 兼容既有设置组件的安全投影；事实仍只来自 Kite 目录，不触发 Adapter 读取。 */
+fun AgentProviderCatalogSnapshot.toConfigurationProjection(
+    target: AgentConfigurationTarget,
+): AgentLiveConfigSnapshot = AgentLiveConfigSnapshot(
+    agentId = target.agentId,
+    adapterId = target.adapterId.orEmpty(),
+    revision = "kite:$revision",
+    displayLocation = "Kite Provider 目录",
+    activeProviderId = selectedProviderId,
+    defaultModel = selectedProviderId?.let { providerId ->
+        selectedModelId?.let { modelId -> "$providerId/$modelId" }
+    },
+    providerIds = providers.map(AgentCatalogProvider::id),
+    providers = providers.map { provider ->
+        com.kite.app.agent.config.AgentProviderSummary(
+            id = provider.id,
+            displayName = provider.displayName,
+            baseUrl = provider.baseUrl,
+            models = provider.models.map { model -> AgentProviderModelSummary(model.id, model.displayName) },
+            credentialPresence = when {
+                provider.policy != AgentProviderCatalogPolicy.UserManaged -> AgentCredentialPresence.NotApplicable
+                provider.credentialPresent -> AgentCredentialPresence.Present
+                else -> AgentCredentialPresence.Missing
+            },
+            source = provider.source,
+        )
+    },
+)
+
 /** Adapter 差异只在这一 SDK 实现内出现，UI 和运行时只看统一结果。 */
 class StoreBackedAgentProviderCatalogApi(
     private val store: AgentProviderCatalogStore,
@@ -91,40 +124,7 @@ class StoreBackedAgentProviderCatalogApi(
             store.mergeMappedControls(target.agentId, listOf(option))
         }
 
-        val warnings = mutableListOf<String>()
-        val importId = "${adapter.adapterId}:native-provider-v1"
-        if (!store.hasCompletedImport(target.agentId, importId)) {
-            when (val imported = adapter.readUserProviderImport(target.agentId)) {
-                is AgentUserProviderImportResult.Ready -> {
-                    val before = store.snapshot(target.agentId)
-                    imported.import.providers.forEach { provider ->
-                        if (before.providers.none { it.id == provider.id }) {
-                            store.saveUserProvider(
-                                target.agentId,
-                                provider.toCatalogProvider(
-                                    policy = AgentProviderCatalogPolicy.UserManaged,
-                                    source = AgentModelSource.UserConfigured,
-                                ),
-                                imported.import.credentials[provider.id].toCatalogCredentialChange(),
-                            )
-                            store.markProviderPrepared(target.agentId, provider.id)
-                        }
-                    }
-                    val selectedProviderId = imported.import.activeProviderId
-                    val selectedModelId = selectedProviderId?.let { providerId ->
-                        imported.import.defaultModel
-                            ?.removePrefix("$providerId/")
-                            ?.takeIf(String::isNotBlank)
-                    }
-                    if (selectedProviderId != null && selectedModelId != null) {
-                        store.select(target.agentId, selectedProviderId, selectedModelId)
-                    }
-                    store.markImportCompleted(target.agentId, importId)
-                }
-                is AgentUserProviderImportResult.Failed -> warnings += imported.message
-                AgentUserProviderImportResult.Unsupported -> store.markImportCompleted(target.agentId, importId)
-            }
-        }
+        val warnings = migrateLegacyUserProviders(target).toMutableList()
 
         when (val free = adapter.scanFreeProviderCatalog(target.agentId)) {
             is AgentFreeProviderCatalogResult.Ready -> {
@@ -147,6 +147,46 @@ class StoreBackedAgentProviderCatalogApi(
             AgentFreeProviderCatalogResult.Unsupported -> Unit
         }
         return AgentProviderCatalogOpenResult(snapshot(target), warnings.distinct())
+    }
+
+    override suspend fun migrateLegacyUserProviders(target: AgentConfigurationTarget): List<String> {
+        val adapter = adapters.adapter(target.adapterId) ?: return listOf("当前 Agent 没有可用的配置 Adapter")
+        val importId = "${adapter.adapterId}:native-provider-v1"
+        if (store.hasCompletedImport(target.agentId, importId)) return emptyList()
+        return when (val imported = adapter.readUserProviderImport(target.agentId)) {
+            is AgentUserProviderImportResult.Ready -> {
+                val before = store.snapshot(target.agentId)
+                imported.import.providers.forEach { provider ->
+                    if (before.providers.none { it.id == provider.id }) {
+                        store.saveUserProvider(
+                            target.agentId,
+                            provider.toCatalogProvider(
+                                policy = AgentProviderCatalogPolicy.UserManaged,
+                                source = AgentModelSource.UserConfigured,
+                            ),
+                            imported.import.credentials[provider.id].toCatalogCredentialChange(),
+                        )
+                        store.markProviderPrepared(target.agentId, provider.id)
+                    }
+                }
+                val selectedProviderId = imported.import.activeProviderId
+                val selectedModelId = selectedProviderId?.let { providerId ->
+                    imported.import.defaultModel
+                        ?.removePrefix("$providerId/")
+                        ?.takeIf(String::isNotBlank)
+                }
+                if (selectedProviderId != null && selectedModelId != null) {
+                    store.select(target.agentId, selectedProviderId, selectedModelId)
+                }
+                store.markImportCompleted(target.agentId, importId)
+                emptyList()
+            }
+            is AgentUserProviderImportResult.Failed -> listOf(imported.message)
+            AgentUserProviderImportResult.Unsupported -> {
+                store.markImportCompleted(target.agentId, importId)
+                emptyList()
+            }
+        }
     }
 
     override fun saveUserProvider(

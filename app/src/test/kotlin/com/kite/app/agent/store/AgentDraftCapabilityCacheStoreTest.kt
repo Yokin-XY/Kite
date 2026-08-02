@@ -32,7 +32,7 @@ class AgentDraftCapabilityCacheStoreTest {
     }
 
     @Test
-    fun `缓存回放已映射的输入选项且不包含会话或密钥`() {
+    fun `通用缓存不再重复保存权限和推理强度`() {
         store.put(
             "opencode",
             AgentDraftCapabilityCatalog(
@@ -63,7 +63,7 @@ class AgentDraftCapabilityCacheStoreTest {
 
         val restored = store.catalog("opencode")!!
 
-        assertEquals(listOf("language", "thought"), restored.configuration.map { it.id })
+        assertEquals(listOf("language"), restored.configuration.map { it.id })
         assertEquals(listOf("build", "plan"), restored.modes.map { it.id })
         assertEquals("build", restored.currentModeId)
         assertEquals(listOf("review"), restored.commands.map { it.name })

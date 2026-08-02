@@ -8,8 +8,8 @@ import java.util.UUID
 /**
  * Agent 模型库的 Kite 展示偏好。
  *
- * Agent 原生配置仍然拥有供应商、模型 ID、地址和密钥；这里仅保存自定义分组、某个供应商
- * 是否进入会话模型选择器，以及不参与请求的模型显示名称，避免形成第二份互相冲突的模型配置。
+ * Provider、模型 ID、地址和密钥由 [AgentProviderCatalogStore] 统一拥有；这里仅保存自定义分组、
+ * 某个供应商是否进入会话模型选择器，以及不参与请求的模型显示名称。
  */
 class AgentModelLibraryStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(
@@ -114,7 +114,7 @@ class AgentModelLibraryStore(context: Context) {
     }
 
     /**
-     * 原子替换一个供应商的模型显示名称。模型 ID 仍由 Agent 原生配置拥有并参与真实请求；
+     * 原子替换一个供应商的模型显示名称。模型 ID 仍由统一 Provider 目录拥有并参与真实请求；
      * 与 ID 相同的名称不需要额外保存，因此旧数据和默认行为都可以自然回退到模型 ID。
      */
     fun replaceProviderModelDisplayNames(

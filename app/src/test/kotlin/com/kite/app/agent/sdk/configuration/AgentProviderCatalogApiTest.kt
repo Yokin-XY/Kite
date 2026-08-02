@@ -74,6 +74,31 @@ class AgentProviderCatalogApiTest {
     }
 
     @Test
+    fun `启动兼容迁移不会扫描免费或改写官方目录`() = runTest {
+        api.saveOfficialVersion(
+            target,
+            accountId = "official-account",
+            sourceVersion = "login-v1",
+            providers = listOf(
+                AgentCatalogProvider(
+                    id = "official",
+                    displayName = "官方登录",
+                    models = listOf(AgentCatalogModel("official-model")),
+                    source = AgentModelSource.OfficialLogin,
+                    policy = AgentProviderCatalogPolicy.OfficialLoginVersion,
+                ),
+            ),
+        )
+
+        val warnings = api.migrateLegacyUserProviders(target)
+
+        assertTrue(warnings.isEmpty())
+        assertEquals(1, adapter.importCalls)
+        assertEquals(0, adapter.freeScanCalls)
+        assertEquals("login-v1", api.snapshot(target).providers.single { it.id == "official" }.sourceVersion)
+    }
+
+    @Test
     fun `免费更新不会替换Kite保存的官方登录版本`() = runTest {
         api.saveOfficialVersion(
             target,

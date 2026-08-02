@@ -26,6 +26,8 @@ import com.kite.app.agent.contract.AgentTurnResult
 import com.kite.app.agent.contract.KiteAgentConnection
 import com.kite.app.agent.contract.KiteAgentProvider
 import com.kite.app.agent.config.AgentSessionModelSelection
+import com.kite.app.agent.config.AgentSessionConfigurationEffect
+import com.kite.app.agent.sdk.configuration.AgentProviderPreparationResult
 import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationStore
 import kotlinx.coroutines.CompletableDeferred
@@ -45,6 +47,11 @@ data class AgentRuntimeStartRequest(
         target: AgentDraftModelSelection,
         options: List<AgentConfigOption>
     ) -> AgentSessionModelSelection? = { _, _ -> null },
+    val prepareDraftModelSelection: suspend (
+        target: AgentDraftModelSelection
+    ) -> AgentProviderPreparationResult = {
+        AgentProviderPreparationResult.Ready()
+    },
     val initialDraftCatalog: AgentDraftCapabilityCatalog = AgentDraftCapabilityCatalog(),
     val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {}
 )
@@ -102,13 +109,19 @@ object AgentRuntimeRegistry {
         @Volatile var session: AgentRuntimeSession,
         val defaultCwd: String,
         val additionalDirectories: List<String>,
-        val connection: KiteAgentConnection,
+        @Volatile var connection: KiteAgentConnection,
+        val provider: KiteAgentProvider,
+        val connectionRequest: AgentConnectionRequest,
+        val endpoint: AgentClientEndpoint,
         val statusSink: AgentRuntimeStatusSink,
         val normalizeConfiguration: (List<AgentConfigOption>) -> List<AgentConfigOption>,
         val resolveDraftModelSelection: (
             target: AgentDraftModelSelection,
             options: List<AgentConfigOption>
         ) -> AgentSessionModelSelection?,
+        val prepareDraftModelSelection: suspend (
+            target: AgentDraftModelSelection
+        ) -> AgentProviderPreparationResult,
         val sessionOperationMutex: Mutex = Mutex(),
         @Volatile var draftModelSelection: AgentDraftModelSelection? = null,
         @Volatile var draftCatalog: AgentDraftCapabilityCatalog = AgentDraftCapabilityCatalog(),
@@ -227,13 +240,11 @@ object AgentRuntimeRegistry {
                 }
             }
         )
-        val connected = provider.connect(
-            AgentConnectionRequest(
-                client = AgentClientInfo(name = "kite", version = "1", title = "Kite"),
-                capabilities = AgentClientCapabilities()
-            ),
-            endpoint
+        val connectionRequest = AgentConnectionRequest(
+            client = AgentClientInfo(name = "kite", version = "1", title = "Kite"),
+            capabilities = AgentClientCapabilities(),
         )
+        val connected = provider.connect(connectionRequest, endpoint)
         val connection = when (connected) {
             is AgentOperationResult.Success -> connected.value
             is AgentOperationResult.Failure -> return connected
@@ -299,9 +310,13 @@ object AgentRuntimeRegistry {
             defaultCwd = request.cwd,
             additionalDirectories = additionalDirectories,
             connection = connection,
+            provider = provider,
+            connectionRequest = connectionRequest,
+            endpoint = endpoint,
             statusSink = statusSink,
             normalizeConfiguration = request.normalizeConfiguration,
             resolveDraftModelSelection = request.resolveDraftModelSelection,
+            prepareDraftModelSelection = request.prepareDraftModelSelection,
             draftCatalog = observedCatalog,
             onDraftCatalogChanged = request.onDraftCatalogChanged,
         )
@@ -594,6 +609,11 @@ object AgentRuntimeRegistry {
             ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
         if (content.isEmpty()) return AgentOperationResult.Failure("消息内容为空")
         return active.sessionOperationMutex.withLock {
+            when (val prepared = active.prepareDraftProvider()) {
+                is AgentOperationResult.Success -> Unit
+                is AgentOperationResult.Failure -> return@withLock prepared
+                is AgentOperationResult.Unsupported -> return@withLock prepared
+            }
             if (active.session.isDraft) {
                 when (val created = active.connection.newSession(
                     AgentNewSessionRequest(active.session.cwd, active.additionalDirectories)
@@ -882,6 +902,68 @@ object AgentRuntimeRegistry {
             option.id in publishedIds ||
                 (option.category != null && option.category in publishedCategories)
         } + published
+    }
+
+    private suspend fun ActiveRuntime.prepareDraftProvider(): AgentOperationResult<Unit> {
+        val target = draftModelSelection ?: return AgentOperationResult.Success(Unit)
+        return when (val prepared = prepareDraftModelSelection(target)) {
+            is AgentProviderPreparationResult.Failed -> AgentOperationResult.Failure(prepared.message)
+            is AgentProviderPreparationResult.Ready -> when {
+                !prepared.nativeConfigurationChanged -> AgentOperationResult.Success(Unit)
+                prepared.effect == AgentSessionConfigurationEffect.Reconnect -> reconnectForProviderSelection()
+                prepared.effect == AgentSessionConfigurationEffect.NewSession && !session.isDraft -> {
+                    enterDraft(session.cwd)
+                    AgentOperationResult.Success(Unit)
+                }
+                else -> AgentOperationResult.Success(Unit)
+            }
+        }
+    }
+
+    /** 新连接完全可用后才释放旧连接，失败时仍可保留用户当前会话。 */
+    private suspend fun ActiveRuntime.reconnectForProviderSelection(): AgentOperationResult<Unit> {
+        val connected = provider.connect(connectionRequest, endpoint)
+        val nextConnection = when (connected) {
+            is AgentOperationResult.Success -> connected.value
+            is AgentOperationResult.Failure -> return connected
+            is AgentOperationResult.Unsupported -> return connected
+        }
+        val previousConnection = connection
+        val previousSessionId = session.sessionId
+        val restored = previousSessionId?.let { sessionId ->
+            restoreExistingSession(
+                connection = nextConnection,
+                instanceId = session.instanceId,
+                providerId = session.providerId,
+                sessionId = sessionId,
+                cwd = session.cwd,
+                additionalDirectories = additionalDirectories,
+            )
+        }
+        val restoredSnapshot = when (restored) {
+            null -> null
+            is AgentOperationResult.Success -> restored.value
+            is AgentOperationResult.Failure -> {
+                nextConnection.disconnect()
+                return restored
+            }
+            is AgentOperationResult.Unsupported -> {
+                nextConnection.disconnect()
+                return restored
+            }
+        }
+        connection = nextConnection
+        previousConnection.disconnect()
+        if (restoredSnapshot == null) {
+            session = session.copy(
+                sessionId = null,
+                snapshot = null,
+                capabilities = nextConnection.capabilities,
+            )
+        } else {
+            activate(restoredSnapshot, session.cwd, preserveDraftPreferences = true)
+        }
+        return AgentOperationResult.Success(Unit)
     }
 
     private fun ActiveRuntime.publishDraftCatalog(next: AgentDraftCapabilityCatalog) =
