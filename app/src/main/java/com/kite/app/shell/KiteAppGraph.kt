@@ -9,7 +9,11 @@ import com.kite.app.agent.registration.KiteAgentRegistry
 import com.kite.app.agent.registration.KiteCustomAgentRegistrationStore
 import com.kite.app.agent.auth.AgentOfficialAccountManager
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
+import com.kite.app.agent.config.AdapterBackedAgentConfigurationApi
 import com.kite.app.agent.config.defaultAgentConfigAdapters
+import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
+import com.kite.app.agent.sdk.configuration.AgentSessionControlApi
+import com.kite.app.agent.sdk.configuration.RuntimeBackedAgentSessionControlApi
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.browser.BrowserHandoffCoordinator
@@ -359,6 +363,12 @@ internal class KiteAppGraph private constructor(context: Context) {
                 )
             )
         )
+    }
+    val agentConfigurationApi: AgentConfigurationApi by lazy {
+        AdapterBackedAgentConfigurationApi(agentConfigAdapterRegistry)
+    }
+    val agentSessionControlApi: AgentSessionControlApi by lazy {
+        RuntimeBackedAgentSessionControlApi()
     }
     val runInstanceCloseCoordinator: RunInstanceCloseCoordinator by lazy {
         RunInstanceCloseCoordinator(

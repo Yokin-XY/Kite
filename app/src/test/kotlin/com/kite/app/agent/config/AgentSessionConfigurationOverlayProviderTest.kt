@@ -1,5 +1,6 @@
 package com.kite.app.agent.config
 
+import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.agent.contract.AgentCapabilities
 import com.kite.app.agent.contract.AgentClientEndpoint
 import com.kite.app.agent.contract.AgentClientInfo

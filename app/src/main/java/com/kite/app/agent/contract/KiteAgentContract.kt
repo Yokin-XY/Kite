@@ -369,6 +369,8 @@ data class AgentConfigChoice(
     val extension: AgentProtocolExtension? = null,
     /** 原生 value 保持不变；这里仅携带 Kite 已验证的统一推理语义。 */
     val reasoning: AgentReasoningSemantics? = null,
+    /** 权限选项才使用；Adapter 必须显式声明能够真实兑现的 Kite 权限语义。 */
+    val permission: AgentPermissionLevel? = null,
     /** 模型选项才使用；为 null 表示旧适配器尚未声明来源。 */
     val modelSource: AgentModelSource? = null,
 )

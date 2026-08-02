@@ -8,6 +8,7 @@ import com.kite.app.agent.contract.AgentPermissionKind
 import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentPermissionRequest
 import com.kite.app.agent.contract.AgentModelSource
+import com.kite.app.agent.contract.AgentPermissionLevel
 
 /** Agent 原生持久配置可由适配器安全管理的能力。 */
 enum class AgentPersistentConfigCapability {
@@ -284,24 +285,6 @@ enum class AgentSessionConfigurationEffect {
 }
 
 /**
- * Kite 对外稳定的权限语义。适配器只声明能够由 Agent 原生能力真实兑现的档位，
- * 原生 ID 仍由 [AgentPermissionProfileSummary.id] 保留。
- */
-enum class AgentPermissionLevel(
-    val displayName: String,
-    val description: String,
-    val order: Int,
-) {
-    ReadOnly("只读", "只允许读取内容，不执行写入或高风险操作", 1),
-    Restricted("受限", "只允许已明确放行的操作，其余请求被阻止", 2),
-    Approval("审批", "敏感操作会先请求你确认", 3),
-    Lenient("宽松", "常规操作直接执行，高风险操作仍受控制", 4),
-    Smart("智能", "自动判断风险，不确定时再请求你确认", 5),
-    Full("完全", "关闭普通审批，以 Agent 可用的最高权限运行", 6),
-    Custom("自定义", "使用 Agent 原生配置中的自定义权限规则", 7),
-}
-
-/**
  * Agent 原生权限档位的安全投影。
  *
  * [id] 必须保留 Agent 官方配置值；[displayName] 只负责中文显示，不能改变原生语义或合并档位。
@@ -360,6 +343,7 @@ data class AgentSessionPermissionControl(
                 value = profile.id,
                 name = profile.level.displayName,
                 description = profile.level.description,
+                permission = profile.level,
             )
         },
     )

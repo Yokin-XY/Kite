@@ -37,7 +37,7 @@ import com.kite.app.agent.config.AgentMcpTransport
 import com.kite.app.agent.config.AgentPersistentConfigCapability
 import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentPermissionProfileSummary
-import com.kite.app.agent.config.AgentPermissionLevel
+import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.agent.config.AgentSessionPermissionControl
 import com.kite.app.agent.config.AgentSessionPermissionHandling
 import com.kite.app.agent.config.AgentProviderCredentialChange
