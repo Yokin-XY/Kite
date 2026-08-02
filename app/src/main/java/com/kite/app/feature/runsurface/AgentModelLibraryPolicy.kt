@@ -37,8 +37,14 @@ internal object AgentModelLibraryPolicy {
         val configured = snapshot.providers.map { provider ->
             val displayProvider = provider.copy(
                 models = provider.models.map { model ->
+                    val libraryModelId = when (provider.source) {
+                        AgentModelSource.UserConfigured -> model.id
+                        AgentModelSource.Free,
+                        AgentModelSource.OfficialLogin -> model.id.takeIf { it.startsWith("${provider.id}/") }
+                            ?: "${provider.id}/${model.id}"
+                    }
                     model.copy(
-                        displayName = library.modelDisplayName(provider.id, model.id, model.displayName)
+                        displayName = library.modelDisplayName(provider.id, libraryModelId, model.displayName)
                     )
                 }
             )
@@ -55,9 +61,13 @@ internal object AgentModelLibraryPolicy {
                 name = provider.displayName,
                 models = models,
                 source = provider.source,
-                editableProvider = displayProvider,
+                editableProvider = displayProvider.takeIf { provider.source == AgentModelSource.UserConfigured },
                 selectedModelValue = selectedModel,
-                libraryGroupId = library.providerGroupId(provider.id),
+                libraryGroupId = when (provider.source) {
+                    AgentModelSource.Free -> AgentModelLibraryStore.FREE_GROUP_ID
+                    AgentModelSource.OfficialLogin -> AgentModelLibraryStore.OFFICIAL_GROUP_ID
+                    AgentModelSource.UserConfigured -> library.providerGroupId(provider.id)
+                },
                 visibleInConversation = selectedModel != null || library.isProviderVisible(provider.id)
             )
         }

@@ -433,6 +433,40 @@ class AgentModelLibraryPolicyTest {
         assertEquals("free/free-small", provider.models.single().description)
     }
 
+    @Test
+    fun `持久快照中的免费来源保持系统只读与完整模型值别名`() {
+        val snapshot = AgentLiveConfigSnapshot(
+            agentId = "opencode",
+            adapterId = "opencode",
+            revision = "1",
+            displayLocation = "/root/.config/opencode/opencode.jsonc",
+            defaultModel = "opencode/big-pickle",
+            providers = listOf(
+                AgentProviderSummary(
+                    id = "opencode",
+                    displayName = "OpenCode",
+                    models = listOf(AgentProviderModelSummary("big-pickle", "Big Pickle")),
+                    source = AgentModelSource.Free,
+                )
+            ),
+        )
+        val library = AgentModelLibrarySnapshot(
+            providers = mapOf(
+                "opencode" to AgentModelLibraryProviderPreference(
+                    modelDisplayNames = mapOf("opencode/big-pickle" to "免费轻量")
+                )
+            )
+        )
+
+        val provider = AgentModelLibraryPolicy.projectProviders(snapshot, null, library).single()
+
+        assertEquals(AgentModelSource.Free, provider.source)
+        assertEquals(null, provider.editableProvider)
+        assertEquals(AgentModelLibraryStore.FREE_GROUP_ID, provider.libraryGroupId)
+        assertEquals("opencode/big-pickle", provider.models.single().value)
+        assertEquals("免费轻量", provider.models.single().name)
+    }
+
     private fun modelOption(current: String = "zhipu/glm-5.2") = AgentConfigOption.Select(
         id = "model",
         name = "模型",

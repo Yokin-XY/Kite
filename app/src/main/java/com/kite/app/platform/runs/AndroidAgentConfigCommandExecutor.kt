@@ -60,7 +60,7 @@ internal class AndroidAgentConfigCommandExecutor(
                     process.stop()
                     stdout.cancel()
                     stderr.cancel()
-                    AgentConfigCommandExecutionResult.Failed("Agent MCP 连接检查超时")
+                    AgentConfigCommandExecutionResult.Failed("Agent 配置命令超时")
                 } else {
                     AgentConfigCommandExecutionResult.Completed.of(exitCode, stdout.await(), stderr.await())
                 }
@@ -74,7 +74,8 @@ internal class AndroidAgentConfigCommandExecutor(
 
     private companion object {
         const val COMMAND_TIMEOUT_MS = 30_000L
-        const val MAX_OUTPUT_LINES = 256
+        // 详细模型目录可能超过数百行；仍保留总行数与单行双重上限。
+        const val MAX_OUTPUT_LINES = 2_048
         const val MAX_LINE_LENGTH = 2_048
     }
 }

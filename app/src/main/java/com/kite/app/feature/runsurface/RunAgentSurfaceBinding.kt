@@ -82,6 +82,7 @@ import com.kite.app.agent.config.AgentMcpDraft
 import com.kite.app.agent.config.AgentMcpOperation
 import com.kite.app.agent.config.AgentMcpSummary
 import com.kite.app.agent.config.AgentMcpTransport
+import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.AgentPersistentConfigCapability
 import com.kite.app.agent.config.AgentPermissionProfileSummary
 import com.kite.app.agent.config.AgentProviderCredentialChange
@@ -5598,7 +5599,7 @@ internal class RunAgentSurfaceBinding(
                     }
                     AgentModelDisplayName(model.value, displayName)
                 }
-                modelLibraryStore.replaceProviderModelDisplayNames(
+                modelLibraryStore.updatePublishedModelDisplayNames(
                     selected.registration.definition.agentId,
                     projection.id,
                     names,
@@ -6296,12 +6297,16 @@ internal class RunAgentSurfaceBinding(
         model: AgentConfigChoice
     ) {
         val option = providerManagerModelOption(selected.registration.definition.agentId)
-        if (option == null) {
+        val snapshotProvider = snapshot.providers.firstOrNull { it.id == provider.id }
+        val snapshotContainsModel = snapshotProvider?.models?.any { candidate ->
+            model.value == "${provider.id}/${candidate.id}" || model.value == candidate.id
+        } == true
+        if (option == null && !snapshotContainsModel) {
             Toast.makeText(context, "当前 Agent 不能把这个模型保存为默认", Toast.LENGTH_SHORT).show()
             return
         }
         val selection = AgentModelSelection(
-            configId = option.id,
+            configId = option?.id ?: NATIVE_MODEL_CONFIG_ID,
             sourceId = provider.id,
             modelId = model.value.removePrefix("${provider.id}/"),
             nativeValue = model.value,

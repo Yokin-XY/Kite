@@ -29,6 +29,7 @@ import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.contracts.ContainerStatus
 import com.kite.app.foundation.runtime.ProotViewLeaseMode
@@ -383,12 +384,16 @@ class OpenCodeAgentConfigAdapterTest {
                 )
             },
             commandExecutor = { argv, cwd ->
-                assertEquals(listOf("opencode", "mcp", "list"), argv)
                 assertEquals("/workspace", cwd)
-                AgentConfigCommandExecutionResult.Completed.of(
-                    0,
-                    listOf("│  i  ✓ demo connected", "    https://example.invalid/mcp")
-                )
+                if (argv.contains("models")) {
+                    AgentConfigCommandExecutionResult.Completed.of(0, emptyList())
+                } else {
+                    assertEquals(listOf("opencode", "mcp", "list"), argv)
+                    AgentConfigCommandExecutionResult.Completed.of(
+                        0,
+                        listOf("│  i  ✓ demo connected", "    https://example.invalid/mcp")
+                    )
+                }
             }
         )
 
@@ -819,6 +824,10 @@ class OpenCodeAgentConfigAdapterTest {
             AgentPersistentConfigChange.SetDefaultModel("opencode/big-pickle"),
             adapter.defaultModelChange(model)
         )
+        assertEquals(
+            AgentPersistentConfigChange.SetDefaultModel("opencode/big-pickle"),
+            adapter.defaultModelChange(model.copy(id = com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID))
+        )
         assertNull(adapter.defaultModelChange(model.copy(id = "vendor-model")))
         assertNull(adapter.defaultModelChange(model.copy(currentValue = "opencode/not-returned")))
         assertTrue(adapter.validate(AgentConfigApplyRequest(
@@ -895,6 +904,77 @@ class OpenCodeAgentConfigAdapterTest {
     }
 
     @Test
+    fun discoversPublicModelsBeforeAnySessionAndKeepsNativeDefaultValue() = runTest {
+        val commands = mutableListOf<List<String>>()
+        val catalogAdapter = OpenCodeAgentConfigAdapter(
+            context = context,
+            containerProvider = {
+                ContainerRecord(
+                    id = "test",
+                    displayName = "Test",
+                    imageName = "ubuntu",
+                    rootfsPath = rootfs.absolutePath,
+                    workspacePath = File(rootfs, "workspace").absolutePath,
+                    createdAt = 1L,
+                    status = ContainerStatus.RUNNING,
+                )
+            },
+            commandExecutor = { argv, cwd ->
+                commands += argv
+                assertEquals("/workspace", cwd)
+                AgentConfigCommandExecutionResult.Completed.of(0, publicCatalogOutput())
+            },
+        )
+
+        val before = (catalogAdapter.readLive(AGENT_ID) as AgentConfigReadResult.Ready).snapshot
+        val provider = before.providers.single()
+        assertEquals("opencode", provider.id)
+        assertEquals(AgentModelSource.Free, provider.source)
+        assertEquals(listOf("big-pickle", "mimo-v2.5-free"), provider.models.map { it.id })
+        assertTrue(commands.single().containsAll(listOf("--pure", "models", "opencode", "--verbose")))
+
+        val option = catalogAdapter.readSessionConfiguration(AGENT_ID)
+            .filterIsInstance<AgentConfigOption.Select>()
+            .single { it.category == AgentConfigCategory.Model }
+        assertEquals(
+            listOf("opencode/big-pickle", "opencode/mimo-v2.5-free"),
+            option.choices.map { it.value },
+        )
+        assertTrue(option.choices.all { it.modelSource == AgentModelSource.Free })
+        assertEquals(1, commands.size)
+
+        val normalizedAcpOption = catalogAdapter.normalizeSessionConfiguration(
+            listOf(
+                AgentConfigOption.Select(
+                    id = "model",
+                    name = "Model",
+                    category = AgentConfigCategory.Model,
+                    currentValue = "opencode/big-pickle",
+                    choices = listOf(
+                        AgentConfigChoice("opencode/big-pickle", "OpenCode/Big Pickle"),
+                        AgentConfigChoice("zhipu/glm-5.2", "智谱 GLM/GLM-5.2"),
+                    ),
+                )
+            )
+        ).single() as AgentConfigOption.Select
+        assertEquals(
+            listOf(AgentModelSource.Free, null),
+            normalizedAcpOption.choices.map { it.modelSource },
+        )
+
+        val applied = catalogAdapter.apply(
+            AgentConfigApplyRequest(
+                AGENT_ID,
+                before.revision,
+                listOf(AgentPersistentConfigChange.SetDefaultModel("opencode/big-pickle")),
+            )
+        ) as AgentConfigApplyResult.Applied
+        assertEquals("opencode", applied.snapshot.activeProviderId)
+        assertEquals("opencode/big-pickle", applied.snapshot.defaultModel)
+        assertTrue(File(configDir, "opencode.jsonc").readText().contains("opencode/big-pickle"))
+    }
+
+    @Test
     fun capabilitiesMatchImplementedPersistentOperations() {
         val capabilities = adapter.capabilities()
         val supported = capabilities.supported
@@ -910,5 +990,20 @@ class OpenCodeAgentConfigAdapterTest {
 
     private companion object {
         const val AGENT_ID = "opencode"
+
+        fun publicCatalogOutput(): List<String> = listOf(
+            "opencode/big-pickle",
+            "{",
+            "  \"id\": \"big-pickle\",",
+            "  \"providerID\": \"opencode\",",
+            "  \"name\": \"Big Pickle\"",
+            "}",
+            "opencode/mimo-v2.5-free",
+            "{",
+            "  \"id\": \"mimo-v2.5-free\",",
+            "  \"providerID\": \"opencode\",",
+            "  \"name\": \"MiMo V2.5 Free\"",
+            "}",
+        )
     }
 }

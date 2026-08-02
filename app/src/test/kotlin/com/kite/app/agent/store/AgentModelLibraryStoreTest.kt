@@ -106,4 +106,26 @@ class AgentModelLibraryStoreTest {
             snapshot.providers["__kite_official__:chatgpt"]?.modelDisplayNames?.keys
         )
     }
+
+    @Test
+    fun `动态系统目录更新不删除本次未公布模型的别名`() {
+        assertTrue(store.replaceProviderModelDisplayNames(
+            "opencode",
+            "opencode",
+            listOf(
+                AgentModelDisplayName("opencode/big-pickle", "免费轻量"),
+                AgentModelDisplayName("opencode/mimo-v2.5-free", "MiMo 日常"),
+            )
+        ))
+
+        assertTrue(store.updatePublishedModelDisplayNames(
+            "opencode",
+            "opencode",
+            listOf(AgentModelDisplayName("opencode/big-pickle", "Pickle"))
+        ))
+
+        val names = store.snapshot("opencode").providers.getValue("opencode").modelDisplayNames
+        assertEquals("Pickle", names["opencode/big-pickle"])
+        assertEquals("MiMo 日常", names["opencode/mimo-v2.5-free"])
+    }
 }

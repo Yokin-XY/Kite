@@ -145,6 +145,43 @@ class AgentModelLibraryStore(context: Context) {
         }
     }
 
+    /**
+     * 增量更新 Agent 公布的系统模型显示名称。
+     *
+     * 动态目录本次没有公布的模型不等于用户删除了别名；保留这些休眠项，
+     * 同一真实模型值恢复时即可继续使用原名称。提交为空或与真实值相同时清除该项。
+     */
+    fun updatePublishedModelDisplayNames(
+        agentId: String,
+        providerId: String,
+        models: List<AgentModelDisplayName>
+    ): Boolean {
+        if (agentId.isBlank() || providerId.isBlank()) return false
+        val updates = models.mapNotNull { model ->
+            val modelId = model.modelId.trim()
+            if (modelId.isBlank()) null else modelId to model.displayName.trim().take(MAX_MODEL_DISPLAY_NAME)
+        }.toMap()
+        return update(agentId) { current ->
+            val existing = current.providers[providerId]
+            val displayNames = existing?.modelDisplayNames.orEmpty().toMutableMap()
+            updates.forEach { (modelId, displayName) ->
+                if (displayName.isBlank() || displayName == modelId) displayNames.remove(modelId)
+                else displayNames[modelId] = displayName
+            }
+            if (existing?.modelDisplayNames.orEmpty() == displayNames) {
+                current to false
+            } else {
+                current.copy(
+                    providers = current.providers + (
+                        providerId to (existing ?: AgentModelLibraryProviderPreference()).copy(
+                            modelDisplayNames = displayNames
+                        )
+                    )
+                ).normalized() to true
+            }
+        }
+    }
+
     internal fun resetForTest() = synchronized(LOCK) {
         preferences.edit().clear().commit()
     }

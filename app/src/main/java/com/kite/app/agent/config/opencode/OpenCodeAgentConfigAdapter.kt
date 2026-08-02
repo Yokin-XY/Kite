@@ -57,10 +57,12 @@ import com.kite.app.agent.config.ConfigFileRevision
 import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
 import com.kite.app.agent.config.NativeAgentCoreDocumentStore
+import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.mediatedSessionPermissionControl
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.runtime.ProotViewRuntime
 import com.kite.app.foundation.runtime.ProotViewStore
@@ -90,6 +92,7 @@ internal class OpenCodeAgentConfigAdapter(
         ContainerAgentConfigProjection(containerProvider)::resolve,
         fileStore,
     )
+    private val modelCatalogReader = OpenCodeModelCatalogReader(commandExecutor)
 
     override fun capabilities(): AgentConfigCapabilities = AgentConfigCapabilities(
         supported = setOf(
@@ -133,7 +136,9 @@ internal class OpenCodeAgentConfigAdapter(
     override fun defaultModelChange(
         option: AgentConfigOption.Select
     ): AgentPersistentConfigChange.SetDefaultModel? {
-        if (option.id != MODEL_KEY || option.category != AgentConfigCategory.Model) return null
+        if (option.id !in setOf(MODEL_KEY, NATIVE_MODEL_CONFIG_ID) ||
+            option.category != AgentConfigCategory.Model
+        ) return null
         val selected = option.currentValue.takeIf { current ->
             option.choices.any { it.value == current } && OPEN_CODE_MODEL_ID.matches(current)
         } ?: return null
@@ -153,18 +158,26 @@ internal class OpenCodeAgentConfigAdapter(
     }
 
     private fun normalizeOpenCodeModelChoice(choice: AgentConfigChoice): AgentConfigChoice {
-        if (!choice.groupId.isNullOrBlank() || !choice.groupName.isNullOrBlank()) return choice
-        val providerId = choice.value.substringBefore('/').takeIf(String::isNotBlank) ?: return choice
-        val modelId = choice.value.substringAfter('/', missingDelimiterValue = "")
-        if (modelId.isBlank() || providerId == choice.value) return choice
-        val displayParts = choice.name.split('/', limit = 2)
-        val providerName = displayParts.firstOrNull()?.takeIf(String::isNotBlank) ?: providerId
-        val modelName = displayParts.getOrNull(1)?.takeIf(String::isNotBlank) ?: modelId
-        return choice.copy(
-            name = modelName,
-            groupId = providerId,
-            groupName = providerName
-        )
+        val grouped = if (!choice.groupId.isNullOrBlank() || !choice.groupName.isNullOrBlank()) {
+            choice
+        } else {
+            val providerId = choice.value.substringBefore('/').takeIf(String::isNotBlank) ?: return choice
+            val modelId = choice.value.substringAfter('/', missingDelimiterValue = "")
+            if (modelId.isBlank() || providerId == choice.value) return choice
+            val displayParts = choice.name.split('/', limit = 2)
+            val providerName = displayParts.firstOrNull()?.takeIf(String::isNotBlank) ?: providerId
+            val modelName = displayParts.getOrNull(1)?.takeIf(String::isNotBlank) ?: modelId
+            choice.copy(
+                name = modelName,
+                groupId = providerId,
+                groupName = providerName
+            )
+        }
+        return if (grouped.value in modelCatalogReader.cachedNativeValues()) {
+            grouped.copy(modelSource = AgentModelSource.Free)
+        } else {
+            grouped
+        }
     }
 
     override suspend fun discover(agentId: String): AgentConfigDiscovery {
@@ -269,10 +282,56 @@ internal class OpenCodeAgentConfigAdapter(
             return AgentConfigReadResult.Unavailable(discovery)
         }
         return runCatching {
-            AgentConfigReadResult.Ready(readState(agentId).snapshot)
+            AgentConfigReadResult.Ready(enrichPublicModelCatalog(readState(agentId).snapshot))
         }.getOrElse {
             AgentConfigReadResult.Failed("无法读取 OpenCode 原生配置")
         }
+    }
+
+    private suspend fun enrichPublicModelCatalog(
+        snapshot: AgentLiveConfigSnapshot,
+    ): AgentLiveConfigSnapshot = when (val catalog = modelCatalogReader.read()) {
+        OpenCodeModelCatalogReadResult.Unsupported -> snapshot
+        is OpenCodeModelCatalogReadResult.Failed -> snapshot.copy(
+            warnings = (snapshot.warnings + catalog.message).distinct(),
+        )
+        is OpenCodeModelCatalogReadResult.Ready -> snapshot.withPublicModelCatalog(
+            models = catalog.models,
+            warning = catalog.warning,
+        )
+    }
+
+    private fun AgentLiveConfigSnapshot.withPublicModelCatalog(
+        models: List<OpenCodeCatalogModel>,
+        warning: String?,
+    ): AgentLiveConfigSnapshot {
+        if (models.isEmpty()) {
+            return warning?.let { copy(warnings = (warnings + it).distinct()) } ?: this
+        }
+        val publicProvider = AgentProviderSummary(
+            id = OPEN_CODE_PUBLIC_PROVIDER_ID,
+            displayName = OPEN_CODE_PUBLIC_PROVIDER_NAME,
+            models = models.map { model ->
+                AgentProviderModelSummary(model.modelId, model.displayName)
+            },
+            credentialPresence = AgentCredentialPresence.Missing,
+            source = AgentModelSource.Free,
+        )
+        val existingIndex = providers.indexOfFirst { it.id == OPEN_CODE_PUBLIC_PROVIDER_ID }
+        val nextProviders = if (existingIndex >= 0) {
+            providers.toMutableList().also { it[existingIndex] = publicProvider }
+        } else {
+            providers + publicProvider
+        }
+        val defaultProviderId = defaultModel
+            ?.substringBefore('/')
+            ?.takeIf { providerId -> nextProviders.any { it.id == providerId } }
+        return copy(
+            activeProviderId = defaultProviderId,
+            providerIds = nextProviders.map(AgentProviderSummary::id),
+            providers = nextProviders,
+            warnings = (warnings + listOfNotNull(warning)).distinct(),
+        )
     }
 
     override fun validate(request: AgentConfigApplyRequest): List<AgentConfigValidationProblem> = buildList {
@@ -334,7 +393,15 @@ internal class OpenCodeAgentConfigAdapter(
         }
     }
 
-    override suspend fun apply(request: AgentConfigApplyRequest): AgentConfigApplyResult {
+    override suspend fun apply(request: AgentConfigApplyRequest): AgentConfigApplyResult =
+        when (val result = applyNative(request)) {
+            is AgentConfigApplyResult.Applied -> result.copy(
+                snapshot = enrichPublicModelCatalog(result.snapshot),
+            )
+            else -> result
+        }
+
+    private suspend fun applyNative(request: AgentConfigApplyRequest): AgentConfigApplyResult {
         val problems = validate(request)
         if (problems.isNotEmpty()) return AgentConfigApplyResult.Rejected(problems)
         val discovery = discover(request.agentId)
@@ -1572,6 +1639,8 @@ internal class OpenCodeAgentConfigAdapter(
         private const val SCHEMA_KEY = "$" + "schema"
         private const val SCHEMA_URL = "https://opencode.ai/config.json"
         private const val MODEL_KEY = "model"
+        private const val OPEN_CODE_PUBLIC_PROVIDER_ID = "opencode"
+        private const val OPEN_CODE_PUBLIC_PROVIDER_NAME = "OpenCode"
         private const val PROVIDER_KEY = "provider"
         private const val MCP_KEY = "mcp"
         private const val ENABLED_KEY = "enabled"
