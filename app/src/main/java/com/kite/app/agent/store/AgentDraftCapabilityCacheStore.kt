@@ -107,6 +107,7 @@ class AgentDraftCapabilityCacheStore(context: Context) {
                             choice.description?.safe(MAX_DESCRIPTION)?.let { put(KEY_DESCRIPTION, it) }
                             choice.groupId?.safe(MAX_ID)?.let { put(KEY_GROUP_ID, it) }
                             choice.groupName?.safe(MAX_TEXT)?.let { put(KEY_GROUP_NAME, it) }
+                            choice.modelSource?.name?.let { put(KEY_MODEL_SOURCE, it) }
                         })
                     }
                 })
@@ -156,7 +157,13 @@ class AgentDraftCapabilityCacheStore(context: Context) {
                         name = choice.optString(KEY_NAME),
                         description = choice.optString(KEY_DESCRIPTION).trim().takeIf(String::isNotBlank),
                         groupId = choice.optString(KEY_GROUP_ID).trim().takeIf(String::isNotBlank),
-                        groupName = choice.optString(KEY_GROUP_NAME).trim().takeIf(String::isNotBlank)
+                        groupName = choice.optString(KEY_GROUP_NAME).trim().takeIf(String::isNotBlank),
+                        modelSource = choice.optString(KEY_MODEL_SOURCE).trim()
+                            .takeIf(String::isNotBlank)
+                            ?.let { encoded ->
+                                runCatching { com.kite.app.agent.contract.AgentModelSource.valueOf(encoded) }
+                                    .getOrNull()
+                            },
                     )
                 }.filter { it.value.isNotBlank() && it.name.isNotBlank() }
             ).takeIf { it.choices.isNotEmpty() }
@@ -205,6 +212,7 @@ class AgentDraftCapabilityCacheStore(context: Context) {
         const val KEY_VALUE = "value"
         const val KEY_GROUP_ID = "groupId"
         const val KEY_GROUP_NAME = "groupName"
+        const val KEY_MODEL_SOURCE = "modelSource"
         const val KEY_INPUT_HINT = "inputHint"
         const val TYPE_SELECT = "select"
         const val TYPE_TOGGLE = "toggle"

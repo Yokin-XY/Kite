@@ -61,6 +61,7 @@ import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentOperationResult
 import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentSessionPhase
@@ -5188,8 +5189,8 @@ internal class RunAgentSurfaceBinding(
             library = library,
             officialAccounts = selected.registration.officialAccounts,
         )
-        val freeProviders = providers.filter { it.source == AgentModelProviderSource.DiscoveredFree }
-        val officialProviders = providers.filter { it.source == AgentModelProviderSource.Official }
+        val freeProviders = providers.filter { it.source == AgentModelSource.Free }
+        val officialProviders = providers.filter { it.source == AgentModelSource.Official }
         val canEditProviders = adapter.capabilities().supports(
             AgentPersistentConfigCapability.ProviderProfiles
         )
@@ -5418,8 +5419,10 @@ internal class RunAgentSurfaceBinding(
                     })
                     addView(TextView(context).apply {
                         text = buildString {
-                            if (projection.source == AgentModelProviderSource.DiscoveredFree) append("免费 · ")
-                            if (projection.source == AgentModelProviderSource.Official) append("官方 · ")
+                            if (projection.source == AgentModelSource.Free) append("免费 · ")
+                            if (projection.source == AgentModelSource.Official) append("官方 · ")
+                            if (projection.source == AgentModelSource.AgentBuiltIn) append("Agent 内置 · ")
+                            if (projection.source == AgentModelSource.UserConfigured) append("用户自定义 · ")
                             if (isDefault) append("当前默认 · ")
                             if (officialState != null) {
                                 append(officialState.status.officialAccountLabel())
@@ -5656,11 +5659,13 @@ internal class RunAgentSurfaceBinding(
             addView(sectionTitle(
                 projection.name,
                 when (projection.source) {
-                    AgentModelProviderSource.Official ->
+                    AgentModelSource.Official ->
                         "官方模型目录与登录状态由系统管理；这里只修改 Kite 显示名称。"
-                    AgentModelProviderSource.DiscoveredFree ->
+                    AgentModelSource.Free ->
                         "免费模型目录由 Agent 提供；这里只修改 Kite 显示名称。"
-                    AgentModelProviderSource.Configured ->
+                    AgentModelSource.AgentBuiltIn ->
+                        "Agent 内置模型目录由 Agent 提供；这里只修改 Kite 显示名称。"
+                    AgentModelSource.UserConfigured ->
                         "显示名称只影响 Kite 界面。"
                 }
             ))
@@ -6429,7 +6434,7 @@ internal class RunAgentSurfaceBinding(
         provider: AgentModelProviderProjection,
         model: AgentConfigChoice
     ) {
-        val selection = if (provider.source == AgentModelProviderSource.Configured) {
+        val selection = if (provider.source == AgentModelSource.UserConfigured) {
             val modelId = model.value.removePrefix("${provider.id}/")
             AgentPersistentConfigChange.SelectProvider(provider.id, modelId)
         } else {

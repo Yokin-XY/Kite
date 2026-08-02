@@ -347,6 +347,18 @@ sealed interface AgentConfigOption {
     ) : AgentConfigOption
 }
 
+/**
+ * 模型的真实来源。来源由 Agent 适配器显式声明，显示层不得根据模型名或分组名猜测。
+ */
+enum class AgentModelSource(
+    val displayName: String,
+) {
+    Free("免费"),
+    Official("官方"),
+    AgentBuiltIn("Agent 内置"),
+    UserConfigured("用户自定义"),
+}
+
 data class AgentConfigChoice(
     val value: String,
     val name: String,
@@ -355,7 +367,9 @@ data class AgentConfigChoice(
     val groupName: String? = null,
     val extension: AgentProtocolExtension? = null,
     /** 原生 value 保持不变；这里仅携带 Kite 已验证的统一推理语义。 */
-    val reasoning: AgentReasoningSemantics? = null
+    val reasoning: AgentReasoningSemantics? = null,
+    /** 模型选项才使用；为 null 表示旧适配器尚未声明来源。 */
+    val modelSource: AgentModelSource? = null,
 )
 
 sealed interface AgentConfigValue {

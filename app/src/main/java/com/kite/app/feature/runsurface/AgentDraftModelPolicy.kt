@@ -56,7 +56,8 @@ internal object AgentDraftModelPolicy {
                         it != library.modelDisplayName(provider.id, model.id, model.displayName)
                     },
                     groupId = provider.id,
-                    groupName = provider.displayName
+                    groupName = provider.displayName,
+                    modelSource = provider.source,
                 )
             }
         }
@@ -71,7 +72,8 @@ internal object AgentDraftModelPolicy {
                 name = displayChoice.name,
                 description = displayChoice.description,
                 groupId = providerId,
-                groupName = choice.groupName?.takeIf(String::isNotBlank) ?: providerId
+                groupName = choice.groupName?.takeIf(String::isNotBlank) ?: providerId,
+                modelSource = choice.modelSource,
             )
         }
         val choices = (configuredChoices + discoveredChoices).distinctBy(AgentConfigChoice::value)

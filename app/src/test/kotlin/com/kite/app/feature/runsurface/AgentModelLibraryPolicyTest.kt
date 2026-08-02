@@ -6,6 +6,7 @@ import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.registration.AgentOfficialAccountCommand
 import com.kite.app.agent.registration.AgentOfficialAccountSpec
 import com.kite.app.agent.store.AgentModelLibraryStore
@@ -55,9 +56,37 @@ class AgentModelLibraryPolicyTest {
         val providers = AgentModelLibraryPolicy.projectProviders(snapshot, modelOption(), AgentModelLibrarySnapshot())
 
         assertEquals(listOf("zhipu", "mimo", "builtin"), providers.map { it.id })
-        assertEquals(AgentModelProviderSource.Configured, providers.first().source)
-        assertTrue(providers.drop(1).all { it.source == AgentModelProviderSource.DiscoveredFree })
+        assertEquals(AgentModelSource.UserConfigured, providers.first().source)
+        assertTrue(providers.drop(1).all { it.source == AgentModelSource.Free })
         assertTrue(providers.last().editableProvider == null)
+    }
+
+    @Test
+    fun `显式声明的Agent内置模型不会被兼容回退标成免费`() {
+        val option = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "codex/default",
+            choices = listOf(
+                AgentConfigChoice(
+                    value = "codex/default",
+                    name = "Codex 默认",
+                    groupId = "codex",
+                    groupName = "Codex",
+                    modelSource = AgentModelSource.AgentBuiltIn,
+                )
+            ),
+        )
+
+        val provider = AgentModelLibraryPolicy.projectProviders(
+            snapshot = AgentLiveConfigSnapshot("codex", "codex", "1", "/config"),
+            modelOption = option,
+            library = AgentModelLibrarySnapshot(),
+        ).single()
+
+        assertEquals(AgentModelSource.AgentBuiltIn, provider.source)
+        assertFalse(provider.source == AgentModelSource.Free)
     }
 
     @Test
@@ -295,7 +324,7 @@ class AgentModelLibraryPolicyTest {
             officialAccounts = listOf(account),
         )
 
-        val official = providers.single { it.source == AgentModelProviderSource.Official }
+        val official = providers.single { it.source == AgentModelSource.Official }
         assertEquals("__kite_official__:chatgpt", official.id)
         assertEquals("ChatGPT 官方", official.name)
         assertEquals(listOf("openai/gpt-5.6"), official.models.map { it.value })
@@ -304,7 +333,7 @@ class AgentModelLibraryPolicyTest {
         assertEquals(AgentModelLibraryStore.OFFICIAL_GROUP_ID, official.libraryGroupId)
         assertEquals(account, official.officialAccount)
         assertEquals(null, official.editableProvider)
-        assertFalse(providers.any { it.source == AgentModelProviderSource.DiscoveredFree && it.id == "openai" })
+        assertFalse(providers.any { it.source == AgentModelSource.Free && it.id == "openai" })
     }
 
     @Test

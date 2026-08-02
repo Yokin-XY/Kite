@@ -31,6 +31,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentSessionConfigurationOverlayProviderTest {
+    @Test(expected = IllegalStateException::class)
+    fun `自定义权限不能由通用审批代理伪造`() {
+        mediatedSessionPermissionControl(AgentPermissionLevel.Custom)
+    }
+
     @Test
     fun sessionPermissionOptionCanSeedAnEmptyDraftBeforeAgentSessionExists() {
         val mediated = mediatedSessionPermissionControl(

@@ -6,21 +6,16 @@ import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.store.AgentModelLibrarySnapshot
 import com.kite.app.agent.store.AgentModelLibraryStore
 import com.kite.app.agent.registration.AgentOfficialAccountSpec
-
-internal enum class AgentModelProviderSource {
-    Configured,
-    Official,
-    DiscoveredFree
-}
 
 internal data class AgentModelProviderProjection(
     val id: String,
     val name: String,
     val models: List<AgentConfigChoice>,
-    val source: AgentModelProviderSource,
+    val source: AgentModelSource,
     val editableProvider: AgentProviderSummary? = null,
     val officialAccount: AgentOfficialAccountSpec? = null,
     val selectedModelValue: String? = null,
@@ -59,7 +54,7 @@ internal object AgentModelLibraryPolicy {
                 id = provider.id,
                 name = provider.displayName,
                 models = models,
-                source = AgentModelProviderSource.Configured,
+                source = provider.source,
                 editableProvider = displayProvider,
                 selectedModelValue = selectedModel,
                 libraryGroupId = library.providerGroupId(provider.id),
@@ -79,7 +74,7 @@ internal object AgentModelLibraryPolicy {
                 id = providerId,
                 name = account.displayName,
                 models = displayChoices,
-                source = AgentModelProviderSource.Official,
+                source = AgentModelSource.Official,
                 officialAccount = account,
                 selectedModelValue = selectedModel,
                 libraryGroupId = AgentModelLibraryStore.OFFICIAL_GROUP_ID,
@@ -87,17 +82,22 @@ internal object AgentModelLibraryPolicy {
             )
         }
         val discovered = modelOption?.choices.orEmpty()
-            .groupBy { it.groupId ?: it.groupName ?: UNGROUPED_ID }
-            .filterKeys { it !in configuredIds && it !in officialGroupIds }
-            .map { (groupId, choices) ->
+            .groupBy { choice ->
+                val groupId = choice.groupId ?: choice.groupName ?: UNGROUPED_ID
+                groupId to (choice.modelSource ?: AgentModelSource.Free)
+            }
+            .filterKeys { (groupId, _) -> groupId !in configuredIds && groupId !in officialGroupIds }
+            .map { (sourceKey, choices) ->
+                val (groupId, source) = sourceKey
                 val providerId = groupId.ifBlank { UNGROUPED_ID }
                 val displayChoices = choices.map { choice -> withDisplayName(choice, library, providerId) }
                 val selectedModel = selectedModelValue(snapshot, providerId, displayChoices)
                 AgentModelProviderProjection(
                     id = providerId,
-                    name = choices.firstOrNull()?.groupName?.takeIf(String::isNotBlank) ?: "Agent 内置",
+                    name = choices.firstOrNull()?.groupName?.takeIf(String::isNotBlank)
+                        ?: source.defaultProviderName(),
                     models = displayChoices,
-                    source = AgentModelProviderSource.DiscoveredFree,
+                    source = source,
                     selectedModelValue = selectedModel,
                     visibleInConversation = selectedModel != null || library.isProviderVisible(providerId)
                 )
@@ -180,7 +180,8 @@ internal object AgentModelLibraryPolicy {
         name = model.displayName,
         description = model.id.takeIf { it != model.displayName },
         groupId = provider.id,
-        groupName = provider.displayName
+        groupName = provider.displayName,
+        modelSource = provider.source,
     )
 
     private fun AgentConfigChoice.providerGroupId(): String? =
@@ -188,4 +189,11 @@ internal object AgentModelLibraryPolicy {
 
     private const val UNGROUPED_ID = "__kite_agent_builtin__"
     internal fun officialProviderId(accountId: String): String = "__kite_official__:$accountId"
+
+    private fun AgentModelSource.defaultProviderName(): String = when (this) {
+        AgentModelSource.Free -> "免费模型"
+        AgentModelSource.Official -> "官方模型"
+        AgentModelSource.AgentBuiltIn -> "Agent 内置"
+        AgentModelSource.UserConfigured -> "用户自定义"
+    }
 }

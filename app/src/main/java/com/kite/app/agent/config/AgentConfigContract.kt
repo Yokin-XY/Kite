@@ -6,6 +6,7 @@ import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentPermissionKind
 import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentPermissionRequest
+import com.kite.app.agent.contract.AgentModelSource
 
 /** Agent 原生持久配置可由适配器安全管理的能力。 */
 enum class AgentPersistentConfigCapability {
@@ -251,7 +252,9 @@ data class AgentProviderSummary(
     val displayName: String = id,
     val baseUrl: String? = null,
     val models: List<AgentProviderModelSummary> = emptyList(),
-    val credentialPresence: AgentCredentialPresence = AgentCredentialPresence.Unknown
+    val credentialPresence: AgentCredentialPresence = AgentCredentialPresence.Unknown,
+    /** 供应商来源必须由适配器声明；可编辑的普通供应商默认属于用户自定义。 */
+    val source: AgentModelSource = AgentModelSource.UserConfigured,
 )
 
 /** 配置页面提交给适配器的通用供应商资料，不包含 Agent 原生文件结构。 */
@@ -294,6 +297,7 @@ enum class AgentPermissionLevel(
     Lenient("宽松", "常规操作直接执行，高风险操作仍受控制", 4),
     Smart("智能", "自动判断风险，不确定时再请求你确认", 5),
     Full("完全", "关闭普通审批，以 Agent 可用的最高权限运行", 6),
+    Custom("自定义", "使用 Agent 原生配置中的自定义权限规则", 7),
 }
 
 /**
@@ -398,7 +402,7 @@ fun mediatedSessionPermissionControl(
 /**
  * 从 Agent 的原生权限目录生成当前会话目录。
  *
- * 原生 ID、Kite 六档语义和选项数量都原样保留；适配器只补充每个原生档位到审批中介的
+ * 原生 ID、Kite 权限语义和选项数量都原样保留；适配器只补充每个原生档位到审批中介的
  * 处理方式。这样设置页与会话页可以拥有不同当前值，但不会出现会话页越过原生上限。
  */
 fun mediatedSessionPermissionControl(
