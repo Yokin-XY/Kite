@@ -487,6 +487,36 @@ class KiteResourceRegistry(context: Context) {
     fun runningPlanResourceIds(environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> =
         runningPlanResourceIds(database.readableDatabase, planId(environmentId))
 
+    /**
+     * 应用进程重新建立资源协调器时，旧进程留下的 running 步骤已经没有运行所有者。
+     * 把这些步骤恢复为 pending，保留原计划和依赖顺序，交由安装向导显式续跑。
+     */
+    fun recoverInterruptedPlan(environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> {
+        val activePlanId = planId(environmentId)
+        val recovered = mutableListOf<String>()
+        val now = System.currentTimeMillis()
+        database.writableDatabase.runInTransaction {
+            recovered += runningPlanResourceIds(this, activePlanId)
+            if (recovered.isEmpty()) return@runInTransaction
+            update(
+                TABLE_PLAN_STEP,
+                ContentValues().apply {
+                    put(COL_STATUS, PLAN_STEP_PENDING)
+                    put(COL_UPDATED_AT, now)
+                },
+                "$COL_PLAN_ID = ? AND $COL_STATUS = ?",
+                arrayOf(activePlanId, PLAN_STEP_RUNNING),
+            )
+            update(
+                TABLE_PLAN,
+                ContentValues().apply { put(COL_UPDATED_AT, now) },
+                "$COL_PLAN_ID = ?",
+                arrayOf(activePlanId),
+            )
+        }
+        return recovered.distinct()
+    }
+
     fun planResourceIds(environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> =
         planResourceIds(database.readableDatabase, planId(environmentId))
 
@@ -1126,7 +1156,7 @@ class KiteResourceRegistry(context: Context) {
 
         const val PLAN_STATUS_PREPARING = "preparing"
         const val PLAN_STATUS_ACTIVE = "active"
-        private const val PLAN_STEP_PENDING = "pending"
+        const val PLAN_STEP_PENDING = "pending"
         const val PLAN_STEP_RUNNING = "running"
         const val PLAN_STEP_DONE = "done"
 

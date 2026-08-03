@@ -105,4 +105,28 @@ class KiteResourcePreparingPlanTest {
         store.clearPlan(firstEnvironment)
         store.clearPlan(secondEnvironment)
     }
+
+    @Test
+    fun `进程重建会把失去所有者的运行步骤恢复为待获取`() {
+        val suffix = System.nanoTime()
+        val environmentId = "interrupted-plan-$suffix"
+        val targetId = "test.resource.interrupted.$suffix"
+        val firstStore = KiteResourceInstallStore(context, environmentId)
+        firstStore.clearPlan(environmentId)
+        assertTrue(firstStore.beginPreparingPlan(targetId, environmentId))
+        assertTrue(firstStore.activatePreparedPlan(targetId, listOf(targetId), environmentId))
+        assertTrue(firstStore.markPlanStepRunning(targetId, environmentId))
+        firstStore.markInstalling(targetId, environmentId = environmentId)
+        assertEquals(listOf(targetId), firstStore.planSnapshot(environmentId).runningResourceIds)
+
+        val restoredStore = KiteResourceInstallStore(context, environmentId)
+        val restoredPlan = restoredStore.planSnapshot(environmentId)
+
+        assertTrue(restoredPlan.runningResourceIds.isEmpty())
+        assertEquals(listOf(targetId), restoredPlan.pendingResourceIds)
+        assertFalse(restoredStore.isInstalling(targetId, environmentId))
+
+        restoredStore.clearPlan(environmentId)
+        restoredStore.clear(targetId, environmentId)
+    }
 }

@@ -143,7 +143,10 @@ internal class AndroidResourceActionGateway(
             )
         }
 
-        val currentPlan = installStore.planSnapshot(environmentId)
+        val currentPlan = reconcileInstalledPlanSteps(
+            installStore.planSnapshot(environmentId),
+            environmentId,
+        )
         if (currentPlan.targetResourceId.isNotBlank()) {
             return openCurrentInstallPlan(target, currentPlan, environmentId)
         }
@@ -445,13 +448,17 @@ internal class AndroidResourceActionGateway(
             }
         )
         if (target.id in plan.resourceIds && plan.isActive) {
+            val planTarget = target(plan.targetResourceId) ?: target
+            val wizard = installWizardEffect(planTarget, plan.resourceIds, environmentId)
+            val visibleEffects = if (parentInstanceId == null) listOf(wizard) else emptyList()
+            val runParentInstanceId = parentInstanceId ?: wizard.instanceId
             if (runCoordinator.startRejectionReason() == RUN_NOTIFICATIONS_REQUIRED) {
-                return notice + ResourceActionEffect.RequireNotifications
+                return visibleEffects + notice + ResourceActionEffect.RequireNotifications
             }
-            return if (runCoordinator.startNextPlannedInstall(parentInstanceId)) {
-                notice
+            return if (runCoordinator.startNextPlannedInstall(runParentInstanceId)) {
+                visibleEffects + notice
             } else {
-                notice + explicitResult("获取队列已恢复，但下一项未能启动，请再次点击重新获取")
+                visibleEffects + notice + explicitResult("获取队列已恢复，但下一项未能启动，请在向导中重试")
             }
         }
         if (plan.targetResourceId.isBlank()) {
@@ -632,7 +639,7 @@ internal class AndroidResourceActionGateway(
         }
     }
 
-    private fun openCurrentInstallPlan(
+    private suspend fun openCurrentInstallPlan(
         requestedTarget: ResourceTarget,
         plan: KiteResourcePlanSnapshot,
         environmentId: String,
@@ -640,16 +647,48 @@ internal class AndroidResourceActionGateway(
         val targetId = plan.targetResourceId.takeIf(String::isNotBlank)
             ?: return message("${requestedTarget.name} 当前没有可恢复的获取任务")
         val belongsToPlan = requestedTarget.id == targetId || requestedTarget.id in plan.resourceIds
-        if (!belongsToPlan) {
-            val activeName = target(targetId)?.name ?: targetId
-            return message("$activeName 正在获取，请先完成或取消当前任务")
+        val planTarget = target(targetId)
+        if (planTarget == null) {
+            clearInstallTask(targetId, plan.resourceIds, environmentId)
+            return explicitResult("旧获取任务缺少资源定义，已自动清理") +
+                installLocked(requestedTarget.id, environmentId)
         }
-        val planTarget = target(targetId) ?: requestedTarget
         val effect = installWizardEffect(planTarget, plan.resourceIds, environmentId)
         if (plan.isPreparing) {
             launchInstallPreparation(planTarget, effect, environmentId)
         }
-        return listOf(effect)
+        val conflictNotice: List<ResourceActionEffect> = if (belongsToPlan) {
+            emptyList()
+        } else {
+            explicitResult("${planTarget.name} 仍有未完成的获取任务，请先完成或取消")
+        }
+        return listOf(effect) + conflictNotice
+    }
+
+    private fun reconcileInstalledPlanSteps(
+        snapshot: KiteResourcePlanSnapshot,
+        environmentId: String,
+    ): KiteResourcePlanSnapshot {
+        var current = snapshot
+        while (current.isActive) {
+            val nextUnsettled = current.resourceIds.firstOrNull { resourceId ->
+                current.stepStatus(resourceId) != KiteResourceInstallStore.PLAN_STEP_DONE
+            }
+            if (nextUnsettled == null) {
+                installStore.clearPlan(environmentId)
+                return installStore.planSnapshot(environmentId)
+            }
+            val status = current.stepStatus(nextUnsettled)
+            if (status != KiteResourceInstallStore.PLAN_STEP_RUNNING &&
+                status != KiteResourceInstallStore.PLAN_STEP_PENDING
+            ) break
+            if (!installStore.isInstalled(nextUnsettled, environmentId)) break
+            val previous = current
+            installStore.advancePlanAfter(nextUnsettled, environmentId)
+            current = installStore.planSnapshot(environmentId)
+            if (current == previous) break
+        }
+        return current
     }
 
     private fun launchInstallPreparation(

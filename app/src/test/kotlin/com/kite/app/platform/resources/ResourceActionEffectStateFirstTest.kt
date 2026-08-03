@@ -27,6 +27,18 @@ class ResourceActionEffectStateFirstTest {
     }
 
     @Test
+    fun `恢复计划会返回安装向导且计划冲突不会只发可过滤消息`() {
+        val source = File(
+            "src/main/java/com/kite/app/platform/resources/AndroidResourceActionGateway.kt"
+        ).readText()
+
+        assertTrue(source.contains("val visibleEffects = if (parentInstanceId == null) listOf(wizard)"))
+        assertTrue(source.contains("return listOf(effect) + conflictNotice"))
+        assertTrue(source.contains("explicitResult(\"\${planTarget.name} 仍有未完成的获取任务"))
+        assertFalse(source.contains("return message(\"\$activeName 正在获取，请先完成或取消当前任务\")"))
+    }
+
+    @Test
     fun `需要运行窗口时先启动再从同一实例读取代次`() {
         val request = request("visible-resource", "visible-instance")
         val generation = 71L

@@ -28,6 +28,7 @@ class KiteResourceInstallStore(
 
     init {
         ensureEnvironmentSnapshot(activeEnvironmentId)
+        reconcileInterruptedPlan(activeEnvironmentId)
         reconcileOrphanedPreparingState(activeEnvironmentId)
     }
 
@@ -40,6 +41,8 @@ class KiteResourceInstallStore(
         val previous = activeEnvironmentId
         if (previous == next) return
         ensureEnvironmentSnapshot(next)
+        reconcileInterruptedPlan(next)
+        reconcileOrphanedPreparingState(next)
         val affected = synchronized(signalLock) {
             (snapshotForLocked(previous).keys + snapshotForLocked(next).keys).distinct()
         }
@@ -355,6 +358,26 @@ class KiteResourceInstallStore(
         )
     }
 
+    private fun reconcileInterruptedPlan(environmentId: String) {
+        val interrupted = registry.recoverInterruptedPlan(environmentId)
+        if (interrupted.isEmpty()) return
+        refreshPlanSnapshot(environmentId)
+        val incomplete = interrupted.filterNot { resourceId ->
+            registry.isInstalled(resourceId, environmentId)
+        }
+        clearResourceFacts(
+            resourceIds = incomplete,
+            reason = "reconcileInterruptedPlanResourceFacts",
+            environmentId = environmentId,
+        )
+        emitSignal(
+            reason = "reconcileInterruptedPlan",
+            targetResourceId = planSnapshot(environmentId).targetResourceId,
+            affectedResourceIds = interrupted,
+            environmentId = environmentId,
+        )
+    }
+
     fun invalidateChangedInstallations(
         resourceIds: Collection<String>,
         environmentId: String = currentEnvironmentId()
@@ -622,6 +645,7 @@ class KiteResourceInstallStore(
         const val UPDATE_STATUS_UNSUPPORTED = "unsupported"
         const val UPDATE_STATUS_FAILED = "failed"
         const val PLAN_STEP_DONE = KiteResourceRegistry.PLAN_STEP_DONE
+        const val PLAN_STEP_PENDING = KiteResourceRegistry.PLAN_STEP_PENDING
         const val PLAN_STEP_RUNNING = KiteResourceRegistry.PLAN_STEP_RUNNING
         const val PLAN_STEP_FAILED = KiteResourceRegistry.PLAN_STEP_FAILED
         const val PLAN_STEP_BLOCKED = KiteResourceRegistry.PLAN_STEP_BLOCKED
