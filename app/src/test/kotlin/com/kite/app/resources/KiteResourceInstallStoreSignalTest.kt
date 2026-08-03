@@ -215,7 +215,7 @@ class KiteResourceInstallStoreSignalTest {
     }
 
     @Test
-    fun `启动时保留仍由执行队列承接的准备状态`() {
+    fun `启动时清理没有进程所有者的准备计划`() {
         val environmentId = "planned-preparing-${System.nanoTime()}"
         val planned = "test.resource.planned.${System.nanoTime()}"
         val registry = KiteResourceRegistry(context)
@@ -226,9 +226,9 @@ class KiteResourceInstallStoreSignalTest {
 
         val store = KiteResourceInstallStore(context, environmentId)
 
-        assertTrue(store.isPreparing(planned, environmentId))
-        assertEquals(planned, store.planSnapshot(environmentId).targetResourceId)
-        assertTrue(store.planSnapshot(environmentId).isPreparing)
+        assertFalse(store.isPreparing(planned, environmentId))
+        assertTrue(store.planSnapshot(environmentId).targetResourceId.isBlank())
+        assertFalse(store.planSnapshot(environmentId).isPreparing)
         assertTrue(store.planSnapshot(environmentId).resourceIds.isEmpty())
         store.clear(planned, environmentId)
         store.clearPlan(environmentId)

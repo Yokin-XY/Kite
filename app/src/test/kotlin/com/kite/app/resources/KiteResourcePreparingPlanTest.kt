@@ -107,26 +107,52 @@ class KiteResourcePreparingPlanTest {
     }
 
     @Test
-    fun `进程重建会把失去所有者的运行步骤恢复为待获取`() {
+    fun `进程重建会把失去所有者的运行步骤结算到具体资源并释放环境计划`() {
         val suffix = System.nanoTime()
         val environmentId = "interrupted-plan-$suffix"
         val targetId = "test.resource.interrupted.$suffix"
-        val firstStore = KiteResourceInstallStore(context, environmentId)
-        firstStore.clearPlan(environmentId)
-        assertTrue(firstStore.beginPreparingPlan(targetId, environmentId))
-        assertTrue(firstStore.activatePreparedPlan(targetId, listOf(targetId), environmentId))
-        assertTrue(firstStore.markPlanStepRunning(targetId, environmentId))
-        firstStore.markInstalling(targetId, environmentId = environmentId)
-        assertEquals(listOf(targetId), firstStore.planSnapshot(environmentId).runningResourceIds)
+        val registry = KiteResourceRegistry(context)
+        registry.clearPlan(environmentId)
+        registry.clear(targetId, environmentId)
+        assertTrue(registry.beginPreparingPlan(targetId, environmentId))
+        assertTrue(registry.activatePreparedPlan(targetId, listOf(targetId), environmentId))
+        assertTrue(registry.markPlanStepRunning(targetId, environmentId))
+        registry.markInstalling(targetId, environmentId = environmentId)
 
         val restoredStore = KiteResourceInstallStore(context, environmentId)
         val restoredPlan = restoredStore.planSnapshot(environmentId)
 
+        assertTrue(restoredPlan.resourceIds.isEmpty())
         assertTrue(restoredPlan.runningResourceIds.isEmpty())
-        assertEquals(listOf(targetId), restoredPlan.pendingResourceIds)
         assertFalse(restoredStore.isInstalling(targetId, environmentId))
+        assertTrue(restoredStore.isFailed(targetId, environmentId))
+        assertEquals(KiteResourceInstallStore.OP_INSTALL, restoredStore.failedOperation(targetId, environmentId))
+        assertTrue(restoredStore.registryEntry(targetId, environmentId)?.summary?.contains("上次获取被中断") == true)
 
-        restoredStore.clearPlan(environmentId)
         restoredStore.clear(targetId, environmentId)
+    }
+
+    @Test
+    fun `失败步骤结算后不再占用其他资源的环境计划入口`() {
+        val suffix = System.nanoTime()
+        val environmentId = "failed-plan-release-$suffix"
+        val failedId = "test.resource.hermes.$suffix"
+        val nextId = "test.resource.reasonix.$suffix"
+        val store = KiteResourceInstallStore(context, environmentId)
+        store.clearPlan(environmentId)
+        store.clear(failedId, environmentId)
+
+        store.beginPlan(failedId, listOf(failedId), environmentId)
+        assertTrue(store.markPlanStepRunning(failedId, environmentId))
+        store.markFailed(failedId, KiteResourceInstallStore.OP_INSTALL, "failed-run", "network", environmentId)
+        store.failPlanAt(failedId, environmentId)
+
+        assertTrue(store.planSnapshot(environmentId).targetResourceId.isBlank())
+        assertTrue(store.isFailed(failedId, environmentId))
+        assertTrue(store.beginPreparingPlan(nextId, environmentId))
+        assertEquals(nextId, store.planSnapshot(environmentId).targetResourceId)
+
+        store.clearPlan(environmentId)
+        store.clear(failedId, environmentId)
     }
 }

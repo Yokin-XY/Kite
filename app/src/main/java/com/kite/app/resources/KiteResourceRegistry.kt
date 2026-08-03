@@ -487,36 +487,6 @@ class KiteResourceRegistry(context: Context) {
     fun runningPlanResourceIds(environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> =
         runningPlanResourceIds(database.readableDatabase, planId(environmentId))
 
-    /**
-     * 应用进程重新建立资源协调器时，旧进程留下的 running 步骤已经没有运行所有者。
-     * 把这些步骤恢复为 pending，保留原计划和依赖顺序，交由安装向导显式续跑。
-     */
-    fun recoverInterruptedPlan(environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> {
-        val activePlanId = planId(environmentId)
-        val recovered = mutableListOf<String>()
-        val now = System.currentTimeMillis()
-        database.writableDatabase.runInTransaction {
-            recovered += runningPlanResourceIds(this, activePlanId)
-            if (recovered.isEmpty()) return@runInTransaction
-            update(
-                TABLE_PLAN_STEP,
-                ContentValues().apply {
-                    put(COL_STATUS, PLAN_STEP_PENDING)
-                    put(COL_UPDATED_AT, now)
-                },
-                "$COL_PLAN_ID = ? AND $COL_STATUS = ?",
-                arrayOf(activePlanId, PLAN_STEP_RUNNING),
-            )
-            update(
-                TABLE_PLAN,
-                ContentValues().apply { put(COL_UPDATED_AT, now) },
-                "$COL_PLAN_ID = ?",
-                arrayOf(activePlanId),
-            )
-        }
-        return recovered.distinct()
-    }
-
     fun planResourceIds(environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> =
         planResourceIds(database.readableDatabase, planId(environmentId))
 
@@ -600,6 +570,10 @@ class KiteResourceRegistry(context: Context) {
         return remaining
     }
 
+    /**
+     * 失败事实属于具体资源；环境级计划只负责串行调度，不能在失败后继续占用入口。
+     * 资源失败已经由运行协调器写入登记表，这里把计划失败与释放执行槽放在同一事务。
+     */
     fun failPlanAt(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID) {
         val activePlanId = planId(environmentId)
         val normalized = normalizeResourceId(resourceId)
@@ -636,6 +610,7 @@ class KiteResourceRegistry(context: Context) {
                 "$COL_PLAN_ID = ?",
                 arrayOf(activePlanId)
             )
+            clearPlanLocked(this, activePlanId)
         }
     }
 

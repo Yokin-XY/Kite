@@ -27,9 +27,10 @@ class KiteResourceInstallStore(
     private var activeEnvironmentId = normalizeEnvironmentId(initialEnvironmentId)
 
     init {
-        ensureEnvironmentSnapshot(activeEnvironmentId)
-        reconcileInterruptedPlan(activeEnvironmentId)
-        reconcileOrphanedPreparingState(activeEnvironmentId)
+        if (ensureEnvironmentSnapshot(activeEnvironmentId)) {
+            reconcileInterruptedPlan(activeEnvironmentId)
+            reconcileOrphanedPreparingState(activeEnvironmentId)
+        }
     }
 
     val signals: StateFlow<KiteResourceInstallSignal> = sharedSignals
@@ -40,9 +41,10 @@ class KiteResourceInstallStore(
         val next = normalizeEnvironmentId(environmentId)
         val previous = activeEnvironmentId
         if (previous == next) return
-        ensureEnvironmentSnapshot(next)
-        reconcileInterruptedPlan(next)
-        reconcileOrphanedPreparingState(next)
+        if (ensureEnvironmentSnapshot(next)) {
+            reconcileInterruptedPlan(next)
+            reconcileOrphanedPreparingState(next)
+        }
         val affected = synchronized(signalLock) {
             (snapshotForLocked(previous).keys + snapshotForLocked(next).keys).distinct()
         }
@@ -359,21 +361,45 @@ class KiteResourceInstallStore(
     }
 
     private fun reconcileInterruptedPlan(environmentId: String) {
-        val interrupted = registry.recoverInterruptedPlan(environmentId)
-        if (interrupted.isEmpty()) return
-        refreshPlanSnapshot(environmentId)
-        val incomplete = interrupted.filterNot { resourceId ->
-            registry.isInstalled(resourceId, environmentId)
+        val plan = registry.planSnapshot(environmentId)
+        if (plan.targetResourceId.isBlank()) return
+        val interrupted = plan.runningResourceIds.distinct()
+        interrupted.forEach { resourceId ->
+            val previous = registry.entry(resourceId, environmentId)
+            registry.markFailed(
+                resourceId = resourceId,
+                operation = OP_INSTALL,
+                runId = previous?.runId,
+                reason = "上次获取被中断，请清理后重试",
+                environmentId = environmentId,
+            )
         }
-        clearResourceFacts(
-            resourceIds = incomplete,
-            reason = "reconcileInterruptedPlanResourceFacts",
-            environmentId = environmentId,
-        )
+        val affected = (plan.resourceIds + plan.targetResourceId)
+            .filter(String::isNotBlank)
+            .distinct()
+        val transient = affected.filter { resourceId ->
+            resourceId !in interrupted &&
+                registry.entry(resourceId, environmentId)?.let { entry ->
+                    entry.busy && !entry.installed && !entry.failed
+                } == true
+        }
+        registry.clear(transient, environmentId)
+        installedSnapshots.clear(transient, environmentId)
+        registry.clearPlan(environmentId)
+        synchronized(signalLock) {
+            val snapshot = snapshotForLocked(normalizeEnvironmentId(environmentId))
+            transient.forEach(snapshot::remove)
+            interrupted.forEach { resourceId ->
+                registry.entry(resourceId, environmentId)?.let { snapshot[resourceId] = it }
+            }
+        }
+        refreshPlanSnapshot(environmentId)
         emitSignal(
             reason = "reconcileInterruptedPlan",
-            targetResourceId = planSnapshot(environmentId).targetResourceId,
-            affectedResourceIds = interrupted,
+            targetResourceId = plan.targetResourceId,
+            affectedResourceIds = affected,
+            status = if (interrupted.isNotEmpty()) STATUS_FAILED else "",
+            operation = if (interrupted.isNotEmpty()) OP_INSTALL else "",
             environmentId = environmentId,
         )
     }
@@ -465,13 +491,31 @@ class KiteResourceInstallStore(
     }
 
     fun failPlanAt(resourceId: String, environmentId: String = currentEnvironmentId()) {
+        val previous = planSnapshot(environmentId)
         registry.failPlanAt(resourceId, environmentId)
-        val plan = refreshPlanSnapshot(environmentId)
+        refreshPlanSnapshot(environmentId)
+        val transient = (previous.resourceIds + previous.targetResourceId)
+            .filter(String::isNotBlank)
+            .distinct()
+            .filter { candidate ->
+                candidate != KiteResourceInstallRecipes.safeId(resourceId) &&
+                    registry.entry(candidate, environmentId)?.let { entry ->
+                        entry.busy && !entry.installed && !entry.failed
+                    } == true
+            }
+        if (transient.isNotEmpty()) {
+            registry.clear(transient, environmentId)
+            installedSnapshots.clear(transient, environmentId)
+            synchronized(signalLock) {
+                val snapshot = snapshotForLocked(normalizeEnvironmentId(environmentId))
+                transient.forEach(snapshot::remove)
+            }
+        }
         emitSignal(
             reason = "failPlanAt",
             resourceId = resourceId,
-            targetResourceId = plan.targetResourceId,
-            affectedResourceIds = plan.resourceIds + resourceId,
+            targetResourceId = previous.targetResourceId,
+            affectedResourceIds = previous.resourceIds + previous.targetResourceId + resourceId,
             environmentId = environmentId
         )
     }
@@ -530,14 +574,15 @@ class KiteResourceInstallStore(
         pageCache.clearExpired()
     }
 
-    private fun ensureEnvironmentSnapshot(environmentId: String) {
+    private fun ensureEnvironmentSnapshot(environmentId: String): Boolean {
         val normalizedEnvironmentId = normalizeEnvironmentId(environmentId)
-        synchronized(signalLock) {
-            if (normalizedEnvironmentId in initializedEnvironments) return
+        return synchronized(signalLock) {
+            if (normalizedEnvironmentId in initializedEnvironments) return@synchronized false
             sharedRegistrySnapshots[normalizedEnvironmentId] =
                 registry.snapshot(environmentId = normalizedEnvironmentId).toMutableMap()
             sharedPlanSnapshots[normalizedEnvironmentId] = registry.planSnapshot(normalizedEnvironmentId)
             initializedEnvironments += normalizedEnvironmentId
+            true
         }
     }
 
