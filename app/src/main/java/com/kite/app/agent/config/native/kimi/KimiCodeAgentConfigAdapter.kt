@@ -21,11 +21,19 @@ import com.kite.app.agent.config.AgentMcpSummary
 import com.kite.app.agent.config.AgentMcpTransport
 import com.kite.app.agent.config.AgentPersistentConfigCapability
 import com.kite.app.agent.config.AgentPersistentConfigChange
+import com.kite.app.agent.config.AgentReasoningControl
+import com.kite.app.agent.config.AgentReasoningNativeMapping
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
 import com.kite.app.agent.config.NativeAgentManagedOutputFormat
+import com.kite.app.agent.config.standardReasoningLevelMappings
+import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentMode
+import com.kite.app.agent.contract.AgentPermissionLevel
+import com.kite.app.agent.contract.AgentReasoningMode
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import java.io.File
@@ -51,6 +59,38 @@ internal class KimiCodeAgentConfigAdapter(
     )
 
     override fun displayName(): String = "Kimi Code"
+
+    override fun reasoningControl(): AgentReasoningControl = KIMI_REASONING_CONTROL
+
+    override fun normalizeSessionModes(modes: List<AgentMode>): List<AgentMode> =
+        modes.filterNot { it.id in KIMI_PERMISSION_LEVELS }
+
+    override fun normalizeSessionConfiguration(options: List<AgentConfigOption>): List<AgentConfigOption> =
+        super.normalizeSessionConfiguration(options).mapNotNull { option ->
+            if (
+                option !is AgentConfigOption.Select ||
+                option.id != MODE_CONFIG_ID ||
+                option.category != AgentConfigCategory.Mode
+            ) return@mapNotNull option
+            val choices = option.choices.mapNotNull { choice ->
+                val level = KIMI_PERMISSION_LEVELS[choice.value] ?: return@mapNotNull null
+                choice.copy(
+                    name = level.displayName,
+                    description = level.description,
+                    permission = level,
+                )
+            }
+            if (choices.size < 2 || choices.none { it.value == option.currentValue }) {
+                null
+            } else {
+                option.copy(
+                    name = "权限",
+                    description = "Kimi Code 当前会话真实提供的审批与执行模式",
+                    category = AgentConfigCategory.Permission,
+                    choices = choices,
+                )
+            }
+        }
 
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = buildList {
         add(NativeAgentCoreDocumentSpec(
@@ -376,6 +416,18 @@ internal class KimiCodeAgentConfigAdapter(
 
     companion object {
         const val ADAPTER_ID = "kimi-code"
+        private const val MODE_CONFIG_ID = "mode"
+        private val KIMI_PERMISSION_LEVELS = mapOf(
+            "plan" to AgentPermissionLevel.ReadOnly,
+            "default" to AgentPermissionLevel.Approval,
+            "auto" to AgentPermissionLevel.Smart,
+            "yolo" to AgentPermissionLevel.Full,
+        )
+        private val KIMI_REASONING_CONTROL = AgentReasoningControl(
+            standardReasoningLevelMappings() +
+                AgentReasoningNativeMapping("on", AgentReasoningMode.Enabled) +
+                AgentReasoningNativeMapping("auto", AgentReasoningMode.Adaptive),
+        )
         private const val MCP_KEY = "mcp"
         private const val MCP_PATH = "/root/.kimi-code/mcp.json"
         private const val MCP_SERVERS_KEY = "mcpServers"

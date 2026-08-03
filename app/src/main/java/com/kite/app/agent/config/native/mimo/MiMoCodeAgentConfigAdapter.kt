@@ -27,9 +27,14 @@ import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
+import com.kite.app.agent.config.AgentSessionPermissionControl
+import com.kite.app.agent.config.AgentWorkModeCatalog
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
 import com.kite.app.agent.config.NativeAgentManagedOutputFormat
+import com.kite.app.agent.config.mediatedSessionPermissionControl
+import com.kite.app.agent.contract.AgentMode
+import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import java.net.URI
@@ -54,6 +59,22 @@ internal class MiMoCodeAgentConfigAdapter(
     )
 
     override fun displayName(): String = "MiMo Code"
+
+    override fun sessionPermissionControl(): AgentSessionPermissionControl =
+        mediatedSessionPermissionControl(
+            AgentPermissionLevel.Restricted,
+            AgentPermissionLevel.Approval,
+            AgentPermissionLevel.Full,
+        )
+
+    override fun bundledWorkModeCatalog(agentId: String): AgentWorkModeCatalog = AgentWorkModeCatalog(
+        modes = MIMO_BUILT_IN_MODES.values.toList(),
+        defaultModeId = MODE_BUILD,
+    )
+
+    override fun normalizeSessionModes(modes: List<AgentMode>): List<AgentMode> = modes.map { mode ->
+        MIMO_BUILT_IN_MODES[mode.id] ?: mode
+    }
 
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = buildList {
         add(NativeAgentCoreDocumentSpec(
@@ -375,6 +396,12 @@ internal class MiMoCodeAgentConfigAdapter(
 
     companion object {
         const val ADAPTER_ID = "mimo-code"
+        private const val MODE_BUILD = "build"
+        private val MIMO_BUILT_IN_MODES = linkedMapOf(
+            MODE_BUILD to AgentMode(MODE_BUILD, "构建", "按当前权限执行代码修改和工具操作"),
+            "plan" to AgentMode("plan", "计划", "分析并制定计划，阻止计划文件之外的编辑"),
+            "compose" to AgentMode("compose", "编排", "调用内置编排 Skill 组织复合任务；原生已标记为弃用"),
+        )
         private const val CONFIG_KEY = "config"
         private const val CONFIG_PATH = "/root/.config/mimocode/mimocode.jsonc"
         private const val SCHEMA_URL = "https://mimo.xiaomi.com/mimocode/config.json"

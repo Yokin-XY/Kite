@@ -75,6 +75,25 @@
     "installRoot": "/workspace/.kf/software/kite.qwen.code",
     "binRoot": "/workspace/.kf/bin"
   },
+  "agents": [
+    {
+      "id": "qwen",
+      "name": "Qwen Code",
+      "description": "Qwen Code 原生 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "qwen-code"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "qwen",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["qwen", "--acp"],
+        "title": "Qwen Code"
+      }
+    }
+  ],
   "actions": {
     "install": [
       {
@@ -118,8 +137,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"Qwen Code 首次启动用 /auth 配置 Qwen 或其他 Provider。\"\nqwen\n"
+            "type": "agent",
+            "agentId": "qwen",
+            "workdir": "/workspace"
           }
         ]
       }
@@ -155,8 +175,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"Qwen Code 首次启动用 /auth 配置 Qwen 或其他 Provider。\"\nqwen\n"
+            "type": "agent",
+            "agentId": "qwen",
+            "workdir": "/workspace"
           }
         ]
       }

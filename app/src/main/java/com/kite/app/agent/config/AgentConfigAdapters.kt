@@ -7,6 +7,7 @@ import com.kite.app.agent.config.native.HermesAgentConfigAdapter
 import com.kite.app.agent.config.native.KimiCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.MiMoCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.OpenClawAgentConfigAdapter
+import com.kite.app.agent.config.native.QwenCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.ReasonixAgentConfigAdapter
 import com.kite.app.agent.config.opencode.OpenCodeAgentConfigAdapter
 
@@ -25,5 +26,6 @@ internal fun defaultAgentConfigAdapters(
     HermesAgentConfigAdapter(context.applicationContext),
     OpenClawAgentConfigAdapter(context.applicationContext),
     MiMoCodeAgentConfigAdapter(context.applicationContext),
+    QwenCodeAgentConfigAdapter(),
     ReasonixAgentConfigAdapter(),
 )

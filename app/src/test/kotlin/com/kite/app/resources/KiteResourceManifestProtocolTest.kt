@@ -423,6 +423,7 @@ class KiteResourceManifestProtocolTest {
             Expected("kite.mimo.code", "mimo", "MiMo Code", listOf("mimo", "acp"), "mimo-code"),
             Expected("kite.openclaw", "openclaw", "OpenClaw", listOf("openclaw", "acp"), "openclaw"),
             Expected("kite.opencode", "opencode", "OpenCode", listOf("opencode", "acp"), "opencode"),
+            Expected("kite.qwen.code", "qwen", "Qwen Code", listOf("qwen", "--acp"), "qwen-code"),
             Expected("kite.reasonix", "reasonix", "Reasonix", listOf("reasonix", "acp"), "reasonix"),
         )
 
