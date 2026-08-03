@@ -12,7 +12,7 @@ import com.kite.app.agent.contract.AgentSessionEvent
 import com.kite.app.agent.process.AgentProcessChannel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -24,7 +24,7 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class PiRpcAgentProviderTest {
     @Test
-    fun `maps native rpc catalog prompt and stream into sdk`() = runTest {
+    fun `maps native rpc catalog prompt and stream into sdk`() = runBlocking {
         val channel = FakePiChannel()
         val events = mutableListOf<AgentSessionEvent>()
         val provider = PiRpcAgentProvider(

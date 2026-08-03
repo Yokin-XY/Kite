@@ -45,7 +45,19 @@ class KiteAppGraphTest {
         val graph = KiteAppGraph.from(ApplicationProvider.getApplicationContext())
 
         assertEquals(
-            setOf("opencode", "codex", "claude-code", "hermes", "openclaw", "kimi-code", "mimo-code"),
+            setOf(
+                "opencode",
+                "codex",
+                "claude-code",
+                "kimi-code",
+                "hermes",
+                "gemini-cli",
+                "pi-coding-agent",
+                "openclaw",
+                "mimo-code",
+                "qwen-code",
+                "reasonix",
+            ),
             graph.agentConfigAdapterRegistry.adapterIds()
         )
     }

@@ -521,7 +521,7 @@ class KiteResourceManifestProtocolTest {
                 "Nous Portal 官方",
                 listOf("hermes", "portal", "info"),
                 listOf("hermes", "portal", "login"),
-                listOf("hermes", "logout", "--provider", "nous"),
+                listOf("hermes", "auth", "logout", "nous"),
             ),
             Expected(
                 "kite.kimi.code",
