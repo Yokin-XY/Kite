@@ -3,6 +3,7 @@ package com.kite.app
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import com.kite.app.diagnostics.KiteDiagnostics
 
 class CardShortcutPinnedReceiver : BroadcastReceiver() {
@@ -17,5 +18,6 @@ class CardShortcutPinnedReceiver : BroadcastReceiver() {
                 "shortcutId" to shortcutId
             )
         )
+        Toast.makeText(context.applicationContext, "桌面快捷方式已创建", Toast.LENGTH_SHORT).show()
     }
 }

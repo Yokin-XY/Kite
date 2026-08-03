@@ -195,8 +195,12 @@ internal class RecipeEditorFragment : Fragment() {
         override fun onSetKeepFinishedNotification(enabled: Boolean) =
             dispatch(RecipeEditorAction.SetKeepFinishedNotification(enabled))
 
-        override fun onSetShortcutRequested(requested: Boolean) =
+        override fun onSetShortcutRequested(requested: Boolean) {
+            if (requested && !controller.state.value.draft.shortcutRequested) {
+                Toast.makeText(requireContext(), "已选择，保存后将申请添加到桌面", Toast.LENGTH_SHORT).show()
+            }
             dispatch(RecipeEditorAction.SetShortcutRequested(requested))
+        }
 
         override fun onPutStep(index: Int?, step: RecipeEditorStepDraft) =
             dispatch(RecipeEditorAction.PutStep(index, step))

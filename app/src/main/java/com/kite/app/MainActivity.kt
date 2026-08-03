@@ -53,6 +53,7 @@ import com.kite.app.application.runs.DesktopOpenCoordinator
 import com.kite.app.application.runs.DesktopOpenRequest
 import com.kite.app.application.runs.RuntimeOwnerProbeCoordinator
 import com.kite.app.application.runs.RuntimeOwnerProbeRequest
+import com.kite.app.application.resources.ResourceActionMessagePolicy
 import com.kite.app.application.browser.BrowserOpenCoordinator
 import com.kite.app.application.browser.BrowserOpenRequest as BrowserOpenWorkflowRequest
 import com.kite.app.application.browser.BrowserOpenResult
@@ -102,6 +103,10 @@ import com.kite.app.theme.ThemeSelection
 import com.kite.app.application.theme.ThemeEnvironmentDependenciesOwner
 import com.kite.app.ui.theme.applyKiteWindowTheme
 import com.kite.app.ui.theme.isSystemDarkTheme
+import com.kite.app.ui.theme.kiteThemeEnvironment
+import com.kite.app.ui.UiActionRole
+import com.kite.app.ui.UiDialogAction
+import com.kite.app.ui.UiKit
 import com.kite.app.R
 import com.kite.app.foundation.bootstrap.StartupTraceStore
 import com.kite.app.foundation.runtime.RuntimeAutomationActions
@@ -1748,15 +1753,23 @@ open class MainActivity : AppCompatActivity() {
                         generation = effect.generation,
                     )
                 )
-                is ResourceActionEffect.Message -> showResourceDiscreteToast(effect.text)
+                is ResourceActionEffect.Message -> showResourceDiscreteToast(
+                    message = effect.text,
+                    presentation = effect.presentation,
+                )
                 ResourceActionEffect.RequireNotifications ->
                     RunNotificationPermissionFragment.request(supportFragmentManager, "Kite 资源任务", "resource-start")
             }
         }
     }
 
-    private fun showResourceDiscreteToast(message: String, length: Int = Toast.LENGTH_SHORT) {
-        if (currentScreen !in RESOURCE_STATUS_SCREENS) {
+    private fun showResourceDiscreteToast(
+        message: String,
+        presentation: com.kite.app.application.resources.ResourceActionMessagePresentation =
+            com.kite.app.application.resources.ResourceActionMessagePresentation.StatusAware,
+        length: Int = Toast.LENGTH_SHORT,
+    ) {
+        if (ResourceActionMessagePolicy.shouldShow(presentation, currentScreen in RESOURCE_STATUS_SCREENS)) {
             Toast.makeText(this, message, length).show()
         }
     }
@@ -2183,20 +2196,50 @@ open class MainActivity : AppCompatActivity() {
         }.commitNowAllowingStateLoss()
     }
 
-    private fun requestShortcutForRecipe(recipe: KiteRecipe): Boolean {
-        if (recipe.id.isBlank()) return false
-        if (CardShortcutManager.hasPinnedShortcut(this, recipe.id)) {
-            Toast.makeText(this, "桌面图标已存在", Toast.LENGTH_SHORT).show()
-            return true
+    private fun requestShortcutForRecipe(recipe: KiteRecipe): Boolean =
+        when (val result = CardShortcutManager.requestPinnedShortcut(this, recipe)) {
+            CardShortcutRequestResult.AlreadyPinned -> {
+                Toast.makeText(this, "桌面快捷方式已存在", Toast.LENGTH_SHORT).show()
+                true
+            }
+            CardShortcutRequestResult.Submitted -> {
+                Toast.makeText(this, "已提交申请，请在系统弹窗中确认", Toast.LENGTH_SHORT).show()
+                true
+            }
+            CardShortcutRequestResult.Unsupported -> {
+                showShortcutSettingsGuidance("当前桌面未接受快捷方式创建请求。")
+                false
+            }
+            is CardShortcutRequestResult.Failed -> {
+                showShortcutSettingsGuidance("创建请求失败：${result.reason}")
+                false
+            }
         }
 
-        val requested = CardShortcutManager.requestPinnedShortcut(this, recipe)
-        if (requested) {
-            Toast.makeText(this, "已提交桌面快捷方式申请", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(this, "当前桌面不支持自动创建快捷方式", Toast.LENGTH_SHORT).show()
-        }
-        return requested
+    private fun showShortcutSettingsGuidance(message: String) {
+        UiKit(this, kiteThemeEnvironment()).showConfirmDialog(
+            context = this,
+            title = "无法创建桌面快捷方式",
+            message = "$message\n\n请在系统设置中允许 Kite 创建桌面快捷方式，然后返回重试。",
+            dismissLabel = "稍后",
+            primaryAction = UiDialogAction(
+                label = "打开应用设置",
+                role = UiActionRole.Primary,
+                onClick = ::openShortcutApplicationSettings,
+            ),
+        )
+    }
+
+    private fun openShortcutApplicationSettings() {
+        val details = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:$packageName"),
+        )
+        runCatching { startActivity(details) }
+            .recoverCatching { startActivity(Intent(Settings.ACTION_APPLICATION_SETTINGS)) }
+            .onFailure {
+                Toast.makeText(this, "无法打开应用设置", Toast.LENGTH_SHORT).show()
+            }
     }
 
     private fun showRecipeRawJson(recipe: KiteRecipe) {

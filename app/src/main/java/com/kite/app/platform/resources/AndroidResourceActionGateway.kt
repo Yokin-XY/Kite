@@ -505,8 +505,8 @@ internal class AndroidResourceActionGateway(
 
     override suspend fun createHomeCard(resourceId: String): List<ResourceActionEffect> =
         withContext(Dispatchers.IO) {
-            val target = target(resourceId) ?: return@withContext message("资源目录正在更新，请稍后重试")
-            val template = homeCardTemplate(target) ?: return@withContext message("${target.name} 暂无首页卡片模板")
+            val target = target(resourceId) ?: return@withContext explicitResult("资源目录正在更新，请稍后重试")
+            val template = homeCardTemplate(target) ?: return@withContext explicitResult("${target.name} 暂无首页卡片模板")
             runCatching {
                 val managedRecipeId = KiteResourceInstallRecipes.recipeId(target.id, "open")
                 val base = template.optJSONObject("base") ?: JSONObject().also { template.put("base", it) }
@@ -519,8 +519,8 @@ internal class AndroidResourceActionGateway(
                 )
                 recipeFeatureGateway.invalidateCatalog("resource_home_card_added")
             }.fold(
-                onSuccess = { message("已添加 ${target.name} 到首页") },
-                onFailure = { message("添加失败：${it.message ?: it.javaClass.simpleName}") }
+                onSuccess = { explicitResult("已添加 ${target.name} 到首页") },
+                onFailure = { explicitResult("添加失败：${it.message ?: it.javaClass.simpleName}") }
             )
         }
 
@@ -1132,6 +1132,14 @@ internal class AndroidResourceActionGateway(
 
     private fun message(text: String): List<ResourceActionEffect> =
         listOf(ResourceActionEffect.Message(text))
+
+    private fun explicitResult(text: String): List<ResourceActionEffect> =
+        listOf(
+            ResourceActionEffect.Message(
+                text = text,
+                presentation = com.kite.app.application.resources.ResourceActionMessagePresentation.ExplicitResult,
+            )
+        )
 
     private fun RunCommandResult.Ignored.asResourceStartEffect(prefix: String): List<ResourceActionEffect> =
         if (reason == RUN_NOTIFICATIONS_REQUIRED) {

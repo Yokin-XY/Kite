@@ -20,6 +20,13 @@ import com.kite.app.recipe.KiteRecipeIcon
 import java.io.File
 import android.graphics.BitmapFactory
 
+sealed interface CardShortcutRequestResult {
+    data object AlreadyPinned : CardShortcutRequestResult
+    data object Submitted : CardShortcutRequestResult
+    data object Unsupported : CardShortcutRequestResult
+    data class Failed(val reason: String) : CardShortcutRequestResult
+}
+
 object CardShortcutManager {
     fun iconBitmap(recipe: KiteRecipe): Bitmap = shortcutBitmap(recipe)
     fun iconBitmap(context: Context, recipe: KiteRecipe): Bitmap = shortcutBitmap(context, recipe)
@@ -31,32 +38,41 @@ object CardShortcutManager {
         return shortcutManager.pinnedShortcuts.any { it.id == id }
     }
 
-    fun requestPinnedShortcut(context: Context, recipe: KiteRecipe): Boolean {
+    fun requestPinnedShortcut(context: Context, recipe: KiteRecipe): CardShortcutRequestResult {
+        if (recipe.id.isBlank()) return CardShortcutRequestResult.Failed("卡片尚未保存")
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            return requestLegacyInstallShortcut(context, recipe)
+            return if (requestLegacyInstallShortcut(context, recipe)) {
+                CardShortcutRequestResult.Submitted
+            } else {
+                CardShortcutRequestResult.Failed("系统未接受桌面快捷方式请求")
+            }
         }
-        val shortcutManager = context.getSystemService(ShortcutManager::class.java) ?: return false
+        val shortcutManager = context.getSystemService(ShortcutManager::class.java)
+            ?: return CardShortcutRequestResult.Unsupported
         if (!shortcutManager.isRequestPinShortcutSupported) {
-            return requestLegacyInstallShortcut(context, recipe)
+            return CardShortcutRequestResult.Unsupported
         }
 
         val shortcutId = shortcutId(recipe.id)
-        val shortcut = ShortcutInfo.Builder(context, shortcutId)
-            .setShortLabel(recipe.name.take(10).ifBlank { "Kite" })
-            .setLongLabel(recipe.name.ifBlank { "Kite 卡片" })
-            .setIcon(Icon.createWithBitmap(shortcutBitmap(context, recipe)))
-            .setActivity(ComponentName(context, CardRunActivity::class.java))
-            .setIntent(
-                CardRunIntents.launchIntent(
-                    context = context,
-                    recipeId = recipe.id,
-                    launchSource = CardRunIntents.SOURCE_SHORTCUT,
-                    autoStart = true
+        if (shortcutManager.pinnedShortcuts.any { it.id == shortcutId }) {
+            return CardShortcutRequestResult.AlreadyPinned
+        }
+        return runCatching {
+            val shortcut = ShortcutInfo.Builder(context, shortcutId)
+                .setShortLabel(recipe.name.take(10).ifBlank { "Kite" })
+                .setLongLabel(recipe.name.ifBlank { "Kite 卡片" })
+                .setIcon(Icon.createWithBitmap(shortcutBitmap(context, recipe)))
+                .setActivity(ComponentName(context, CardRunActivity::class.java))
+                .setIntent(
+                    CardRunIntents.launchIntent(
+                        context = context,
+                        recipeId = recipe.id,
+                        launchSource = CardRunIntents.SOURCE_SHORTCUT,
+                        autoStart = true
+                    )
                 )
-            )
-            .build()
+                .build()
 
-        runCatching {
             val exists = shortcutManager.dynamicShortcuts.any { it.id == shortcutId } ||
                 shortcutManager.pinnedShortcuts.any { it.id == shortcutId }
             if (exists) {
@@ -64,21 +80,24 @@ object CardShortcutManager {
             } else {
                 shortcutManager.addDynamicShortcuts(listOf(shortcut))
             }
-        }
-        if (shortcutManager.pinnedShortcuts.any { it.id == shortcutId }) {
-            return true
-        }
 
-        val callbackIntent = Intent(context, CardShortcutPinnedReceiver::class.java)
-            .putExtra(CardRunIntents.EXTRA_RECIPE_ID, recipe.id)
-            .putExtra("shortcutId", shortcutId)
-        val callback = PendingIntent.getBroadcast(
-            context,
-            shortcutId.hashCode(),
-            callbackIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        return shortcutManager.requestPinShortcut(shortcut, callback.intentSender)
+            val callbackIntent = Intent(context, CardShortcutPinnedReceiver::class.java)
+                .putExtra(CardRunIntents.EXTRA_RECIPE_ID, recipe.id)
+                .putExtra("shortcutId", shortcutId)
+            val callback = PendingIntent.getBroadcast(
+                context,
+                shortcutId.hashCode(),
+                callbackIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (shortcutManager.requestPinShortcut(shortcut, callback.intentSender)) {
+                CardShortcutRequestResult.Submitted
+            } else {
+                CardShortcutRequestResult.Unsupported
+            }
+        }.getOrElse { error ->
+            CardShortcutRequestResult.Failed(error.message ?: error.javaClass.simpleName)
+        }
     }
 
     private fun requestLegacyInstallShortcut(context: Context, recipe: KiteRecipe): Boolean {

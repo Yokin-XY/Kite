@@ -19,8 +19,27 @@ internal sealed interface ResourceActionEffect {
         val planResourceIds: List<String>
     ) : ResourceActionEffect
 
-    data class Message(val text: String) : ResourceActionEffect
+    data class Message(
+        val text: String,
+        val presentation: ResourceActionMessagePresentation = ResourceActionMessagePresentation.StatusAware,
+    ) : ResourceActionEffect
     data object RequireNotifications : ResourceActionEffect
+}
+
+/**
+ * 资源状态页会直接展示安装、更新等长任务状态，因此普通状态消息只在离开这些页面后提示。
+ * 用户刚刚触发但页面没有对应状态槽的结果，必须标记为 ExplicitResult，不能被页面过滤。
+ */
+internal enum class ResourceActionMessagePresentation {
+    StatusAware,
+    ExplicitResult,
+}
+
+internal object ResourceActionMessagePolicy {
+    fun shouldShow(
+        presentation: ResourceActionMessagePresentation,
+        onResourceStatusScreen: Boolean,
+    ): Boolean = presentation == ResourceActionMessagePresentation.ExplicitResult || !onResourceStatusScreen
 }
 
 internal interface ResourceActionGateway {
