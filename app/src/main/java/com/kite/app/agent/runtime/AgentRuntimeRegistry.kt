@@ -845,18 +845,12 @@ object AgentRuntimeRegistry {
             }
             val key = AgentConversationKey(active.session.providerId, sessionId)
             if (key != optimisticKey) {
-                AgentConversationStore.bind(active.session.instanceId, key, AgentSessionPhase.Ready)
-                visibleContent.forEach { block ->
-                    AgentConversationStore.applyEvent(
-                        key,
-                        AgentSessionEvent.MessageChunk(
-                            role = com.kite.app.agent.contract.AgentMessageRole.User,
-                            content = block,
-                            messageId = localMessageId,
-                        ),
-                    )
-                }
-                AgentConversationStore.remove(optimisticKey)
+                AgentConversationStore.rekey(
+                    instanceId = active.session.instanceId,
+                    fromKey = optimisticKey,
+                    toKey = key,
+                    phase = AgentSessionPhase.Ready,
+                )
             }
             active.promoteWarmDraft()
             val result = active.connection.prompt(

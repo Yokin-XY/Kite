@@ -154,6 +154,43 @@ class AgentConversationStoreTest {
     }
 
     @Test
+    fun `底层更换原生会话标识时完整迁移既有时间线`() {
+        val nextKey = AgentConversationKey("opencode", "session-2")
+        AgentConversationStore.bind("run-1", key, AgentSessionPhase.Ready)
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.User, AgentContent.Text("第一问"), "user-1")
+        )
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.Assistant, AgentContent.Text("第一答"), "answer-1")
+        )
+        AgentConversationStore.bind("run-1", nextKey, AgentSessionPhase.Ready)
+        AgentConversationStore.applyEvent(
+            nextKey,
+            AgentSessionEvent.CurrentModeChanged("plan")
+        )
+
+        val moved = AgentConversationStore.rekey("run-1", key, nextKey)
+
+        assertNull(AgentConversationStore.snapshot(key))
+        assertEquals(nextKey, moved.key)
+        assertEquals("plan", moved.currentModeId)
+        assertEquals(
+            listOf("第一问", "第一答"),
+            moved.timeline.filterIsInstance<AgentConversationItem.Message>().map { message ->
+                (message.content.single() as AgentContent.Text).text
+            }
+        )
+
+        AgentConversationStore.applyEvent(
+            nextKey,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.User, AgentContent.Text("第二问"), "user-2")
+        )
+        assertEquals(3, AgentConversationStore.snapshot(nextKey)?.timeline?.size)
+    }
+
+    @Test
     fun `Agent 主动更新会话配置时完整保留返回顺序和未知分类`() {
         AgentConversationStore.bind("run-1", key, AgentSessionPhase.Ready)
         val options = listOf(

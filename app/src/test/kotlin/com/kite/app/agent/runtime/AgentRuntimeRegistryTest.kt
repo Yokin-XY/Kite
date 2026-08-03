@@ -36,6 +36,7 @@ import com.kite.app.agent.contract.KiteAgentConnection
 import com.kite.app.agent.contract.KiteAgentProvider
 import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationHistoryStatus
+import com.kite.app.agent.store.AgentConversationItem
 import com.kite.app.agent.store.AgentConversationStore
 import com.kite.app.agent.sdk.skill.AgentPromptDraft
 import com.kite.app.agent.sdk.skill.AgentSelectedSkill
@@ -44,6 +45,7 @@ import com.kite.app.agent.config.AgentSessionModelSelection
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.sdk.configuration.AgentProviderPreparationResult
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -954,7 +956,11 @@ class AgentRuntimeRegistryTest {
             "model", "模型", AgentConfigCategory.Model, "openai/default",
             "openai/default" to "Default", "zhipu/glm-5.2" to "GLM-5.2",
         )
-        val provider = FakeProvider(initialConfiguration = listOf(modelOption), requestPermission = false)
+        val provider = FakeProvider(
+            initialConfiguration = listOf(modelOption),
+            requestPermission = false,
+            uniqueSessionIdsAcrossConnections = true,
+        )
         start(
             provider,
             request("instance-provider-new-session").copy(
@@ -992,6 +998,14 @@ class AgentRuntimeRegistryTest {
         assertEquals(0, provider.connections.last().resumeSessionCalls)
         assertEquals(listOf("new", "model", "prompt"), provider.connections.last().callOrder)
         assertEquals(listOf("zhipu/glm-5.2"), provider.connections.last().selectedModelValues)
+        val timeline = requireNotNull(
+            AgentConversationStore.snapshot(AgentConversationKey("fake", "session-2"))
+        ).timeline.filterIsInstance<AgentConversationItem.Message>()
+        assertEquals(
+            listOf("第一轮", "已完成", "第二轮", "已完成"),
+            timeline.map { message -> (message.content.single() as AgentContent.Text).text },
+        )
+        assertEquals(null, AgentConversationStore.snapshot(AgentConversationKey("fake", "session-1")))
     }
 
     @Test
@@ -1196,9 +1210,11 @@ class AgentRuntimeRegistryTest {
         private val newSessionFailuresByConnection: List<Int>? = null,
         private val newSessionGate: CompletableDeferred<Unit>? = null,
         private val promptGate: CompletableDeferred<Unit>? = null,
+        private val uniqueSessionIdsAcrossConnections: Boolean = false,
     ) : KiteAgentProvider {
         lateinit var connection: FakeConnection
         val connections = mutableListOf<FakeConnection>()
+        private val sessionSequence = AtomicInteger()
         override val id: String = "fake"
 
         override suspend fun connect(
@@ -1223,6 +1239,11 @@ class AgentRuntimeRegistryTest {
                 modelPreviews,
                 newSessionGate,
                 promptGate,
+                if (uniqueSessionIdsAcrossConnections) {
+                    { "session-${sessionSequence.incrementAndGet()}" }
+                } else {
+                    null
+                },
             )
             connections += connection
             return AgentOperationResult.Success(connection)
@@ -1247,6 +1268,7 @@ class AgentRuntimeRegistryTest {
         private val modelPreviews: Map<Pair<String, String>, AgentDraftConfigurationPreview>,
         private val newSessionGate: CompletableDeferred<Unit>?,
         private val promptGate: CompletableDeferred<Unit>?,
+        private val nextSharedSessionId: (() -> String)?,
     ) : KiteAgentConnection {
         val disconnected = AtomicBoolean(false)
         var newSessionCalls = 0
@@ -1287,7 +1309,8 @@ class AgentRuntimeRegistryTest {
                 newSessionFailures--
                 return AgentOperationResult.Failure("创建失败")
             }
-            return AgentOperationResult.Success(readySnapshot("session-${++nextSession}"))
+            val sessionId = nextSharedSessionId?.invoke() ?: "session-${++nextSession}"
+            return AgentOperationResult.Success(readySnapshot(sessionId))
         }
 
         override suspend fun prompt(request: AgentPromptRequest): AgentOperationResult<AgentTurnResult> {

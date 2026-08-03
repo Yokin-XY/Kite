@@ -270,6 +270,44 @@ object AgentConversationStore {
     fun snapshot(key: AgentConversationKey): AgentConversationSnapshot? =
         mutableConversations[key]?.freeze()
 
+    /**
+     * 同一个 Kite 会话因底层配置切换而获得新原生 session id 时，迁移完整可见时间线。
+     * 新 session 已发布的配置事实会被吸收，但不会用一份空投影覆盖用户已有对话。
+     */
+    @Synchronized
+    fun rekey(
+        instanceId: String,
+        fromKey: AgentConversationKey,
+        toKey: AgentConversationKey,
+        phase: AgentSessionPhase = AgentSessionPhase.Ready,
+    ): AgentConversationSnapshot {
+        if (fromKey == toKey) return bind(instanceId, toKey, phase)
+        val source = mutableConversations[fromKey]?.takeIf { it.instanceId == instanceId }
+            ?: return bind(instanceId, toKey, phase)
+        val target = mutableConversations[toKey]?.takeIf { it.instanceId == instanceId }
+
+        mutableConversations.remove(fromKey)
+        mutableConversations.remove(toKey)
+        replayConversations.remove(fromKey)
+        replayConversations.remove(toKey)
+        pendingPublications.remove(fromKey)
+        pendingPublications.remove(toKey)
+
+        source.key = toKey
+        target?.let(source::adoptSessionFacts)
+        source.phase = phase
+        source.revision++
+        mutableConversations[toKey] = source
+
+        val snapshot = source.freeze()
+        _conversations.value = _conversations.value.toMutableMap().apply {
+            remove(fromKey)
+            put(toKey, snapshot)
+        }
+        publicationCount++
+        return snapshot
+    }
+
     /** 首发失败时撤销 Kite 本地乐观消息；Agent 已确认的其他时间线内容保持不变。 */
     @Synchronized
     fun discardLocalMessage(key: AgentConversationKey, messageId: String): Boolean {
@@ -350,7 +388,7 @@ object AgentConversationStore {
     }
 
     private class MutableConversation(
-        val key: AgentConversationKey,
+        var key: AgentConversationKey,
         val instanceId: String,
         var phase: AgentSessionPhase,
         private val recordsLiveTiming: Boolean = true,
@@ -378,6 +416,22 @@ object AgentConversationStore {
         var turnActive: Boolean = false
         var currentTurnHasUser: Boolean = false
         val turns = linkedMapOf<Long, MutableTurn>()
+
+        fun adoptSessionFacts(next: MutableConversation) {
+            if (next.configuration.isNotEmpty()) configuration = next.configuration
+            if (next.commands.isNotEmpty()) commands = next.commands
+            next.currentModeId?.let { currentModeId = it }
+            next.pendingPermission?.let { pendingPermission = it }
+            next.phaseBeforePermission?.let { phaseBeforePermission = it }
+            next.title?.let { title = it }
+            next.updatedAt?.let { updatedAt = it }
+            next.usage?.let { usage = it }
+            next.lastError?.let { lastError = it }
+            if (next.extensions.isNotEmpty()) {
+                extensions += next.extensions
+                while (extensions.size > MAX_EXTENSION_EVENTS) extensions.removeAt(0)
+            }
+        }
 
         fun apply(event: AgentSessionEvent): Boolean {
             revision++
