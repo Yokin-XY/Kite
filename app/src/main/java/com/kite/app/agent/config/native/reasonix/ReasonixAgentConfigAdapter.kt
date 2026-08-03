@@ -1,5 +1,6 @@
 package com.kite.app.agent.config.native
 
+import android.content.Context
 import com.kite.app.agent.config.AgentReasoningControl
 import com.kite.app.agent.config.AgentReasoningNativeMapping
 import com.kite.app.agent.config.AgentWorkModeCatalog
@@ -9,9 +10,21 @@ import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.agent.contract.AgentReasoningMode
+import com.kite.app.foundation.contracts.ContainerRecord
+import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 
-/** Reasonix 只消费原生 ACP 公布的当前会话能力，不复制其 config.toml。 */
-internal class ReasonixAgentConfigAdapter : ProtocolOnlyAgentConfigAdapter(ADAPTER_ID) {
+/** Reasonix 消费 ACP 会话能力；不复制 config.toml，只读取它真实支持的用户级 Skill 目录。 */
+internal class ReasonixAgentConfigAdapter internal constructor(
+    containerProvider: () -> ContainerRecord?,
+) : ProtocolOnlyAgentConfigAdapter(
+    adapterId = ADAPTER_ID,
+    containerProvider = containerProvider,
+    skillRoots = listOf(SKILL_ROOT, AGENTS_SKILL_ROOT, AGENT_SKILL_ROOT, CLAUDE_SKILL_ROOT),
+) {
+    constructor(context: Context) : this({
+        WorkSurfaceRuntimeBridge.getSavedContainer(context.applicationContext)
+    })
+
     override fun bundledWorkModeCatalog(agentId: String): AgentWorkModeCatalog = AgentWorkModeCatalog(
         modes = REASONIX_COLLABORATION_MODES.values.toList(),
         defaultModeId = MODE_NORMAL,
@@ -50,6 +63,10 @@ internal class ReasonixAgentConfigAdapter : ProtocolOnlyAgentConfigAdapter(ADAPT
 
     companion object {
         const val ADAPTER_ID = "reasonix"
+        private const val SKILL_ROOT = "/root/.reasonix/skills"
+        private const val AGENTS_SKILL_ROOT = "/root/.agents/skills"
+        private const val AGENT_SKILL_ROOT = "/root/.agent/skills"
+        private const val CLAUDE_SKILL_ROOT = "/root/.claude/skills"
         private const val TOOL_APPROVAL_CONFIG_ID = "tool_approval"
         private const val MODE_NORMAL = "normal"
         private val REASONIX_PERMISSION_LEVELS = mapOf(

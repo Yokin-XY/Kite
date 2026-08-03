@@ -26,6 +26,6 @@ internal fun defaultAgentConfigAdapters(
     HermesAgentConfigAdapter(context.applicationContext),
     OpenClawAgentConfigAdapter(context.applicationContext),
     MiMoCodeAgentConfigAdapter(context.applicationContext),
-    QwenCodeAgentConfigAdapter(),
-    ReasonixAgentConfigAdapter(),
+    QwenCodeAgentConfigAdapter(context.applicationContext),
+    ReasonixAgentConfigAdapter(context.applicationContext),
 )

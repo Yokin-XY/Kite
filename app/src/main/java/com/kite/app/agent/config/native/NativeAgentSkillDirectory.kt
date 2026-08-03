@@ -28,10 +28,16 @@ import java.security.MessageDigest
 internal class NativeAgentSkillDirectory(
     private val project: (String) -> ContainerAgentConfigProjection.FileProjection?,
     private val roots: List<String>,
-    private val mutableRoots: Set<String> = setOf(roots.first()),
+    private val installRoot: String = roots.first(),
+    private val mutableRoots: Set<String> = setOf(installRoot),
     private val fileStore: AtomicConfigFileStore = AtomicConfigFileStore(),
     private val configurationId: (File, String) -> String = { _, id -> id },
 ) {
+    init {
+        require(roots.isNotEmpty()) { "Skill 根目录不能为空" }
+        require(installRoot in roots) { "Skill 安装目录必须属于扫描目录" }
+    }
+
     data class Entry(
         val id: String,
         val configurationId: String,
@@ -202,7 +208,7 @@ internal class NativeAgentSkillDirectory(
         if (metadata?.first != change.skillId) {
             return rejected("skillId", "Skill ID 与 SKILL.md 的 name 不一致")
         }
-        val targetProjection = project("${roots.first()}/${change.skillId}/$SKILL_FILE")
+        val targetProjection = project("$installRoot/${change.skillId}/$SKILL_FILE")
             ?: return rejected("skillId", "Kite 运行容器尚未创建")
         val target = requireNotNull(targetProjection.writeFile.parentFile)
         if (target.exists()) return AgentConfigApplyResult.Conflict("skill:exists", "Skill 已存在，请先重新读取")

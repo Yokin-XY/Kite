@@ -199,6 +199,34 @@ class OpenCodeAgentConfigAdapterTest {
     }
 
     @Test
+    fun discoversOfficialGlobalSkillCompatibilityRootsWithOpenCodeRootTakingPriority() = runTest {
+        File(configDir, "opencode.jsonc").writeText("{}")
+        File(rootfs, "root/.claude/skills/claude-shared/SKILL.md").apply {
+            parentFile?.mkdirs()
+            writeText("---\nname: claude-shared\ntitle: Claude Shared\n---\nShared.")
+        }
+        File(rootfs, "root/.agents/skills/agent-shared/SKILL.md").apply {
+            parentFile?.mkdirs()
+            writeText("---\nname: agent-shared\ntitle: Agent Shared\n---\nShared.")
+        }
+        File(rootfs, "root/.agents/skills/duplicate/SKILL.md").apply {
+            parentFile?.mkdirs()
+            writeText("---\nname: duplicate\ntitle: Shared Duplicate\n---\nShared.")
+        }
+        File(configDir, "skills/duplicate/SKILL.md").apply {
+            parentFile?.mkdirs()
+            writeText("---\nname: duplicate\ntitle: OpenCode Duplicate\n---\nPrimary.")
+        }
+
+        val snapshot = (adapter.readLive(AGENT_ID) as AgentConfigReadResult.Ready).snapshot
+
+        assertEquals(listOf("agent-shared", "claude-shared", "duplicate"), snapshot.skills.map { it.id })
+        assertEquals("OpenCode Duplicate", snapshot.skills.single { it.id == "duplicate" }.displayName)
+        assertTrue(AgentSkillOperation.Remove in snapshot.skills.single { it.id == "duplicate" }.allowedOperations)
+        assertFalse(AgentSkillOperation.Remove in snapshot.skills.single { it.id == "agent-shared" }.allowedOperations)
+    }
+
+    @Test
     fun usesTheSameOfficialPermissionCatalogForDefaultsAndCurrentSession() = runTest {
         File(configDir, "opencode.jsonc").writeText("{}")
 

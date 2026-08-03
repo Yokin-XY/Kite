@@ -70,6 +70,7 @@ import com.kite.app.agent.config.NativeAgentManagedOutputFormat
 import com.kite.app.agent.config.NativeAgentManagedOutputSyncResult
 import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.mediatedSessionPermissionControl
+import com.kite.app.agent.config.native.NativeAgentSkillDirectory
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
@@ -100,9 +101,19 @@ internal class OpenCodeAgentConfigAdapter(
     override val adapterId: String = ADAPTER_ID
 
     private val parser = Jankson.builder().build()
+    private val projection = ContainerAgentConfigProjection(containerProvider)
     private val coreDocumentStore = NativeAgentCoreDocumentStore(
-        ContainerAgentConfigProjection(containerProvider)::resolve,
+        projection::resolve,
         fileStore,
+    )
+    private val skillDirectory = NativeAgentSkillDirectory(
+        project = projection::resolve,
+        roots = listOf(
+            OPENCODE_SKILL_ROOT,
+            CLAUDE_SKILL_ROOT,
+            AGENTS_SKILL_ROOT,
+            LEGACY_OPENCODE_SKILL_ROOT,
+        ),
     )
     private val modelCatalogReader = OpenCodeModelCatalogReader(commandExecutor)
 
@@ -336,10 +347,9 @@ internal class OpenCodeAgentConfigAdapter(
             return AgentSkillDocumentReadResult.Unavailable(discovery)
         }
         return runCatching {
-            val paths = requireNotNull(resolvePaths())
-            val file = discoverSkillFiles(paths).firstOrNull { skillMetadata(it).first == skillId }
+            val entry = skillDirectory.discover().firstOrNull { it.id == skillId }
                 ?: return AgentSkillDocumentReadResult.Missing()
-            AgentSkillDocumentReadResult.Ready(skillDocumentSnapshot(paths, file))
+            AgentSkillDocumentReadResult.Ready(skillDocumentSnapshot(entry))
         }.getOrElse { AgentSkillDocumentReadResult.Failed("无法读取 OpenCode Skill") }
     }
 
@@ -357,15 +367,14 @@ internal class OpenCodeAgentConfigAdapter(
             )
         }
         return runCatching {
-            val paths = requireNotNull(resolvePaths())
-            val file = discoverSkillFiles(paths).firstOrNull { skillMetadata(it).first == request.skillId }
+            val entry = skillDirectory.discover().firstOrNull { it.id == request.skillId }
                 ?: return AgentSkillDocumentWriteResult.Conflict("skill:missing", "Skill 已不存在，请重新读取")
-            val writableFile = File(paths.configDirectory, "skills/${request.skillId}/$SKILL_FILE").canonicalFile
-            if (file.canonicalFile != writableFile) {
+            if (!entry.removable) {
                 return AgentSkillDocumentWriteResult.Rejected(
                     listOf(problem("skillId", "当前 Skill 来自共享或只读目录，不能编辑"))
                 )
             }
+            val file = File(entry.directory, SKILL_FILE)
             val before = fileStore.read(file)
             if (before.revision.value != request.expectedRevision) {
                 return AgentSkillDocumentWriteResult.Conflict(before.revision.value)
@@ -383,7 +392,7 @@ internal class OpenCodeAgentConfigAdapter(
                 },
             )) {
                 is AtomicConfigFileWriteResult.Applied -> AgentSkillDocumentWriteResult.Applied(
-                    skillDocumentSnapshot(paths, file),
+                    skillDocumentSnapshot(entry),
                     result.backupReference,
                 )
                 is AtomicConfigFileWriteResult.Conflict ->
@@ -1064,7 +1073,7 @@ internal class OpenCodeAgentConfigAdapter(
             activePermissionProfileId = activePermissionProfileId,
             permissionProfiles = OPEN_CODE_PERMISSION_PROFILES,
             mcpServers = mcpSummaries(effective.getObject(MCP_KEY)),
-            skills = discoverSkills(paths, effective),
+            skills = discoverSkills(effective),
             credentialPresence = authProjection.overallPresence,
             warnings = buildList {
                 authProjection.warning?.let(::add)
@@ -1163,7 +1172,7 @@ internal class OpenCodeAgentConfigAdapter(
         }
         digest.update(AUTH_CONTAINER_PATH.toByteArray())
         digest.update(fileStore.read(paths.authFile.readFile).revision.value.toByteArray())
-        discoverSkillFiles(paths).forEach { file ->
+        discoverSkillFiles().forEach { file ->
             digest.update(paths.toContainerPath(file).toByteArray())
             digest.update(skillRevision(file).toByteArray())
         }
@@ -1292,24 +1301,21 @@ internal class OpenCodeAgentConfigAdapter(
         return variable.takeIf(ENVIRONMENT_NAME::matches)
     }
 
-    private fun discoverSkills(paths: OpenCodePaths, effective: JsonObject): List<AgentSkillSummary> =
-        discoverSkillFiles(paths)
-        .mapNotNull { file ->
+    private fun discoverSkills(effective: JsonObject): List<AgentSkillSummary> =
+        skillDirectory.discover()
+        .mapNotNull { entry ->
             runCatching {
-                val (name, displayName) = skillMetadata(file)
-                val location = paths.toContainerPath(file)
-                val removable = location == "$CONFIG_CONTAINER_PATH/skills/$name/$SKILL_FILE"
                 AgentSkillSummary(
-                    id = name,
-                    displayName = displayName,
-                    location = location,
+                    id = entry.id,
+                    displayName = entry.displayName,
+                    location = "${entry.containerLocation}/$SKILL_FILE",
                     scope = AgentConfigScope.User,
-                    activation = resolveSkillActivation(effective, name),
+                    activation = resolveSkillActivation(effective, entry.id),
                     allowedOperations = buildSet {
                         add(AgentSkillOperation.Enable)
                         add(AgentSkillOperation.RequireApproval)
                         add(AgentSkillOperation.Disable)
-                        if (removable) add(AgentSkillOperation.Remove)
+                        if (entry.removable) add(AgentSkillOperation.Remove)
                     }
                 )
             }.getOrNull()
@@ -1357,17 +1363,8 @@ internal class OpenCodeAgentConfigAdapter(
         return Regex(expression).matches(value)
     }
 
-    private fun discoverSkillFiles(paths: OpenCodePaths): List<File> = listOf("skill", "skills")
-        .flatMap { directory ->
-            val root = File(paths.configDirectory, directory)
-            if (!root.isDirectory) emptyList()
-            else root.walkTopDown()
-                .onEnter { !java.nio.file.Files.isSymbolicLink(it.toPath()) }
-                .maxDepth(MAX_SKILL_DEPTH)
-                .filter { it.isFile && it.name == SKILL_FILE && it.length() <= MAX_SKILL_BYTES }
-                .toList()
-        }
-        .sortedBy { it.absolutePath }
+    private fun discoverSkillFiles(): List<File> = skillDirectory.discover()
+        .map { entry -> File(entry.directory, SKILL_FILE) }
 
     private fun skillMetadata(file: File): Pair<String, String> {
         val header = file.useLines { lines -> lines.take(MAX_SKILL_HEADER_LINES).toList() }
@@ -1383,17 +1380,16 @@ internal class OpenCodeAgentConfigAdapter(
         return name to display
     }
 
-    private fun skillDocumentSnapshot(paths: OpenCodePaths, file: File): AgentSkillDocumentSnapshot {
-        val (id, displayName) = skillMetadata(file)
+    private fun skillDocumentSnapshot(entry: NativeAgentSkillDirectory.Entry): AgentSkillDocumentSnapshot {
+        val file = File(entry.directory, SKILL_FILE)
         val stored = fileStore.read(file)
-        val writableFile = File(paths.configDirectory, "skills/$id/$SKILL_FILE").canonicalFile
         return AgentSkillDocumentSnapshot(
-            skillId = id,
-            displayName = displayName,
-            location = paths.toContainerPath(file),
+            skillId = entry.id,
+            displayName = entry.displayName,
+            location = "${entry.containerLocation}/$SKILL_FILE",
             revision = stored.revision.value,
             content = stored.bytes.toString(Charsets.UTF_8),
-            writable = file.canonicalFile == writableFile,
+            writable = entry.removable,
         )
     }
 
@@ -1766,6 +1762,10 @@ internal class OpenCodeAgentConfigAdapter(
     companion object {
         const val ADAPTER_ID = "opencode"
         private const val CONFIG_CONTAINER_PATH = "/root/.config/opencode"
+        private const val OPENCODE_SKILL_ROOT = "$CONFIG_CONTAINER_PATH/skills"
+        private const val LEGACY_OPENCODE_SKILL_ROOT = "$CONFIG_CONTAINER_PATH/skill"
+        private const val CLAUDE_SKILL_ROOT = "/root/.claude/skills"
+        private const val AGENTS_SKILL_ROOT = "/root/.agents/skills"
         private const val GLOBAL_AGENTS_PATH = "$CONFIG_CONTAINER_PATH/AGENTS.md"
         private const val AUTH_CONTAINER_PATH = "/root/.local/share/opencode/auth.json"
         private const val SCHEMA_KEY = "$" + "schema"
@@ -1815,7 +1815,6 @@ internal class OpenCodeAgentConfigAdapter(
         private const val MAX_SKILL_TREE_BYTES = 8L * 1024L * 1024L
         private const val MAX_SKILL_FILES = 128
         private const val MAX_SKILL_BACKUPS = 5
-        private const val MAX_SKILL_DEPTH = 8
         private const val MAX_SKILL_HEADER_LINES = 80
         private val CONFIG_FILE_NAMES = listOf("config.json", "opencode.json", "opencode.jsonc")
         private val WRITE_TARGET_PRIORITY = listOf("opencode.jsonc", "opencode.json", "config.json")

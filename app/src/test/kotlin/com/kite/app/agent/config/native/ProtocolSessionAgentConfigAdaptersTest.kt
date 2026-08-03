@@ -22,7 +22,7 @@ class ProtocolSessionAgentConfigAdaptersTest {
 
     @Test
     fun `Reasonix 只把官方 ACP 公布的三档审批映射为统一权限`() {
-        val adapter = ReasonixAgentConfigAdapter()
+        val adapter = ReasonixAgentConfigAdapter(context)
         val native = AgentConfigOption.Select(
             id = "tool_approval",
             name = "Tool Approval",
@@ -42,7 +42,7 @@ class ProtocolSessionAgentConfigAdaptersTest {
 
     @Test
     fun `Reasonix 推理自动档由原生值映射且未公布值不会被补造`() {
-        val adapter = ReasonixAgentConfigAdapter()
+        val adapter = ReasonixAgentConfigAdapter(context)
         val native = AgentConfigOption.Select(
             id = "effort",
             name = "Effort",
@@ -59,7 +59,7 @@ class ProtocolSessionAgentConfigAdaptersTest {
 
     @Test
     fun `Qwen Code 将原生 mode 映射为五档权限并从工作模式中移除`() {
-        val adapter = QwenCodeAgentConfigAdapter()
+        val adapter = QwenCodeAgentConfigAdapter(context)
         val native = AgentConfigOption.Select(
             id = "mode",
             name = "Approval Mode",

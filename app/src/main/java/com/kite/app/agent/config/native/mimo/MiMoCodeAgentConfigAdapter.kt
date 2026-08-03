@@ -54,8 +54,16 @@ internal class MiMoCodeAgentConfigAdapter(
     fileStore
 ) {
     private val skillDirectory = NativeAgentSkillDirectory(
-        projection::resolve,
-        listOf(SKILL_ROOT, AGENTS_SKILL_ROOT, CLAUDE_SKILL_ROOT, CODEX_SKILL_ROOT, OPENCODE_SKILL_ROOT),
+        project = projection::resolve,
+        roots = listOf(
+            SKILL_ROOT,
+            SINGULAR_SKILL_ROOT,
+            AGENTS_SKILL_ROOT,
+            CLAUDE_SKILL_ROOT,
+            CODEX_SKILL_ROOT,
+            OPENCODE_SKILL_ROOT,
+        ),
+        mutableRoots = setOf(SKILL_ROOT, SINGULAR_SKILL_ROOT),
     )
 
     override fun displayName(): String = "MiMo Code"
@@ -415,6 +423,7 @@ internal class MiMoCodeAgentConfigAdapter(
         private const val LOCAL_TYPE = "local"
         private const val REMOTE_TYPE = "remote"
         private const val SKILL_ROOT = "/root/.config/mimocode/skills"
+        private const val SINGULAR_SKILL_ROOT = "/root/.config/mimocode/skill"
         private const val AGENTS_SKILL_ROOT = "/root/.agents/skills"
         private const val GLOBAL_AGENTS_PATH = "/root/.config/mimocode/AGENTS.md"
         private const val CLAUDE_SKILL_ROOT = "/root/.claude/skills"

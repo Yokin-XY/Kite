@@ -58,7 +58,8 @@ internal class OpenClawAgentConfigAdapter(
 ) {
     private val skillDirectory = NativeAgentSkillDirectory(
         project = projection::resolve,
-        roots = listOf(SKILL_ROOT, AGENTS_SKILL_ROOT),
+        roots = listOf(AGENTS_SKILL_ROOT, SKILL_ROOT),
+        installRoot = SKILL_ROOT,
         configurationId = ::openClawSkillKey,
     )
 

@@ -198,7 +198,7 @@ class NativeAgentConfigAdaptersTest {
                 args = ["serve"]
             """.trimIndent(),
         )
-        nativeFile("root/.agents/skills/late-codex/SKILL.md").writeText(
+        nativeFile("root/.codex/skills/late-codex/SKILL.md").writeText(
             "---\nname: late-codex\ndescription: Late Codex skill\n---\nLate.",
         )
 
@@ -219,6 +219,44 @@ class NativeAgentConfigAdaptersTest {
             assertTrue("$agentId 应在再次读取后发现新 Skill", refreshed.skills.any { it.id == marker })
             assertTrue("$agentId 应在再次读取后发现新 MCP", refreshed.mcpServers.any { it.id == marker })
         }
+    }
+
+    @Test
+    fun protocolAdaptersDiscoverTheirNativeAndCompatibleGlobalSkillRoots() = runTest {
+        nativeFile("root/.qwen/skills/duplicate/SKILL.md").writeText(
+            "---\nname: duplicate\ntitle: Qwen Duplicate\n---\nQwen.",
+        )
+        nativeFile("root/.reasonix/skills/duplicate/SKILL.md").writeText(
+            "---\nname: duplicate\ntitle: Reasonix Duplicate\n---\nReasonix.",
+        )
+        nativeFile("root/.agents/skills/duplicate/SKILL.md").writeText(
+            "---\nname: duplicate\ntitle: Shared Duplicate\n---\nShared.",
+        )
+        nativeFile("root/.agents/skills/shared/SKILL.md").writeText(
+            "---\nname: shared\ntitle: Shared\n---\nShared.",
+        )
+        nativeFile("root/.agent/skills/agent-compat/SKILL.md").writeText(
+            "---\nname: agent-compat\ntitle: Agent Compatibility\n---\nAgent.",
+        )
+        nativeFile("root/.claude/skills/claude-compat/SKILL.md").writeText(
+            "---\nname: claude-compat\ntitle: Claude Compatibility\n---\nClaude.",
+        )
+
+        val qwen = (QwenCodeAgentConfigAdapter(::container).readLive("qwen-code") as AgentConfigReadResult.Ready)
+            .snapshot
+        val reasonix = (ReasonixAgentConfigAdapter(::container).readLive("reasonix") as AgentConfigReadResult.Ready)
+            .snapshot
+
+        assertEquals(listOf("duplicate", "shared"), qwen.skills.map { it.id })
+        assertEquals("Qwen Duplicate", qwen.skills.single { it.id == "duplicate" }.displayName)
+        assertTrue(AgentSkillOperation.Remove in qwen.skills.single { it.id == "duplicate" }.allowedOperations)
+        assertFalse(AgentSkillOperation.Remove in qwen.skills.single { it.id == "shared" }.allowedOperations)
+        assertEquals(
+            listOf("agent-compat", "claude-compat", "duplicate", "shared"),
+            reasonix.skills.map { it.id },
+        )
+        assertEquals("Reasonix Duplicate", reasonix.skills.single { it.id == "duplicate" }.displayName)
+        assertTrue(AgentSkillOperation.Remove in reasonix.skills.single { it.id == "duplicate" }.allowedOperations)
     }
 
     @Test
@@ -687,6 +725,9 @@ class NativeAgentConfigAdaptersTest {
         nativeFile("root/.config/mimocode/skills/review/SKILL.md").writeText(
             "---\nname: review\ndescription: Review changes\n---\nReview.\n",
         )
+        nativeFile("root/.config/mimocode/skill/singular/SKILL.md").writeText(
+            "---\nname: singular\ndescription: Singular directory skill\n---\nSingular.\n",
+        )
         nativeFile("root/.agents/skills/shared/SKILL.md").writeText(
             "---\nname: shared\ndescription: Shared skill\n---\nShared.\n",
         )
@@ -695,10 +736,11 @@ class NativeAgentConfigAdaptersTest {
 
         assertEquals(AgentMcpTransport.Stdio, before.mcpServers.single().transport)
         assertEquals("DEMO_TOKEN", before.mcpServers.single().environmentReferences.single().environmentVariable)
-        assertEquals(setOf("review", "shared"), before.skills.map { it.id }.toSet())
+        assertEquals(setOf("review", "shared", "singular"), before.skills.map { it.id }.toSet())
         assertTrue(before.skills.all { it.activation == AgentSkillActivation.Enabled })
         assertTrue(before.skills.all { AgentSkillOperation.Disable !in it.allowedOperations })
         assertTrue(AgentSkillOperation.Remove in before.skills.single { it.id == "review" }.allowedOperations)
+        assertTrue(AgentSkillOperation.Remove in before.skills.single { it.id == "singular" }.allowedOperations)
         assertTrue(AgentSkillOperation.Remove !in before.skills.single { it.id == "shared" }.allowedOperations)
 
         val remote = adapter.apply(
@@ -1065,6 +1107,7 @@ class NativeAgentConfigAdaptersTest {
         assertTrue(file.readText().contains("required = true"))
         assertTrue(file.readText().contains("approval_policy"))
         assertTrue(file.readText().contains("[[skills.config]]"))
+        assertTrue(file.readText().contains("/root/.agents/skills/review/SKILL.md"))
         assertTrue(file.readText().contains("DOCS_TOKEN"))
     }
 
@@ -1084,7 +1127,7 @@ class NativeAgentConfigAdaptersTest {
             ),
         ) as AgentConfigApplyResult.Applied
         assertEquals(listOf("demo-skill"), installed.snapshot.skills.map { it.id })
-        assertTrue(nativeFile("root/.agents/skills/demo-skill/SKILL.md").isFile)
+        assertTrue(nativeFile("root/.codex/skills/demo-skill/SKILL.md").isFile)
 
         val removed = adapter.apply(
             AgentConfigApplyRequest(
@@ -1094,7 +1137,7 @@ class NativeAgentConfigAdaptersTest {
             ),
         ) as AgentConfigApplyResult.Applied
         assertTrue(removed.snapshot.skills.isEmpty())
-        assertTrue(nativeFile("root/.agents/skills/.kite-skill-backups").isDirectory)
+        assertTrue(nativeFile("root/.codex/skills/.kite-skill-backups").isDirectory)
     }
 
     @Test

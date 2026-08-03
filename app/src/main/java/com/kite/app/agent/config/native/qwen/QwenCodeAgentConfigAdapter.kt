@@ -1,12 +1,25 @@
 package com.kite.app.agent.config.native
 
+import android.content.Context
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentPermissionLevel
+import com.kite.app.foundation.contracts.ContainerRecord
+import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 
-/** Qwen Code 只消费原生 ACP 会话目录；认证和持久模型配置继续由 qwen CLI 管理。 */
-internal class QwenCodeAgentConfigAdapter : ProtocolOnlyAgentConfigAdapter(ADAPTER_ID) {
+/** Qwen Code 消费原生 ACP 会话目录；认证模型由 CLI 管理，Skill 直接读取原生用户目录。 */
+internal class QwenCodeAgentConfigAdapter internal constructor(
+    containerProvider: () -> ContainerRecord?,
+) : ProtocolOnlyAgentConfigAdapter(
+    adapterId = ADAPTER_ID,
+    containerProvider = containerProvider,
+    skillRoots = listOf(SKILL_ROOT, AGENTS_SKILL_ROOT),
+) {
+    constructor(context: Context) : this({
+        WorkSurfaceRuntimeBridge.getSavedContainer(context.applicationContext)
+    })
+
     override fun normalizeSessionModes(modes: List<AgentMode>): List<AgentMode> =
         modes.filterNot { it.id in QWEN_PERMISSION_LEVELS }
 
@@ -39,6 +52,8 @@ internal class QwenCodeAgentConfigAdapter : ProtocolOnlyAgentConfigAdapter(ADAPT
 
     companion object {
         const val ADAPTER_ID = "qwen-code"
+        private const val SKILL_ROOT = "/root/.qwen/skills"
+        private const val AGENTS_SKILL_ROOT = "/root/.agents/skills"
         private const val MODE_CONFIG_ID = "mode"
         private val QWEN_PERMISSION_LEVELS = mapOf(
             "plan" to AgentPermissionLevel.ReadOnly,

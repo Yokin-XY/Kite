@@ -60,7 +60,11 @@ internal class CodexAgentConfigAdapter(
     containerProvider,
     fileStore
 ) {
-    private val skillDirectory = NativeAgentSkillDirectory(projection::resolve, listOf(SKILL_ROOT))
+    private val skillDirectory = NativeAgentSkillDirectory(
+        project = projection::resolve,
+        roots = listOf(CODEX_SKILL_ROOT, AGENTS_SKILL_ROOT),
+        mutableRoots = setOf(CODEX_SKILL_ROOT, AGENTS_SKILL_ROOT),
+    )
 
     override fun displayName(): String = "Codex"
 
@@ -398,10 +402,16 @@ internal class CodexAgentConfigAdapter(
                 is AgentPersistentConfigChange.SetMcpEnabled ->
                     editor = editor.setMcpBoolean(change.serverId, "enabled", change.enabled)
                 is AgentPersistentConfigChange.RemoveMcpServer -> editor = editor.removeMcpServer(change.serverId)
-                is AgentPersistentConfigChange.SetSkillActivation -> editor = editor.setSkillEnabled(
-                    "$SKILL_ROOT/${change.skillId}/SKILL.md",
-                    change.activation == AgentSkillActivation.Enabled,
-                )
+                is AgentPersistentConfigChange.SetSkillActivation -> {
+                    val skillLocation = skillDirectory.discover()
+                        .firstOrNull { it.id == change.skillId }
+                        ?.containerLocation
+                        ?: "$CODEX_SKILL_ROOT/${change.skillId}"
+                    editor = editor.setSkillEnabled(
+                        "$skillLocation/SKILL.md",
+                        change.activation == AgentSkillActivation.Enabled,
+                    )
+                }
                 else -> Unit
             }
         }
@@ -552,7 +562,8 @@ internal class CodexAgentConfigAdapter(
         private const val RELAY_BASE_URL = "http://127.0.0.1:4453/v1"
         private const val NATIVE_MODE_OPTION_ID = "mode"
         private const val OFFICIAL_PROVIDER_ID = "openai"
-        private const val SKILL_ROOT = "/root/.agents/skills"
+        private const val CODEX_SKILL_ROOT = "/root/.codex/skills"
+        private const val AGENTS_SKILL_ROOT = "/root/.agents/skills"
         private const val GLOBAL_AGENTS_PATH = "/root/.codex/AGENTS.md"
         private const val GLOBAL_OVERRIDE_PATH = "/root/.codex/AGENTS.override.md"
         private const val MAX_MCP_ITEMS = 64
