@@ -8,8 +8,7 @@ import com.kite.app.foundation.contracts.ContainerExecConfig
 import com.kite.app.foundation.contracts.BaseImageProfile
 
 import android.content.Context
-import android.content.Context.CONNECTIVITY_SERVICE
-import android.net.ConnectivityManager
+import android.net.Network
 import android.os.SystemClock
 import android.system.Os
 import com.kite.app.foundation.logging.Logger
@@ -1596,18 +1595,10 @@ object KFContainerManager {
     /**
      * 从 Android 系统获取 DNS 服务器地址列表。
      */
-    private fun resolveDnsServersFromSystem(context: Context): List<String> {
-        val connectivityManager =
-            context.getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager
-        return connectivityManager
-            ?.activeNetwork
-            ?.let(connectivityManager::getLinkProperties)
-            ?.dnsServers
-            ?.mapNotNull { it.hostAddress?.trim() }
-            ?.filter { it.isNotBlank() }
-            ?.distinct()
-            .orEmpty()
-    }
+    private fun resolveDnsServersFromSystem(
+        context: Context,
+        preferredNetwork: Network? = null,
+    ): List<String> = RuntimeDnsFilePublisher.resolveFromAndroidDefaultNetwork(context, preferredNetwork)
 
     /**
      * 将 resolv.conf 写入**运行时目录**（app 私有目录），而非 rootfs。
@@ -1615,33 +1606,24 @@ object KFContainerManager {
      */
     @Synchronized
     private fun writeRuntimeResolvConf(runtimeResolvPath: String, dnsServers: List<String>): Boolean {
-        val file = File(runtimeResolvPath)
-        file.parentFile?.mkdirs()
-        runCatching {
-            val path = file.toPath()
-            if (Files.isSymbolicLink(path) || (file.exists() && !file.isFile)) {
-                Files.deleteIfExists(path)
-            }
-        }.onFailure { error ->
-            Logger.i("ContainerManager", "清理旧 resolv.conf 路径失败，继续尝试覆盖: ${error.message}")
-        }
-        val content = ContainerDnsPolicy.renderResolvConf(dnsServers)
-        val unchanged = file.exists() && runCatching { file.readText() == content }.getOrDefault(false)
-        if (unchanged) return false
-        file.writeText(content)
-        return true
+        return RuntimeDnsFilePublisher.publish(File(runtimeResolvPath), dnsServers)
     }
 
     /**
      * 默认网络变化时只重写已 bind-mount 的运行时 resolv.conf。
      * 不准备 rootfs、不重建终端，也不读取 VPN 或 provider 状态。
      */
-    internal fun refreshAndroidDefaultNetworkResolver(context: Context, reason: String) {
+    internal fun refreshAndroidDefaultNetworkResolver(
+        context: Context,
+        reason: String,
+        preferredNetwork: Network? = null,
+    ) {
         val appContext = context.applicationContext
-        val layout = AssetExtractor.getRuntimeLayout(appContext)
-        val dnsServers = ContainerDnsPolicy.normalize(resolveDnsServersFromSystem(appContext))
-        val runtimeResolvPath = File(layout.tmpDir, "resolv.conf").absolutePath
-        val changed = writeRuntimeResolvConf(runtimeResolvPath, dnsServers)
+        val dnsServers = ContainerDnsPolicy.normalize(
+            resolveDnsServersFromSystem(appContext, preferredNetwork)
+        )
+        val runtimeResolvFile = RuntimeDnsFilePublisher.sharedResolverFile(appContext)
+        val changed = writeRuntimeResolvConf(runtimeResolvFile.absolutePath, dnsServers)
         if (changed) {
             Logger.i(
                 "ContainerNetwork",

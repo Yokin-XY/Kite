@@ -40,7 +40,8 @@ Node 创建子进程时，受管 Node 或最终 Node shebang 继续走宿主；s
 ## DNS 与 Android seccomp
 
 Android 应用域没有 Ubuntu `/etc/resolv.conf`。Kite 在身份绑定 libc 副本中把该路径等长替换为 `/proc/self/fd/99`，由启动器
-打开 Android 当前默认网络生成的私有 resolv.conf 后执行 glibc loader，不硬编码公共 DNS。
+打开 Android 当前默认网络生成的共享运行时 resolv.conf 后执行 glibc loader，不硬编码公共 DNS。PRoot、Node 和通用 glibc
+宿主通道必须引用同一文件；默认网络变化时原地改写文件而不替换 inode，确保已经打开 fd 的长驻进程也能看到 VPN 切换后的 DNS。
 
 Android seccomp 拒绝部分普通发行版允许的新 syscall。兼容副本只转换已有标准回退语义：
 

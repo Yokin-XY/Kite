@@ -1,7 +1,6 @@
 package com.kite.app.foundation.runtime
 
 import android.content.Context
-import android.net.ConnectivityManager
 import com.kite.app.foundation.contracts.ContainerRecord
 import java.io.File
 import java.io.FileOutputStream
@@ -56,7 +55,9 @@ internal object GlibcHostRuntimePreparer {
         if (!workspaceControlDirectory.isDirectory) return unsupported("workspace_control_missing")
         if (!rootfs.isDirectory) return unsupported("rootfs_missing")
 
-        val dnsServers = resolveDnsServers(appContext)
+        val dnsServers = ContainerDnsPolicy.normalize(
+            RuntimeDnsFilePublisher.resolveFromAndroidDefaultNetwork(appContext)
+        )
         if (dnsServers.isEmpty()) return unsupported("android_dns_missing")
         val sourceLibc = libcRelativeCandidates.asSequence()
             .map { File(rootfs, it) }
@@ -76,7 +77,7 @@ internal object GlibcHostRuntimePreparer {
         val patchedLoader = File(runtimeRoot, "glibc/ld-linux-aarch64.so.1")
         val patchedLibc = File(runtimeRoot, "glibc/libc.so.6")
         val compatLibrary = File(runtimeRoot, "glibc/libkite-glibc-compat.so")
-        val resolvConf = File(runtimeRoot, "resolv.conf")
+        val resolvConf = RuntimeDnsFilePublisher.sharedResolverFile(appContext)
         val marker = File(runtimeRoot, "assets.identity")
         val identity = buildIdentity(sourceLoader, sourceLibc, launcherBytes, compatBytes)
 
@@ -114,10 +115,7 @@ internal object GlibcHostRuntimePreparer {
                     "patched glibc loader is not executable"
                 }
             }
-            writeBytesAtomic(
-                resolvConf,
-                ContainerDnsPolicy.renderResolvConf(dnsServers).toByteArray(StandardCharsets.UTF_8),
-            )
+            RuntimeDnsFilePublisher.publish(resolvConf, dnsServers)
         }
         if (published.isFailure) return unsupported("host_assets_publish_failed")
         return GlibcHostRuntimePreparation.Ready(
@@ -132,16 +130,6 @@ internal object GlibcHostRuntimePreparer {
     }
 
     private fun unsupported(reason: String) = GlibcHostRuntimePreparation.Unsupported(reason)
-
-    private fun resolveDnsServers(context: Context): List<String> {
-        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        val raw = manager?.activeNetwork
-            ?.let(manager::getLinkProperties)
-            ?.dnsServers
-            ?.mapNotNull { it.hostAddress?.trim() }
-            .orEmpty()
-        return ContainerDnsPolicy.normalize(raw)
-    }
 
     private fun readAsset(context: Context, path: String): ByteArray? = runCatching {
         context.assets.open(path).use { it.readBytes() }

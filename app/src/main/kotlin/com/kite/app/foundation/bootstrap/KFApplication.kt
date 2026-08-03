@@ -24,6 +24,7 @@ import com.kite.app.application.runtimemanagement.ProotViewInspectionDependencie
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapGateway
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
+import com.kite.app.foundation.runtime.AndroidDefaultNetworkAlignment
 import com.kite.app.foundation.runtime.HostSelfAdbBridgeWorker
 import com.kite.app.foundation.runtime.RuntimeLifecycleSignalStore
 import com.kite.app.foundation.runtime.RuntimePressureResponder
@@ -135,6 +136,9 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
         markLaunchStage("App", "Application.onCreate")
         StartupTraceStore.runApplicationStage(this, "application.lifecycle_signals") {
             registerRuntimeLifecycleSignals()
+        }
+        StartupTraceStore.runApplicationStage(this, "application.network_alignment") {
+            AndroidDefaultNetworkAlignment.ensureStarted(this)
         }
         StartupTraceStore.runApplicationStage(this, "application.android_shell_bridge") {
             AndroidShellBridgeWorker.start(this)
