@@ -564,12 +564,17 @@ class KiteResourceManifestProtocolTest {
         assertEquals("npm", manifest.sourceType)
         assertEquals("reasonix", manifest.source.packageName)
         assertEquals(listOf("reasonix"), manifest.management.managedCommands)
+        assertEquals("reasonix version", manifest.management.versionProbe?.command)
+        assertEquals(null, sourcePlan.versionCheck.installed?.structuredMetadata)
         assertTrue(manifest.installActions.isEmpty())
         assertTrue(manifest.uninstallActions.isEmpty())
         assertTrue(sourcePlan.generatedFromSource)
         assertEquals(listOf("reasonix@latest"), installAction.installSteps.single().packages)
         assertEquals(listOf("reasonix"), installAction.managedCommands)
-        assertEquals(listOf("command-reasonix"), installAction.verifications.map { it.id })
+        assertEquals(
+            listOf("installed-version", "command-reasonix"),
+            installAction.verifications.map { it.id },
+        )
         assertEquals(listOf("reasonix"), uninstallAction.managedCommands)
         assertEquals(listOf("reasonix"), uninstallAction.npmUninstallPackages)
     }
