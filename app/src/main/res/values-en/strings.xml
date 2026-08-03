@@ -175,7 +175,8 @@
     <string name="settings_drop_zone_title">Card registry</string>
     <string name="settings_drop_zone_available_summary">Card registration is ready. Tap to refresh registered cards.</string>
     <string name="settings_drop_zone_unavailable_summary">Card registration storage has an error. Tap to retry.</string>
-    <string name="settings_theme_color_section">Accent color</string>
+    <string name="settings_theme_color_section">Color scheme</string>
+    <string name="settings_theme_color_title">Current color scheme</string>
     <string name="settings_background_color_section">Background color</string>
     <string name="settings_theme_mode_section">Display mode</string>
     <string name="settings_theme_mode_title">Light and dark mode</string>
@@ -189,6 +190,8 @@
     <string name="settings_theme_style_dialog_title">Component style</string>
     <string name="settings_theme_style_dialog_summary">Colors and component shape are independent. Future radius, border, and elevation styles appear here.</string>
     <string name="settings_theme_style_standard">Standard</string>
+    <string name="settings_theme_color_chatgpt">ChatGPT Neutral</string>
+    <string name="settings_theme_color_standard">Classic Cyan</string>
     <string name="settings_theme_preview_title">Theme preview</string>
     <string name="settings_theme_preview_summary">Buttons, cards, and supporting text follow these colors.</string>
     <string name="settings_theme_preview_action">Start / Open</string>

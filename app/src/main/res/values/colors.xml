@@ -1,25 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary">#E67B39</color>
-    <color name="primary_dark">#A44B16</color>
-    <color name="accent">#28B78D</color>
+    <color name="primary">#212121</color>
+    <color name="primary_dark">#111111</color>
+    <color name="accent">#212121</color>
     <color name="ic_launcher_background">#F7EBDD</color>
 
-    <color name="background">#F2F3F5</color>
+    <color name="background">#FFFFFF</color>
     <color name="surface">#FFFFFF</color>
-    <color name="surface_alt">#F5F7FA</color>
-    <color name="outline">#D9E0E7</color>
+    <color name="surface_alt">#F7F7F7</color>
+    <color name="outline">#E8E8E8</color>
 
     <color name="terminal_bg">#081219</color>
     <color name="terminal_text">#D8F88D</color>
 
-    <color name="text_primary">#1F2329</color>
-    <color name="text_secondary">#6D7782</color>
-    <color name="success">#168A53</color>
+    <color name="text_primary">#111111</color>
+    <color name="text_secondary">#666666</color>
+    <color name="success">#10A37F</color>
     <color name="warning">#9C6B00</color>
     <color name="error">#C45454</color>
-    <color name="chip_bg">#E8EDF3</color>
-    <color name="input_bg">#F4F6F8</color>
+    <color name="chip_bg">#F4F4F4</color>
+    <color name="input_bg">#FFFFFF</color>
 
     <color name="terminal_page_bg">#F2F3F5</color>
     <color name="terminal_page_header">#E8EBEE</color>

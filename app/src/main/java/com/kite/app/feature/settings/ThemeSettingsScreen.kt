@@ -62,7 +62,7 @@ internal class ThemeSettingsScreen(
                         val selectedKey = (state.theme.colors as? ThemeColorSelection.Registered)?.key
                         val selectedIndex = colorSchemes.indexOfFirst { it.key == selectedKey }.coerceAtLeast(0)
                         addView(factory.navigationRow(
-                            context.getString(R.string.settings_theme_color_section),
+                            context.getString(R.string.settings_theme_color_title),
                             context.themeColorSchemeLabel(colorSchemes[selectedIndex]),
                         ) {
                             factory.showTextChoiceDialog(

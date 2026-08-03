@@ -84,16 +84,19 @@ enum class KiteAccent(val key: String) {
 }
 
 object KiteTheme : ThemeRuleProtocol {
-    const val defaultColorSchemeKey: String = "standard"
+    const val defaultColorSchemeKey: String = "chatgpt"
     const val defaultStyleKey: String = "standard"
 
-    val defaultThemeColor: Int = rgb(14, 116, 144)
-    val defaultBackgroundColor: Int = rgb(246, 248, 250)
-    val defaultTextPrimary: Int = rgb(15, 23, 42)
-    val defaultTextSecondary: Int = rgb(100, 116, 139)
-    val defaultBorder: Int = rgb(226, 232, 240)
+    val defaultThemeColor: Int = rgb(33, 33, 33)
+    val defaultBackgroundColor: Int = COLOR_WHITE
+    val defaultTextPrimary: Int = rgb(17, 17, 17)
+    val defaultTextSecondary: Int = rgb(102, 102, 102)
+    val defaultBorder: Int = rgb(232, 232, 232)
 
-    private val defaultSeed = ThemeColorSeed(defaultThemeColor, defaultBackgroundColor)
+    private val standardSeed = ThemeColorSeed(
+        accent = rgb(14, 116, 144),
+        background = rgb(246, 248, 250),
+    )
 
     override val defaultSelection = ThemeSelection(
         mode = KiteThemeMode.SYSTEM,
@@ -130,10 +133,16 @@ object KiteTheme : ThemeRuleProtocol {
         x11 = ThemeContentModePolicy.PRESERVE_CONTENT,
     )
 
-    private val standardScheme = ThemeColorSchemeDefinition(
+    private val chatGptScheme = ThemeColorSchemeDefinition(
         key = ThemeColorSchemeKey(defaultColorSchemeKey),
-        light = resolveLightTokens(defaultSeed),
-        dark = resolveDarkTokens(defaultSeed),
+        light = chatGptLightTokens(),
+        dark = chatGptDarkTokens(),
+    )
+
+    private val standardScheme = ThemeColorSchemeDefinition(
+        key = ThemeColorSchemeKey("standard"),
+        light = resolveLightTokens(standardSeed),
+        dark = resolveDarkTokens(standardSeed),
     )
 
     private val standardStylePack = ThemeStylePackDefinition(
@@ -142,7 +151,7 @@ object KiteTheme : ThemeRuleProtocol {
     )
 
     override val catalog = ThemeCatalog(
-        colorSchemes = listOf(standardScheme),
+        colorSchemes = listOf(chatGptScheme, standardScheme),
         stylePacks = listOf(standardStylePack),
     )
 
@@ -204,6 +213,71 @@ object KiteTheme : ThemeRuleProtocol {
             contentPolicies = contentPolicies,
         )
     }
+
+    /** 与 Agent 会话已经采用的 ChatGPT 中性层级保持一致，作为全应用的新默认色彩环境。 */
+    private fun chatGptLightTokens(): ThemeTokens = ThemeTokens(
+        pageBackground = COLOR_WHITE,
+        surface = COLOR_WHITE,
+        surfaceElevated = COLOR_WHITE,
+        cardBackground = rgb(247, 247, 247),
+        inputBackground = COLOR_WHITE,
+        overlay = argb(138, 0, 0, 0),
+        border = defaultBorder,
+        borderStrong = rgb(209, 209, 209),
+        shadow = argb(26, 0, 0, 0),
+        textPrimary = defaultTextPrimary,
+        textSecondary = defaultTextSecondary,
+        textTertiary = rgb(150, 150, 150),
+        primaryStrong = defaultThemeColor,
+        primarySoft = rgb(231, 231, 231),
+        primarySubtle = rgb(244, 244, 244),
+        primaryText = defaultThemeColor,
+        buttonText = COLOR_WHITE,
+        danger = rgb(207, 30, 39),
+        dangerSoft = rgb(252, 235, 235),
+        dangerBorder = rgb(243, 194, 197),
+        warning = rgb(161, 98, 7),
+        warningSoft = rgb(254, 243, 199),
+        warningBorder = rgb(245, 216, 143),
+        success = rgb(16, 163, 127),
+        successSoft = rgb(231, 247, 242),
+        successBorder = rgb(169, 223, 207),
+        info = rgb(59, 130, 246),
+        infoSoft = rgb(239, 246, 255),
+        infoBorder = rgb(191, 219, 254),
+    )
+
+    private fun chatGptDarkTokens(): ThemeTokens = ThemeTokens(
+        pageBackground = COLOR_BLACK,
+        surface = rgb(32, 32, 32),
+        surfaceElevated = rgb(38, 38, 38),
+        cardBackground = rgb(36, 36, 36),
+        inputBackground = rgb(32, 32, 32),
+        overlay = argb(184, 0, 0, 0),
+        border = rgb(55, 55, 55),
+        borderStrong = rgb(74, 74, 74),
+        shadow = argb(110, 0, 0, 0),
+        textPrimary = rgb(245, 245, 245),
+        textSecondary = rgb(178, 178, 178),
+        textTertiary = rgb(122, 122, 122),
+        primaryStrong = rgb(236, 236, 236),
+        primarySoft = rgb(58, 58, 58),
+        primarySubtle = rgb(42, 42, 42),
+        primaryText = rgb(236, 236, 236),
+        buttonText = rgb(20, 20, 20),
+        danger = rgb(255, 128, 135),
+        dangerSoft = rgb(72, 38, 40),
+        dangerBorder = rgb(126, 65, 69),
+        warning = rgb(242, 184, 75),
+        warningSoft = rgb(67, 51, 25),
+        warningBorder = rgb(119, 88, 35),
+        success = rgb(52, 211, 153),
+        successSoft = rgb(27, 67, 54),
+        successBorder = rgb(42, 113, 87),
+        info = rgb(96, 165, 250),
+        infoSoft = rgb(31, 55, 86),
+        infoBorder = rgb(51, 92, 143),
+    )
 
     private fun resolveLightTokens(seed: ThemeColorSeed): ThemeTokens {
         val bg = seed.background

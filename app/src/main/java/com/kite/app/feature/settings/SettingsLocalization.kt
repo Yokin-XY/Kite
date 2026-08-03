@@ -33,7 +33,8 @@ internal fun Context.themeModeLabel(mode: KiteThemeMode): String = getString(
 
 internal fun Context.themeColorSchemeLabel(scheme: ThemeColorSchemeDefinition): String =
     when (scheme.key.value) {
-        "standard" -> getString(R.string.settings_theme_style_standard)
+        "chatgpt" -> getString(R.string.settings_theme_color_chatgpt)
+        "standard" -> getString(R.string.settings_theme_color_standard)
         else -> scheme.key.value
     }
 

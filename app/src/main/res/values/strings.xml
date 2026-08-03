@@ -174,7 +174,8 @@
     <string name="settings_drop_zone_title">卡片注册</string>
     <string name="settings_drop_zone_available_summary">卡片登记已就绪；点击刷新已登记卡片。</string>
     <string name="settings_drop_zone_unavailable_summary">卡片登记存储异常；点击重试。</string>
-    <string name="settings_theme_color_section">主题色</string>
+    <string name="settings_theme_color_section">配色方案</string>
+    <string name="settings_theme_color_title">当前配色</string>
     <string name="settings_background_color_section">背景色</string>
     <string name="settings_theme_mode_section">显示模式</string>
     <string name="settings_theme_mode_title">明暗模式</string>
@@ -188,6 +189,8 @@
     <string name="settings_theme_style_dialog_title">组件样式</string>
     <string name="settings_theme_style_dialog_summary">颜色与组件形态彼此独立。以后新增的圆角、描边和层级方案会统一出现在这里。</string>
     <string name="settings_theme_style_standard">标准</string>
+    <string name="settings_theme_color_chatgpt">ChatGPT 中性</string>
+    <string name="settings_theme_color_standard">经典青色</string>
     <string name="settings_theme_preview_title">主题预览</string>
     <string name="settings_theme_preview_summary">按钮、卡片和辅助信息会跟随这里的颜色。</string>
     <string name="settings_theme_preview_action">启动 / 打开</string>

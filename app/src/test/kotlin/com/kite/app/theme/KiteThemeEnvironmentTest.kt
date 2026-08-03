@@ -69,8 +69,31 @@ class KiteThemeEnvironmentTest {
         val environment = KiteTheme.resolve(selected, systemDark = false)
 
         assertEquals(ThemeColorSelection.Custom(custom), environment.selection.colors)
-        assertEquals(1, KiteTheme.catalog.selectableColorSchemes.size)
+        assertEquals(2, KiteTheme.catalog.selectableColorSchemes.size)
         assertEquals(1, KiteTheme.catalog.selectableStylePacks.size)
+    }
+
+    @Test
+    fun `ChatGPT中性色是默认方案且经典青色仍可显式选择`() {
+        val light = KiteTheme.resolve(base, systemDark = false).tokens
+        val dark = KiteTheme.resolve(base, systemDark = true).tokens
+
+        assertEquals("chatgpt", KiteTheme.defaultColorSchemeKey)
+        assertEquals(Color.WHITE, light.pageBackground)
+        assertEquals(Color.rgb(247, 247, 247), light.cardBackground)
+        assertEquals(Color.rgb(33, 33, 33), light.primaryStrong)
+        assertEquals(Color.BLACK, dark.pageBackground)
+        assertEquals(Color.rgb(236, 236, 236), dark.primaryStrong)
+        assertEquals(Color.rgb(20, 20, 20), dark.buttonText)
+
+        val classic = KiteTheme.apply(
+            base,
+            ThemeCommand.SetColorScheme(ThemeColorSchemeKey("standard")),
+        )
+        assertEquals(
+            Color.rgb(14, 116, 144),
+            KiteTheme.resolve(classic, systemDark = false).tokens.primaryStrong,
+        )
     }
 
     @Test

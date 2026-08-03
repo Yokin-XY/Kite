@@ -388,7 +388,9 @@ class SettingsScreenTest {
         assertTrue(texts.contains(activity.getString(R.string.settings_theme_mode_section)))
         assertTrue(texts.contains(activity.getString(R.string.settings_theme_mode_title)))
         assertFalse(texts.contains(activity.getString(R.string.settings_theme_style_title)))
-        assertFalse(texts.contains(activity.getString(R.string.settings_theme_color_section)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_theme_color_section)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_theme_color_title)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_theme_color_chatgpt)))
     }
 
     private fun state() = SettingsUiState(

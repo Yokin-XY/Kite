@@ -8,6 +8,7 @@ import com.kite.app.application.settings.SettingsDropZoneSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.KiteThemeMode
+import com.kite.app.theme.ThemeColorSchemeKey
 import com.kite.app.theme.ThemeColorSeed
 import com.kite.app.theme.ThemeColorSelection
 import com.kite.app.theme.ThemeCommand
@@ -68,6 +69,27 @@ class AndroidSettingsGatewayTest {
         assertFalse(latest.restoreLastScreen)
         assertTrue(latest.hideMainTaskFromRecents)
         assertEquals(latest.copy(revision = restored.currentSnapshot().revision), restored.currentSnapshot())
+    }
+
+    @Test
+    fun `registered colors persist while restore defaults returns to ChatGPT neutral`() {
+        val gateway = gateway()
+
+        gateway.update(SettingsCommand.UpdateTheme(
+            ThemeCommand.SetColorScheme(ThemeColorSchemeKey("standard"))
+        ))
+        val restoredClassic = gateway().currentSnapshot().themeSelection
+        assertEquals(
+            ThemeColorSelection.Registered(ThemeColorSchemeKey("standard")),
+            restoredClassic.colors,
+        )
+
+        val defaults = gateway().update(SettingsCommand.UpdateTheme(ThemeCommand.RestoreDefaults))
+        assertEquals(KiteTheme.defaultSelection, defaults.themeSelection)
+        assertEquals(
+            ThemeColorSelection.Registered(ThemeColorSchemeKey("chatgpt")),
+            defaults.themeSelection.colors,
+        )
     }
 
     @Test

@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary">#E67B39</color>
-    <color name="primary_dark">#A44B16</color>
-    <color name="accent">#63D2B0</color>
+    <color name="primary">#ECECEC</color>
+    <color name="primary_dark">#FFFFFF</color>
+    <color name="accent">#ECECEC</color>
 
-    <color name="background">#0E1319</color>
-    <color name="surface">#171E27</color>
-    <color name="surface_alt">#202A35</color>
-    <color name="outline">#32404F</color>
+    <color name="background">#000000</color>
+    <color name="surface">#202020</color>
+    <color name="surface_alt">#242424</color>
+    <color name="outline">#373737</color>
 
     <color name="terminal_bg">#081219</color>
     <color name="terminal_text">#D8F88D</color>
 
-    <color name="text_primary">#F6F8FB</color>
-    <color name="text_secondary">#AAB5C2</color>
-    <color name="success">#45C46C</color>
+    <color name="text_primary">#F5F5F5</color>
+    <color name="text_secondary">#B2B2B2</color>
+    <color name="success">#34D399</color>
     <color name="warning">#F2B84B</color>
     <color name="error">#FF7A7A</color>
-    <color name="chip_bg">#24303C</color>
-    <color name="input_bg">#101820</color>
+    <color name="chip_bg">#2A2A2A</color>
+    <color name="input_bg">#202020</color>
 
     <color name="terminal_page_bg">#F2F3F5</color>
     <color name="terminal_page_header">#E8EBEE</color>
