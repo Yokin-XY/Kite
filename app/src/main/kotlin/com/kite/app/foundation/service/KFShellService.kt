@@ -51,6 +51,8 @@ class KFShellService : Service() {
             "com.kite.app.foundation.service.action.END_TERMINAL_SESSION"
         private const val ACTION_REFRESH_RUNTIME_OVERVIEW =
             "com.kite.app.foundation.service.action.REFRESH_RUNTIME_OVERVIEW"
+        private const val ACTION_ENSURE_EXECUTION_HOST_RESIDENT =
+            "com.kite.app.foundation.service.action.ENSURE_EXECUTION_HOST_RESIDENT"
         private const val EXTRA_RUNTIME_ID = "runtime_id"
         private const val EXTRA_AGENT_RUNTIME_ID = "agent_runtime_id"
         private const val EXTRA_TERMINAL_SESSION_ID = "terminal_session_id"
@@ -139,6 +141,18 @@ class KFShellService : Service() {
             serviceScope.launch {
                 RuntimeOverviewStore.refresh(appContext)
             }
+        }
+
+        /**
+         * 让直接执行命令及其 Android 网络代理拥有前台进程宿主。
+         * 这里只取得现有服务的驻留保障，不触发默认 runtime 暖启动。
+         */
+        fun ensureExecutionHostResident(context: Context) {
+            val appContext = context.applicationContext
+            val intent = Intent(appContext, KFShellService::class.java).apply {
+                action = ACTION_ENSURE_EXECUTION_HOST_RESIDENT
+            }
+            ContextCompat.startForegroundService(appContext, intent)
         }
 
         private fun enqueueRuntimeAction(context: Context, action: String, runtimeId: String) {
@@ -370,6 +384,11 @@ class KFShellService : Service() {
                     initJob.join()
                     RuntimeOverviewStore.refresh(appContext)
                 }
+            }
+
+            ACTION_ENSURE_EXECUTION_HOST_RESIDENT -> {
+                // onStartCommand 已经把进程提升为前台服务宿主；执行核心会继续自行准备容器。
+                Logger.i("KFShellService", "直接执行宿主已取得前台驻留保障")
             }
 
             ACTION_START_BACKGROUND_RUNTIME -> {

@@ -18,6 +18,7 @@ import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import com.kite.app.foundation.contracts.ContainerExecConfig
+import com.kite.app.foundation.service.KFShellService
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.foundation.workspace.WorkspaceBuildSupport
 import org.json.JSONObject
@@ -87,6 +88,9 @@ class KiteBridgeClient(
         val requestId = newRequestId()
         val context = appContext
         if (context != null) {
+            // 直接 PRoot/Node 进程会继续独立运行；先让承载 Android 网络代理的宿主进程
+            // 进入现有前台服务生命周期，避免切到后台后 CONNECT 请求卡在被冻结的代理线程。
+            KFShellService.ensureExecutionHostResident(context)
             diagnostics.logBridgeEvent(
                 "direct_request_sent",
                 recipe,
