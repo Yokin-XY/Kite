@@ -66,6 +66,7 @@ internal object AndroidDefaultNetworkAlignment {
             }
 
             appContext = applicationContext
+            AndroidRuntimeHttpProxy.ensureStarted(applicationContext)
             runCatching {
                 connectivityManager.registerDefaultNetworkCallback(callback)
             }.onSuccess {
@@ -97,6 +98,7 @@ internal object AndroidDefaultNetworkAlignment {
                     val reason = latestReason.get()
                     val network = latestNetwork.get()
                     runCatching {
+                        AndroidRuntimeHttpProxy.updateDefaultNetwork(network, reason)
                         KFContainerManager.refreshAndroidDefaultNetworkResolver(context, reason, network)
                     }.onFailure { error ->
                         Logger.e("ContainerNetwork", "刷新容器系统 DNS 失败: ${error.message}")

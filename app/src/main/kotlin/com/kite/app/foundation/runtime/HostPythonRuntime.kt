@@ -339,6 +339,7 @@ internal object HostPythonRuntimeProvider :
             ?: return unsupported("working_directory_invalid")
         val mappedEnvironment = mapEnvironment(request.environment, ready.layout)
             ?: return unsupported("python_environment_path_invalid")
+        val runtimeEnvironment = AndroidRuntimeHttpProxy.environment() + mappedEnvironment
         return RuntimeProviderDecision.Ready(
             provider = kind,
             plan = buildConfig(
@@ -346,7 +347,7 @@ internal object HostPythonRuntimeProvider :
                 ready.layout,
                 ready.invocation,
                 workingDirectory,
-                mappedEnvironment,
+                runtimeEnvironment,
             ),
             reason = "host_python_ready",
         )

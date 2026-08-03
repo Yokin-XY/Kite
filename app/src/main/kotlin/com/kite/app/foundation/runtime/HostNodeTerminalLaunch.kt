@@ -73,7 +73,13 @@ internal object HostNodeRuntimeProvider :
             ?: return unsupported("working_directory_invalid")
         return RuntimeProviderDecision.Ready(
             provider = kind,
-            plan = buildConfig(container, layout, invocation, workingDirectory, request.environment),
+            plan = buildConfig(
+                container,
+                layout,
+                invocation,
+                workingDirectory,
+                AndroidRuntimeHttpProxy.environment() + request.environment,
+            ),
             reason = "host_node_ready",
         )
     }
