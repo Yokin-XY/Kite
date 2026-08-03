@@ -25,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -262,6 +263,41 @@ class CodexAppServerAgentProviderTest {
     }
 
     @Test
+    fun `生成期间通过turn steer立即插入当前回合`() = runBlocking {
+        val fixture = CodexAppServerFixture(
+            modelProvider = "openai",
+            selectedModel = "gpt-5.6-sol",
+            completeTurnsImmediately = false,
+        )
+        val connection = connect(fixture, mutableListOf())
+        val created = connection.newSession(AgentNewSessionRequest("/workspace")) as AgentOperationResult.Success
+        val first = async {
+            connection.prompt(
+                AgentPromptRequest(created.value.id, listOf(AgentContent.Text("先检查项目"))),
+            )
+        }
+        withTimeout(2_000L) { fixture.turnStarted.await() }
+
+        val steered = connection.steer(
+            AgentPromptRequest(
+                created.value.id,
+                listOf(AgentContent.Text("改为只检查测试")),
+                messageId = "local-steer-1",
+            ),
+        )
+
+        assertTrue(steered is AgentOperationResult.Success)
+        val params = fixture.turnSteerParams.single()
+        assertEquals("thread-1", params.getString("threadId"))
+        assertEquals("turn-1", params.getString("expectedTurnId"))
+        assertEquals("改为只检查测试", params.getJSONArray("input").getJSONObject(0).getString("text"))
+        assertEquals("local-steer-1", params.getString("clientUserMessageId"))
+        fixture.completeTurn()
+        assertTrue(first.await() is AgentOperationResult.Success)
+        connection.disconnect()
+    }
+
+    @Test
     fun `加载已有会话会回放原生消息思考与工具记录`() = runBlocking {
         val history = JSONArray()
             .put(
@@ -384,11 +420,14 @@ class CodexAppServerAgentProviderTest {
         private val sandboxType: String = "readOnly",
         private val accountType: String? = if (modelProvider == "openai") "chatgpt" else null,
         private val historyItems: JSONArray = JSONArray(),
+        private val completeTurnsImmediately: Boolean = true,
     ) {
         val settingsUpdates = mutableListOf<JSONObject>()
         val turnInputs = mutableListOf<JSONArray>()
+        val turnSteerParams = mutableListOf<JSONObject>()
         val threadStartParams = mutableListOf<JSONObject>()
         val threadResumeParams = mutableListOf<JSONObject>()
+        val turnStarted = CompletableDeferred<Unit>()
         private val clientToServer = Channel<String>(Channel.UNLIMITED)
         private val serverToClient = Channel<String>(Channel.UNLIMITED)
         private val exit = CompletableDeferred<Int>()
@@ -462,6 +501,7 @@ class CodexAppServerAgentProviderTest {
                             JSONObject().put("id", "turn-1").put("status", "inProgress").put("items", JSONArray()),
                         ),
                     )
+                    turnStarted.complete(Unit)
                     val text = buildList {
                         repeat(input.length()) { index ->
                             input.optJSONObject(index)
@@ -470,27 +510,37 @@ class CodexAppServerAgentProviderTest {
                                 ?.let(::add)
                         }
                     }.joinToString("\n")
-                    notify(
-                        "item/agentMessage/delta",
-                        JSONObject()
-                            .put("threadId", "thread-1")
-                            .put("turnId", "turn-1")
-                            .put("itemId", "message-1")
-                            .put("delta", "收到：$text"),
-                    )
-                    notify(
-                        "turn/completed",
-                        JSONObject()
-                            .put("threadId", "thread-1")
-                            .put(
-                                "turn",
-                                JSONObject().put("id", "turn-1").put("status", "completed").put("items", JSONArray()),
-                            ),
-                    )
+                    if (completeTurnsImmediately) {
+                        notify(
+                            "item/agentMessage/delta",
+                            JSONObject()
+                                .put("threadId", "thread-1")
+                                .put("turnId", "turn-1")
+                                .put("itemId", "message-1")
+                                .put("delta", "收到：$text"),
+                        )
+                        completeTurn()
+                    }
+                }
+                "turn/steer" -> {
+                    turnSteerParams += JSONObject(params.toString())
+                    respond(id, JSONObject().put("turnId", "turn-1"))
                 }
                 "thread/unsubscribe" -> respond(id, JSONObject())
                 else -> respond(id, JSONObject())
             }
+        }
+
+        suspend fun completeTurn() {
+            notify(
+                "turn/completed",
+                JSONObject()
+                    .put("threadId", "thread-1")
+                    .put(
+                        "turn",
+                        JSONObject().put("id", "turn-1").put("status", "completed").put("items", JSONArray()),
+                    ),
+            )
         }
 
         suspend fun requestAdditionalPermissions(permissions: JSONObject): JSONObject {

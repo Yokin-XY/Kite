@@ -1118,16 +1118,15 @@ internal class RunAgentSurfaceBinding(
 
     private fun submitOrCancel() {
         val phase = composerPhase()
-        if (phase == AgentSessionPhase.Prompting || phase == AgentSessionPhase.Cancelling) {
+        val text = input.text?.toString()?.trim().orEmpty()
+        val hasDraft = text.isNotBlank() || pendingAttachments.isNotEmpty() || selectedSkills.isNotEmpty()
+        if (phase == AgentSessionPhase.Prompting && !hasDraft) {
             lifecycleOwner.lifecycleScope.launch {
                 showOperationResult(AgentRuntimeRegistry.cancel(instanceId, generation), "已请求停止生成")
             }
             return
         }
-        val text = input.text?.toString()?.trim().orEmpty()
-        if ((text.isBlank() && pendingAttachments.isEmpty() && selectedSkills.isEmpty()) ||
-            phase != AgentSessionPhase.Ready
-        ) return
+        if (!hasDraft || phase !in setOf(AgentSessionPhase.Ready, AgentSessionPhase.Prompting)) return
         val attachments = pendingAttachments.toList()
         val skills = selectedSkills.toList()
         val content = buildList {
@@ -1143,11 +1142,12 @@ internal class RunAgentSurfaceBinding(
         updateComposer()
         suspendComposerDraftPersistence = false
         lifecycleOwner.lifecycleScope.launch {
-            val result = AgentRuntimeRegistry.prompt(
-                instanceId,
-                generation,
-                AgentPromptDraft(content = content, skills = skills),
-            )
+            val draft = AgentPromptDraft(content = content, skills = skills)
+            val result = if (phase == AgentSessionPhase.Prompting) {
+                AgentRuntimeRegistry.steer(instanceId, generation, draft)
+            } else {
+                AgentRuntimeRegistry.prompt(instanceId, generation, draft)
+            }
             if (result !is AgentOperationResult.Success) {
                 restoreComposerAfterFailure(text, attachments, skills)
             }
@@ -1158,17 +1158,18 @@ internal class RunAgentSurfaceBinding(
     private fun updateComposer() {
         persistComposerDraft()
         val phase = composerPhase()
-        val cancelling = phase == AgentSessionPhase.Prompting || phase == AgentSessionPhase.Cancelling
-        val canSend = phase == AgentSessionPhase.Ready &&
-            (!input.text.isNullOrBlank() || pendingAttachments.isNotEmpty() || selectedSkills.isNotEmpty())
-        val nextPresentation = ComposerPresentation(phase, cancelling, canSend)
+        val hasDraft = !input.text.isNullOrBlank() || pendingAttachments.isNotEmpty() || selectedSkills.isNotEmpty()
+        val showStop = (phase == AgentSessionPhase.Prompting && !hasDraft) ||
+            phase == AgentSessionPhase.Cancelling
+        val canSubmit = hasDraft && phase in setOf(AgentSessionPhase.Ready, AgentSessionPhase.Prompting)
+        val nextPresentation = ComposerPresentation(phase, showStop, canSubmit)
         if (composerPresentation == nextPresentation) return
         composerPresentation = nextPresentation
-        input.isEnabled = phase == AgentSessionPhase.Ready
+        input.isEnabled = phase == AgentSessionPhase.Ready || phase == AgentSessionPhase.Prompting
         actionButton.visibility = View.VISIBLE
-        actionButton.isEnabled = cancelling || canSend
+        actionButton.isEnabled = canSubmit || (phase == AgentSessionPhase.Prompting && !hasDraft)
         actionButton.setImageResource(when {
-            cancelling -> R.drawable.ic_terminal_interrupt
+            showStop -> R.drawable.ic_terminal_interrupt
             else -> R.drawable.ic_arrow_up_light
         })
         actionButton.imageTintList = ColorStateList.valueOf(agentPageBackground)
@@ -1181,7 +1182,8 @@ internal class RunAgentSurfaceBinding(
             ui.dp(4),
         )
         actionButton.contentDescription = when {
-            cancelling -> "停止生成"
+            showStop -> "停止生成"
+            phase == AgentSessionPhase.Prompting -> "插入当前回复"
             else -> "发送"
         }
     }

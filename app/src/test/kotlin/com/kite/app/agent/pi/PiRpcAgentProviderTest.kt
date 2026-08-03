@@ -12,7 +12,10 @@ import com.kite.app.agent.contract.AgentSessionEvent
 import com.kite.app.agent.process.AgentProcessChannel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -58,8 +61,45 @@ class PiRpcAgentProviderTest {
         connection.disconnect()
     }
 
-    private class FakePiChannel : AgentProcessChannel {
+    @Test
+    fun `生成期间通过Pi steer立即插话`() = runBlocking {
+        val channel = FakePiChannel(settlePromptAutomatically = false)
+        val provider = PiRpcAgentProvider(
+            PiRpcProviderDescriptor("pi", "Pi Coding Agent"),
+            PiRpcProcessLauncher { channel },
+        )
+        val connected = provider.connect(
+            AgentConnectionRequest(AgentClientInfo("kite", "test")),
+            AgentClientEndpoint(
+                eventSink = { _, _ -> Unit },
+                permissionHandler = { AgentPermissionOutcome.Cancelled },
+            ),
+        ) as AgentOperationResult.Success
+        val connection = connected.value
+        connection.newSession(AgentNewSessionRequest("/workspace"))
+        val first = async {
+            connection.prompt(AgentPromptRequest("pi-session", listOf(AgentContent.Text("先检查项目"))))
+        }
+        withTimeout(2_000L) { channel.promptStarted.await() }
+
+        val steered = connection.steer(
+            AgentPromptRequest("pi-session", listOf(AgentContent.Text("改为只检查测试"))),
+        )
+
+        assertTrue(steered is AgentOperationResult.Success)
+        val steer = channel.requests.single { it.getString("type") == "steer" }
+        assertEquals("改为只检查测试", steer.getString("message"))
+        channel.settlePrompt()
+        assertTrue(first.await() is AgentOperationResult.Success)
+        connection.disconnect()
+    }
+
+    private class FakePiChannel(
+        private val settlePromptAutomatically: Boolean = true,
+    ) : AgentProcessChannel {
         private val output = MutableSharedFlow<String>(replay = 32, extraBufferCapacity = 32)
+        val requests = mutableListOf<JSONObject>()
+        val promptStarted = CompletableDeferred<Unit>()
         override val stdoutLines: Flow<String> = output
         override val stderrLines: Flow<String> = MutableSharedFlow()
         override val pid: Long = 42L
@@ -67,6 +107,7 @@ class PiRpcAgentProviderTest {
 
         override suspend fun writeLine(line: String) {
             val request = JSONObject(line)
+            requests += JSONObject(request.toString())
             val id = request.optString("id")
             val type = request.getString("type")
             val data = when (type) {
@@ -86,13 +127,18 @@ class PiRpcAgentProviderTest {
             output.emit(JSONObject().put("id", id).put("type", "response").put("command", type).put("success", true)
                 .apply { data?.let { put("data", it) } }.toString())
             if (type == "prompt") {
+                promptStarted.complete(Unit)
                 output.emit(JSONObject().put("type", "agent_start").toString())
                 output.emit(JSONObject().put("type", "message_update").put(
                     "assistantMessageEvent",
                     JSONObject().put("type", "text_delta").put("delta", "world"),
                 ).toString())
-                output.emit(JSONObject().put("type", "agent_settled").toString())
+                if (settlePromptAutomatically) settlePrompt()
             }
+        }
+
+        suspend fun settlePrompt() {
+            output.emit(JSONObject().put("type", "agent_settled").toString())
         }
 
         override suspend fun awaitExit(): Int = 0

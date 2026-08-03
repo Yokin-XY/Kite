@@ -235,7 +235,21 @@ class AgentRuntimeRegistryTest {
     fun `冷草稿创建原生会话前立即回显用户消息并在成功后迁移`() = runTest {
         val newSessionGate = CompletableDeferred<Unit>()
         val provider = FakeProvider(requestPermission = false, newSessionGate = newSessionGate)
-        start(provider, request("instance-optimistic", generation = 9L))
+        var publishedNativeBeforeUserMessage = false
+        start(
+            provider,
+            request("instance-optimistic", generation = 9L),
+            AgentRuntimeStatusSink { sessionId, _, _ ->
+                if (sessionId == "session-1") {
+                    val hasUserMessage = AgentConversationStore.snapshot(
+                        AgentConversationKey("fake", sessionId),
+                    )?.timeline
+                        ?.filterIsInstance<com.kite.app.agent.store.AgentConversationItem.Message>()
+                        ?.any { it.role == AgentMessageRole.User } == true
+                    if (!hasUserMessage) publishedNativeBeforeUserMessage = true
+                }
+            },
+        )
         val draftSessionId = requireNotNull(
             AgentRuntimeRegistry.conversationProjectionSessionId("instance-optimistic", 9L),
         )
@@ -269,6 +283,47 @@ class AgentRuntimeRegistryTest {
             .filterIsInstance<com.kite.app.agent.store.AgentConversationItem.Message>()
             .first { it.role == AgentMessageRole.User }
         assertEquals(listOf(AgentContent.Text("立即显示")), nativeMessage.content)
+        assertFalse(publishedNativeBeforeUserMessage)
+    }
+
+    @Test
+    fun `生成期间第二条消息绕过首轮互斥锁并立即插话`() = runTest {
+        val promptGate = CompletableDeferred<Unit>()
+        val provider = FakeProvider(requestPermission = false, promptGate = promptGate)
+        start(provider, request("instance-steer", generation = 10L))
+
+        val first = async {
+            AgentRuntimeRegistry.prompt(
+                "instance-steer",
+                10L,
+                listOf(AgentContent.Text("先检查项目")),
+            )
+        }
+        testScheduler.runCurrent()
+        assertEquals(1, provider.connection.promptCalls)
+        assertFalse(first.isCompleted)
+
+        val steered = AgentRuntimeRegistry.steer(
+            "instance-steer",
+            10L,
+            AgentPromptDraft(content = listOf(AgentContent.Text("改为只检查测试"))),
+        )
+
+        assertTrue(steered is AgentOperationResult.Success)
+        assertEquals(1, provider.connection.steerRequests.size)
+        assertEquals(
+            listOf(AgentContent.Text("改为只检查测试")),
+            provider.connection.steerRequests.single().content,
+        )
+        assertFalse(first.isCompleted)
+        val key = AgentConversationKey("fake", "session-1")
+        val userMessages = requireNotNull(AgentConversationStore.snapshot(key)).timeline
+            .filterIsInstance<com.kite.app.agent.store.AgentConversationItem.Message>()
+            .filter { it.role == AgentMessageRole.User }
+        assertEquals(2, userMessages.size)
+
+        promptGate.complete(Unit)
+        assertTrue(first.await() is AgentOperationResult.Success)
     }
 
     @Test
@@ -1140,6 +1195,7 @@ class AgentRuntimeRegistryTest {
         private val modelPreviews: Map<Pair<String, String>, AgentDraftConfigurationPreview> = emptyMap(),
         private val newSessionFailuresByConnection: List<Int>? = null,
         private val newSessionGate: CompletableDeferred<Unit>? = null,
+        private val promptGate: CompletableDeferred<Unit>? = null,
     ) : KiteAgentProvider {
         lateinit var connection: FakeConnection
         val connections = mutableListOf<FakeConnection>()
@@ -1166,6 +1222,7 @@ class AgentRuntimeRegistryTest {
                 requestPermission,
                 modelPreviews,
                 newSessionGate,
+                promptGate,
             )
             connections += connection
             return AgentOperationResult.Success(connection)
@@ -1189,6 +1246,7 @@ class AgentRuntimeRegistryTest {
         private val requestPermission: Boolean,
         private val modelPreviews: Map<Pair<String, String>, AgentDraftConfigurationPreview>,
         private val newSessionGate: CompletableDeferred<Unit>?,
+        private val promptGate: CompletableDeferred<Unit>?,
     ) : KiteAgentConnection {
         val disconnected = AtomicBoolean(false)
         var newSessionCalls = 0
@@ -1196,6 +1254,7 @@ class AgentRuntimeRegistryTest {
         var resumeSessionCalls = 0
         var promptCalls = 0
         val promptRequests = mutableListOf<AgentPromptRequest>()
+        val steerRequests = mutableListOf<AgentPromptRequest>()
         var lastNewSessionRequest: AgentNewSessionRequest? = null
         var lastListRequest: AgentSessionListRequest? = null
         val listRequests = mutableListOf<AgentSessionListRequest>()
@@ -1239,6 +1298,11 @@ class AgentRuntimeRegistryTest {
                 promptFailures--
                 return AgentOperationResult.Failure("发送失败")
             }
+            endpoint.eventSink.onEvent(
+                request.sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting),
+            )
+            promptGate?.await()
             if (requestPermission) {
                 val permission = endpoint.permissionHandler.request(
                     AgentPermissionRequest(
@@ -1264,6 +1328,11 @@ class AgentRuntimeRegistryTest {
                 AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready)
             )
             return AgentOperationResult.Success(AgentTurnResult(AgentStopReason.EndTurn))
+        }
+
+        override suspend fun steer(request: AgentPromptRequest): AgentOperationResult<Unit> {
+            steerRequests += request
+            return AgentOperationResult.Success(Unit)
         }
 
         override suspend fun cancel(sessionId: String): AgentOperationResult<Unit> =

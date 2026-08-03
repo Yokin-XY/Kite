@@ -48,6 +48,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -286,6 +287,7 @@ private class CodexAppServerConnection(
     private val sessions = ConcurrentHashMap<String, CodexSession>()
     private val activeTurns = ConcurrentHashMap<String, CompletableDeferred<AgentTurnResult>>()
     private val activeTurnIds = ConcurrentHashMap<String, String>()
+    private val activeTurnStarts = ConcurrentHashMap<String, CompletableDeferred<String>>()
     private val lastUsage = ConcurrentHashMap<String, AgentTurnUsage>()
     private val streamedMessages = ConcurrentHashMap.newKeySet<String>()
     private val streamedThoughts = ConcurrentHashMap.newKeySet<String>()
@@ -410,14 +412,16 @@ private class CodexAppServerConnection(
             ?: return AgentOperationResult.Failure("会话不存在: ${request.sessionId}")
         val input = request.content.toCodexInput()
             ?: return AgentOperationResult.Unsupported("codex-app-server-unsupported-input")
-        endpoint.eventSink.onEvent(
-            request.sessionId,
-            AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting),
-        )
         val completion = CompletableDeferred<AgentTurnResult>()
         if (activeTurns.putIfAbsent(request.sessionId, completion) != null) {
             return AgentOperationResult.Failure("Codex 当前已有一轮回复正在生成")
         }
+        val turnStarted = CompletableDeferred<String>()
+        activeTurnStarts[request.sessionId] = turnStarted
+        endpoint.eventSink.onEvent(
+            request.sessionId,
+            AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting),
+        )
         return try {
             val started = rpc.request(
                 "turn/start",
@@ -428,7 +432,10 @@ private class CodexAppServerConnection(
             started.optJSONObject("turn")?.optString("id")
                 ?.takeIf(String::isNotBlank)
                 ?.takeIf { !completion.isCompleted }
-                ?.let { activeTurnIds[request.sessionId] = it }
+                ?.let { turnId ->
+                    activeTurnIds[request.sessionId] = turnId
+                    turnStarted.complete(turnId)
+                }
             AgentOperationResult.Success(completion.await())
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -440,6 +447,37 @@ private class CodexAppServerConnection(
             AgentOperationResult.Failure("Codex 发送消息失败: ${error.message}", error)
         } finally {
             activeTurns.remove(request.sessionId, completion)
+            activeTurnStarts.remove(request.sessionId, turnStarted)
+        }
+    }
+
+    override suspend fun steer(request: AgentPromptRequest): AgentOperationResult<Unit> {
+        val session = sessions[request.sessionId]
+            ?: return AgentOperationResult.Failure("会话不存在: ${request.sessionId}")
+        val input = request.content.toCodexInput()
+            ?: return AgentOperationResult.Unsupported("codex-app-server-unsupported-input")
+        val turnId = activeTurnIds[request.sessionId]
+            ?: activeTurnStarts[request.sessionId]?.let { started ->
+                withTimeoutOrNull(STEER_TURN_START_TIMEOUT_MS) { started.await() }
+            }
+            ?: return AgentOperationResult.Failure("Codex 当前没有可插话的回复")
+        return operation("插入 Codex 当前回复") {
+            val response = rpc.request(
+                "turn/steer",
+                JSONObject()
+                    .put("threadId", session.id)
+                    .put("expectedTurnId", turnId)
+                    .put("input", input)
+                    .apply {
+                        request.messageId?.takeIf(String::isNotBlank)?.let { messageId ->
+                            put("clientUserMessageId", messageId)
+                        }
+                    },
+            )
+            response.optString("turnId").takeIf(String::isNotBlank)?.let { responseTurnId ->
+                check(responseTurnId == turnId) { "Codex 插话返回了不同的 turnId" }
+            }
+            Unit
         }
     }
 
@@ -564,6 +602,8 @@ private class CodexAppServerConnection(
         if (!disconnecting.compareAndSet(false, true)) return
         activeTurns.values.forEach { it.cancel() }
         activeTurns.clear()
+        activeTurnStarts.values.forEach { it.cancel() }
+        activeTurnStarts.clear()
         activeTurnIds.clear()
         sessions.keys.forEach { sessionId ->
             endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Closed))
@@ -582,7 +622,10 @@ private class CodexAppServerConnection(
             "turn/started" -> sessionId?.let { id ->
                 params.optJSONObject("turn")?.optString("id")
                     ?.takeIf(String::isNotBlank)
-                    ?.let { activeTurnIds[id] = it }
+                    ?.let { turnId ->
+                        activeTurnIds[id] = turnId
+                        activeTurnStarts[id]?.complete(turnId)
+                    }
             }
             "item/agentMessage/delta" -> sessionId?.let { id ->
                 val itemId = params.optString("itemId").takeIf(String::isNotBlank)
@@ -1053,6 +1096,7 @@ private class CodexAppServerConnection(
         private const val OFFICIAL_PROVIDER_ID = "openai"
         private const val DEFAULT_MODE_ID = "default"
         private const val THREAD_PAGE_SIZE = 50
+        private const val STEER_TURN_START_TIMEOUT_MS = 2_000L
         private val APPROVAL_DECISIONS = listOf("accept", "acceptForSession", "decline", "cancel")
     }
 }

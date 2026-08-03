@@ -49,6 +49,7 @@ import com.kite.app.agent.contract.KiteAgentConnection
 import com.kite.app.agent.contract.KiteAgentProvider
 import com.kite.app.agent.process.AgentProcessChannel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +59,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -206,6 +208,8 @@ private class AcpProcessAgentConnection(
     private val sessionPathMapper: AcpSessionPathMapper,
 ) : KiteAgentConnection {
     private val sessions = ConcurrentHashMap<String, ClientSession>()
+    private val activePrompts = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+    private val steeringSessions = ConcurrentHashMap.newKeySet<String>()
     private val disconnecting = AtomicBoolean(false)
 
     init {
@@ -361,12 +365,87 @@ private class AcpProcessAgentConnection(
     }
 
     override suspend fun prompt(request: AgentPromptRequest): AgentOperationResult<AgentTurnResult> {
+        val finished = CompletableDeferred<Unit>()
+        if (activePrompts.putIfAbsent(request.sessionId, finished) != null) {
+            return AgentOperationResult.Failure("ACP 当前已有一轮回复正在生成")
+        }
+        return try {
+            prompt(request, publishLifecycle = true)
+        } finally {
+            activePrompts.remove(request.sessionId, finished)
+            finished.complete(Unit)
+        }
+    }
+
+    override suspend fun steer(request: AgentPromptRequest): AgentOperationResult<Unit> {
         val session = sessions[request.sessionId]
             ?: return AgentOperationResult.Failure("会话不存在: ${request.sessionId}")
-        endpoint.eventSink.onEvent(
-            request.sessionId,
-            AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting)
-        )
+        val running = activePrompts[request.sessionId]
+            ?: return AgentOperationResult.Failure("ACP 当前没有可插话的回复")
+        if (!steeringSessions.add(request.sessionId)) {
+            return AgentOperationResult.Failure("ACP 正在切换到新的用户输入")
+        }
+        return try {
+            session.cancel()
+            val interrupted = withTimeoutOrNull(STEER_INTERRUPT_TIMEOUT_MS) {
+                running.await()
+                true
+            } == true
+            if (!interrupted) {
+                return AgentOperationResult.Failure("ACP 当前回复未能及时停止，插话未发送")
+            }
+            val replacement = CompletableDeferred<Unit>()
+            if (activePrompts.putIfAbsent(request.sessionId, replacement) != null) {
+                return AgentOperationResult.Failure("ACP 当前回复仍在结束中，插话未发送")
+            }
+            try {
+                when (val result = prompt(request, publishLifecycle = false)) {
+                    is AgentOperationResult.Success -> {
+                        endpoint.eventSink.onEvent(
+                            request.sessionId,
+                            AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready),
+                        )
+                        AgentOperationResult.Success(Unit)
+                    }
+                    is AgentOperationResult.Failure -> {
+                        endpoint.eventSink.onEvent(
+                            request.sessionId,
+                            AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Failed, result.message),
+                        )
+                        result
+                    }
+                    is AgentOperationResult.Unsupported -> result
+                }
+            } finally {
+                activePrompts.remove(request.sessionId, replacement)
+                replacement.complete(Unit)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            endpoint.eventSink.onEvent(
+                request.sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Failed, error.message),
+            )
+            AcpAgentMapper.failure("插入当前回复", error)
+        } finally {
+            steeringSessions.remove(request.sessionId)
+        }
+    }
+
+    /** ACP SDK 禁止并发 prompt；这里只等待当前 prompt 的中断确认，随后在原会话立即发送。 */
+    private suspend fun prompt(
+        request: AgentPromptRequest,
+        publishLifecycle: Boolean,
+    ): AgentOperationResult<AgentTurnResult> {
+        val session = sessions[request.sessionId]
+            ?: return AgentOperationResult.Failure("会话不存在: ${request.sessionId}")
+        if (publishLifecycle) {
+            endpoint.eventSink.onEvent(
+                request.sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting)
+            )
+        }
         return try {
             var result: AgentTurnResult? = null
             session.prompt(request.content.map(AgentContent::toAcp)).collect { event ->
@@ -392,22 +471,28 @@ private class AcpProcessAgentConnection(
                 }
             }
             val resolved = result ?: error("ACP prompt 没有返回 stop reason")
-            endpoint.eventSink.onEvent(
-                request.sessionId,
-                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready)
-            )
+            if (publishLifecycle && request.sessionId !in steeringSessions) {
+                endpoint.eventSink.onEvent(
+                    request.sessionId,
+                    AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready)
+                )
+            }
             AgentOperationResult.Success(resolved)
         } catch (cancelled: CancellationException) {
-            endpoint.eventSink.onEvent(
-                request.sessionId,
-                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Cancelled)
-            )
+            if (publishLifecycle && request.sessionId !in steeringSessions) {
+                endpoint.eventSink.onEvent(
+                    request.sessionId,
+                    AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Cancelled)
+                )
+            }
             throw cancelled
         } catch (error: Throwable) {
-            endpoint.eventSink.onEvent(
-                request.sessionId,
-                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Failed, error.message)
-            )
+            if (publishLifecycle && request.sessionId !in steeringSessions) {
+                endpoint.eventSink.onEvent(
+                    request.sessionId,
+                    AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Failed, error.message)
+                )
+            }
             AcpAgentMapper.failure("发送消息", error)
         }
     }
@@ -476,6 +561,9 @@ private class AcpProcessAgentConnection(
 
     override suspend fun disconnect() {
         if (!disconnecting.compareAndSet(false, true)) return
+        activePrompts.values.forEach { it.cancel() }
+        activePrompts.clear()
+        steeringSessions.clear()
         sessions.keys.forEach { sessionId ->
             endpoint.eventSink.onEvent(
                 sessionId,
@@ -545,6 +633,7 @@ private class AcpProcessAgentConnection(
 }
 
 internal const val ACP_SESSION_MODEL_CONFIG_ID = "acp.session.model"
+private const val STEER_INTERRUPT_TIMEOUT_MS = 5_000L
 
 @OptIn(UnstableApi::class)
 private class AcpClientOperations(

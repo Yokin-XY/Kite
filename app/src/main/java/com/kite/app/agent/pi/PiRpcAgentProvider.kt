@@ -201,6 +201,24 @@ private class PiRpcConnection(
         }
     }
 
+    override suspend fun steer(request: AgentPromptRequest): AgentOperationResult<Unit> {
+        if (activeSessionId != request.sessionId) {
+            return AgentOperationResult.Failure("会话不存在: ${request.sessionId}")
+        }
+        if (activeTurn == null) return AgentOperationResult.Failure("Pi 当前没有可插话的回复")
+        val payload = request.content.toPiPrompt()
+            ?: return AgentOperationResult.Unsupported("pi-rpc-unsupported-input")
+        return operation("插入 Pi 当前回复") {
+            rpc.request(
+                "steer",
+                JSONObject().put("message", payload.message).apply {
+                    if (payload.images.length() > 0) put("images", payload.images)
+                },
+            )
+            Unit
+        }
+    }
+
     override suspend fun setConfiguration(
         sessionId: String,
         configId: String,

@@ -54,8 +54,8 @@ internal data class AgentSessionProjectGroup(
 
 internal data class ComposerPresentation(
     val phase: AgentSessionPhase?,
-    val cancelling: Boolean,
-    val canSend: Boolean,
+    val showStop: Boolean,
+    val canSubmit: Boolean,
 )
 
 internal data class ComposerModelTextStyle(

@@ -180,7 +180,8 @@ data class AgentMode(
 
 data class AgentPromptRequest(
     val sessionId: String,
-    val content: List<AgentContent>
+    val content: List<AgentContent>,
+    val messageId: String? = null,
 )
 
 data class AgentTurnResult(
@@ -612,6 +613,9 @@ interface KiteAgentConnection {
     suspend fun renameSession(request: AgentSessionRenameRequest): AgentOperationResult<Unit> =
         AgentOperationResult.Unsupported("session/rename")
     suspend fun prompt(request: AgentPromptRequest): AgentOperationResult<AgentTurnResult>
+    /** 当前回复生成期间立即补充用户输入；实现必须直接交给原生会话，不能在 Kite 内排队。 */
+    suspend fun steer(request: AgentPromptRequest): AgentOperationResult<Unit> =
+        AgentOperationResult.Unsupported("session/steer")
     suspend fun setConfiguration(
         sessionId: String,
         configId: String,

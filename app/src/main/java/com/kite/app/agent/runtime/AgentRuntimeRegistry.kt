@@ -858,7 +858,10 @@ object AgentRuntimeRegistry {
                 }
                 AgentConversationStore.remove(optimisticKey)
             }
-            val result = active.connection.prompt(AgentPromptRequest(sessionId, transportContent))
+            active.promoteWarmDraft()
+            val result = active.connection.prompt(
+                AgentPromptRequest(sessionId, transportContent, messageId = localMessageId),
+            )
             if (result !is AgentOperationResult.Success) {
                 AgentConversationStore.discardLocalMessage(key, localMessageId)
             } else {
@@ -868,6 +871,58 @@ object AgentRuntimeRegistry {
             }
             result
         }
+    }
+
+    /**
+     * 当前原生回合生成期间立即补充输入。这里刻意不获取 [ActiveRuntime.sessionOperationMutex]：
+     * 插话必须在首轮 prompt 仍挂起时抵达 Agent，不能退化为 Kite 本地排队。
+     */
+    suspend fun steer(
+        instanceId: String,
+        generation: Long,
+        draft: AgentPromptDraft,
+    ): AgentOperationResult<Unit> {
+        val active = activeByInstance[instanceId]
+            ?.takeIf { it.session.generation == generation }
+            ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
+        val sessionId = active.session.sessionId
+            ?.takeIf { !active.session.isDraft }
+            ?: return AgentOperationResult.Failure("Agent 原生会话尚未准备好插话")
+        if (draft.content.isEmpty() && draft.skills.isEmpty()) {
+            return AgentOperationResult.Failure("消息内容为空")
+        }
+        val visibleContent = draft.visibleContent
+        val transportContent = active.composeSkillPrompt(draft)
+        if (transportContent.isEmpty() || transportContent.any { it is AgentContent.SkillReference }) {
+            return AgentOperationResult.Failure("Skill 草稿未能转换为 Agent 输入")
+        }
+        val key = AgentConversationKey(active.session.providerId, sessionId)
+        val phase = AgentConversationStore.snapshot(key)?.phase
+        if (phase != AgentSessionPhase.Prompting) {
+            return AgentOperationResult.Failure("Agent 当前没有正在生成的回复")
+        }
+        val localMessageId = "local-${System.currentTimeMillis()}"
+        visibleContent.forEach { block ->
+            AgentConversationStore.applyEvent(
+                key,
+                AgentSessionEvent.MessageChunk(
+                    role = com.kite.app.agent.contract.AgentMessageRole.User,
+                    content = block,
+                    messageId = localMessageId,
+                ),
+            )
+        }
+        val result = active.connection.steer(
+            AgentPromptRequest(sessionId, transportContent, messageId = localMessageId),
+        )
+        if (result !is AgentOperationResult.Success) {
+            AgentConversationStore.discardLocalMessage(key, localMessageId)
+        } else {
+            synchronized(active.composerDraftLock) {
+                active.composerDrafts.remove(composerDraftKey(sessionId))
+            }
+        }
+        return result
     }
 
     suspend fun cancel(instanceId: String, generation: Long): AgentOperationResult<Unit> {
@@ -1051,7 +1106,6 @@ object AgentRuntimeRegistry {
         }
         val sessionId = session.sessionId
             ?: return AgentOperationResult.Failure("Agent 会话创建后未返回会话 ID")
-        promoteWarmDraft()
         return AgentOperationResult.Success(sessionId)
     }
 

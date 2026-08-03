@@ -212,6 +212,9 @@ class AgentSessionConfigurationOverlayProvider(
         override suspend fun prompt(request: AgentPromptRequest): AgentOperationResult<AgentTurnResult> =
             delegate.prompt(request)
 
+        override suspend fun steer(request: AgentPromptRequest): AgentOperationResult<Unit> =
+            delegate.steer(request)
+
         override suspend fun setConfiguration(
             sessionId: String,
             configId: String,

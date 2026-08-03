@@ -192,6 +192,18 @@ class AcpProcessAgentProviderTest {
             connection.prompt(AgentPromptRequest(sessionId, listOf(AgentContent.Text("wait"))))
         }
         withTimeout(2_000L) { fixture.promptStarted.await() }
+        val steered = withTimeout(2_000L) {
+            connection.steer(AgentPromptRequest(sessionId, listOf(AgentContent.Text("现在改为检查测试"))))
+        }
+        assertTrue(steered.toString(), steered is AgentOperationResult.Success)
+        assertTrue(events.any { (_, event) ->
+            event is AgentSessionEvent.MessageChunk &&
+                (event.content as? AgentContent.Text)?.text == "echo:现在改为检查测试"
+        })
+        assertEquals(
+            AgentSessionPhase.Ready,
+            events.mapNotNull { (_, event) -> (event as? AgentSessionEvent.LifecycleChanged)?.phase }.last(),
+        )
         assertTrue(connection.cancel(sessionId) is AgentOperationResult.Success)
         withTimeout(2_000L) {
             while (!fixture.cancelled) yield()
