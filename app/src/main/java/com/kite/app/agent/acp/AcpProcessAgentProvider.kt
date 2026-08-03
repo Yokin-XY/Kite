@@ -55,7 +55,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -109,10 +111,11 @@ class AcpProcessAgentProvider(
             return AgentOperationResult.Failure("无法启动 ${descriptor.name}: ${error.message}", error)
         }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineName("Acp-${descriptor.id}"))
+        val inlineSessionUpdates = AcpInlineSessionUpdateBuffer()
         val transport = StdioTransport(
             parentScope = scope,
             ioDispatcher = Dispatchers.IO,
-            input = process.stdoutLines,
+            input = process.stdoutLines.onEach(inlineSessionUpdates::inspect),
             output = process::writeLine,
             name = "${descriptor.id}-stdio"
         )
@@ -167,6 +170,7 @@ class AcpProcessAgentProvider(
                     sessionDelete = sessionDelete,
                     sessionRename = sessionRename,
                     sessionPathMapper = sessionPathMapper,
+                    inlineSessionUpdates = inlineSessionUpdates,
                 )
             )
         } catch (error: Throwable) {
@@ -206,6 +210,7 @@ private class AcpProcessAgentConnection(
     private val sessionDelete: (suspend (sessionId: String) -> AgentOperationResult<Unit>)?,
     private val sessionRename: (suspend (request: AgentSessionRenameRequest) -> AgentOperationResult<Unit>)?,
     private val sessionPathMapper: AcpSessionPathMapper,
+    private val inlineSessionUpdates: AcpInlineSessionUpdateBuffer,
 ) : KiteAgentConnection {
     private val sessions = ConcurrentHashMap<String, ClientSession>()
     private val activePrompts = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
@@ -243,15 +248,11 @@ private class AcpProcessAgentConnection(
 
     override suspend fun loadSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> {
         if (!capabilities.sessions.load) return AgentOperationResult.Unsupported("session/load")
-        return createSession(request.cwd, request.additionalDirectories, request.sessionId) {
+        return restoreSessionWithInlineReplay(request) { relay ->
             client.loadSession(
                 SessionId(request.sessionId),
-                SessionCreationParameters(
-                    sessionPathMapper.toAgent(request.cwd),
-                    emptyList(),
-                    request.additionalDirectories.map(sessionPathMapper.toAgent),
-                )
-            ) { sessionId, _ -> AcpClientOperations(sessionId.value, endpoint) }
+                request.toAcpSessionParameters(),
+            ) { sessionId, _ -> AcpClientOperations(sessionId.value, endpoint, relay) }
         }
     }
 
@@ -273,14 +274,46 @@ private class AcpProcessAgentConnection(
         return createSession(request.cwd, request.additionalDirectories, request.sessionId) {
             client.resumeSession(
                 SessionId(request.sessionId),
-                SessionCreationParameters(
-                    sessionPathMapper.toAgent(request.cwd),
-                    emptyList(),
-                    request.additionalDirectories.map(sessionPathMapper.toAgent),
-                )
+                request.toAcpSessionParameters(),
             ) { sessionId, _ -> AcpClientOperations(sessionId.value, endpoint) }
         }
     }
+
+    private suspend fun restoreSessionWithInlineReplay(
+        request: AgentExistingSessionRequest,
+        restore: suspend (AcpInlineSessionUpdateRelay) -> ClientSession,
+    ): AgentOperationResult<AgentSessionSnapshot> {
+        val relay = inlineSessionUpdates.begin(request.sessionId) { update ->
+            endpoint.eventSink.onEvent(request.sessionId, AcpAgentMapper.sessionEvent(update))
+        }
+        val result = try {
+            createSession(request.cwd, request.additionalDirectories, request.sessionId) {
+                restore(relay)
+            }
+        } catch (cancelled: CancellationException) {
+            relay.abort()
+            throw cancelled
+        } finally {
+            inlineSessionUpdates.end(request.sessionId, relay)
+        }
+        if (result is AgentOperationResult.Success) {
+            relay.complete()
+            scope.launch {
+                delay(INLINE_REPLAY_DEDUPLICATION_MS)
+                relay.releaseDeduplication()
+            }
+        } else {
+            relay.abort()
+        }
+        return result
+    }
+
+    private fun AgentExistingSessionRequest.toAcpSessionParameters(): SessionCreationParameters =
+        SessionCreationParameters(
+            sessionPathMapper.toAgent(cwd),
+            emptyList(),
+            additionalDirectories.map(sessionPathMapper.toAgent),
+        )
 
     override suspend fun forkSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> {
         if (!capabilities.sessions.fork) return AgentOperationResult.Unsupported("session/fork")
@@ -634,11 +667,13 @@ private class AcpProcessAgentConnection(
 
 internal const val ACP_SESSION_MODEL_CONFIG_ID = "acp.session.model"
 private const val STEER_INTERRUPT_TIMEOUT_MS = 5_000L
+private const val INLINE_REPLAY_DEDUPLICATION_MS = 1_000L
 
 @OptIn(UnstableApi::class)
 private class AcpClientOperations(
     private val sessionId: String,
-    private val endpoint: AgentClientEndpoint
+    private val endpoint: AgentClientEndpoint,
+    private val inlineSessionUpdateRelay: AcpInlineSessionUpdateRelay? = null,
 ) : ClientSessionOperations {
     override suspend fun requestPermissions(
         toolCall: SessionUpdate.ToolCallUpdate,
@@ -659,7 +694,8 @@ private class AcpClientOperations(
         notification: SessionUpdate,
         _meta: kotlinx.serialization.json.JsonElement?
     ) {
-        endpoint.eventSink.onEvent(sessionId, AcpAgentMapper.sessionEvent(notification))
+        inlineSessionUpdateRelay?.fromSdk(notification)
+            ?: endpoint.eventSink.onEvent(sessionId, AcpAgentMapper.sessionEvent(notification))
     }
 }
 

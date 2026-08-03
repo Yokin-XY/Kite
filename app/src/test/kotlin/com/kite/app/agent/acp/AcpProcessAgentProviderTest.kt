@@ -7,6 +7,7 @@ import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.agent.AgentSession
 import com.agentclientprotocol.agent.AgentSupport
 import com.agentclientprotocol.client.ClientInfo
+import com.agentclientprotocol.common.ClientSessionOperations
 import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.common.SessionCreationParameters
 import com.agentclientprotocol.model.AgentCapabilities
@@ -44,6 +45,8 @@ import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
+import com.kite.app.agent.contract.AgentExistingSessionRequest
+import com.kite.app.agent.contract.AgentMessageRole
 import com.kite.app.agent.contract.AgentNewSessionRequest
 import com.kite.app.agent.contract.AgentOperationResult
 import com.kite.app.agent.contract.AgentPermissionOutcome
@@ -68,6 +71,8 @@ import kotlinx.coroutines.yield
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonElement
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.coroutines.coroutineContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -90,6 +95,42 @@ class AcpProcessAgentProviderTest {
 
         assertNull(privateImage.uri)
         assertEquals("file:///workspace/reference.png", agentVisibleImage.uri)
+    }
+
+    @Test
+    fun loadSessionKeepsHistoryUpdatesEmittedBeforeLoadResponse() = runBlocking {
+        val fixture = AcpAgentFixture()
+        val events = CopyOnWriteArrayList<AgentSessionEvent>()
+        val provider = AcpProcessAgentProvider(
+            descriptor = AcpProcessProviderDescriptor("fixture", "Fixture ACP"),
+            launcher = AcpProcessChannelLauncher { fixture.start() },
+            initializeTimeoutMs = 2_000L,
+        )
+        val connected = provider.connect(
+            AgentConnectionRequest(AgentClientInfo("kite", "test", "Kite Test"), AgentClientCapabilities()),
+            AgentClientEndpoint(
+                eventSink = { _, event -> events += event },
+                permissionHandler = { AgentPermissionOutcome.Cancelled },
+            ),
+        ) as AgentOperationResult.Success
+
+        val loaded = connected.value.loadSession(
+            AgentExistingSessionRequest("historical-session", "/workspace"),
+        )
+
+        assertTrue(loaded is AgentOperationResult.Success)
+        withTimeout(2_000L) {
+            while (events.count { it is AgentSessionEvent.MessageChunk } < 2) yield()
+        }
+        assertEquals(
+            listOf(AgentMessageRole.User to "历史问题", AgentMessageRole.Assistant to "历史回答"),
+            events.mapNotNull { event ->
+                val chunk = event as? AgentSessionEvent.MessageChunk ?: return@mapNotNull null
+                val text = chunk.content as? AgentContent.Text ?: return@mapNotNull null
+                chunk.role to text.text
+            },
+        )
+        connected.value.disconnect()
     }
 
     @Test
@@ -286,6 +327,7 @@ class AcpProcessAgentProviderTest {
         override suspend fun initialize(clientInfo: ClientInfo): AgentInfo = AgentInfo(
             protocolVersion = LATEST_PROTOCOL_VERSION,
             capabilities = AgentCapabilities(
+                loadSession = true,
                 auth = AgentAuthCapabilities(logout = LogoutCapabilities())
             ),
             authMethods = listOf(
@@ -317,8 +359,22 @@ class AcpProcessAgentProviderTest {
                 awaitPromptRelease,
                 onModelSelected,
                 onModeSelected,
+                replayHistory = false,
             )
         }
+
+        override suspend fun loadSession(
+            sessionId: SessionId,
+            sessionParameters: SessionCreationParameters,
+        ): AgentSession = FixtureSession(
+            sessionId,
+            onCancel,
+            onPromptStarted,
+            awaitPromptRelease,
+            onModelSelected,
+            onModeSelected,
+            replayHistory = true,
+        )
     }
 
     private class FixtureSession(
@@ -328,6 +384,7 @@ class AcpProcessAgentProviderTest {
         private val awaitPromptRelease: suspend () -> Unit,
         private val onModelSelected: (String) -> Unit,
         private val onModeSelected: (String) -> Unit,
+        private val replayHistory: Boolean,
     ) : AgentSession {
         override val availableModels: List<ModelInfo> = listOf(
             ModelInfo(ModelId("fixture-balanced"), "Fixture Balanced"),
@@ -338,6 +395,20 @@ class AcpProcessAgentProviderTest {
         private var selectedMode = "build"
         override val configOptions: List<AcpSessionConfigOption>
             get() = listOf(modeOption(selectedMode))
+
+        override suspend fun postInitialize() {
+            if (!replayHistory) return
+            val contextElement = coroutineContext.fold<kotlin.coroutines.CoroutineContext.Element?>(null) { found, element ->
+                found ?: element.takeIf {
+                    it.javaClass.name == "com.agentclientprotocol.agent.SessionWrapperContextElement"
+                }
+            } ?: error("missing ACP session context")
+            val wrapper = contextElement.javaClass.getMethod("getSessionWrapper").invoke(contextElement)
+            val operations = wrapper.javaClass.getMethod("getClientOperations").invoke(wrapper)
+                as ClientSessionOperations
+            operations.notify(SessionUpdate.UserMessageChunk(ContentBlock.Text("历史问题")))
+            operations.notify(SessionUpdate.AgentMessageChunk(ContentBlock.Text("历史回答")))
+        }
 
         override suspend fun setModel(modelId: ModelId, _meta: JsonElement?) =
             com.agentclientprotocol.model.SetSessionModelResponse().also {
