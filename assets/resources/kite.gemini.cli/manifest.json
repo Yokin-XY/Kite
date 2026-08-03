@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.gemini.cli",
+  "base": {
+    "name": "Gemini CLI",
+    "description": "Google 的终端 AI 编码 Agent",
+    "version": "npm",
+    "icon": {
+      "type": "text",
+      "value": "Ge"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["gemini"],
+    "versionProbe": {
+      "command": "gemini --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
+  },
+  "display": {
+    "sections": ["ai-vendor"],
+    "tabs": ["angel-cli"],
+    "order": 85,
+    "category": "AI",
+    "accent": "purple",
+    "sizeLabel": "网络包",
+    "longDescription": "Gemini CLI 是 Google 官方的开源终端编码 Agent。Kite 使用官方 npm 包安装 gemini 命令，并通过 Gemini CLI 原生 ACP 模式接入统一会话；登录、API Key、模型和工具审批仍由 Gemini CLI 自己管理。",
+    "recommendations": [
+      {
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.git",
+        "label": "源码工具"
+      },
+      {
+        "resourceId": "kite.qwen.code",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.codex.cli",
+        "label": "同类 Agent"
+      }
+    ],
+    "tags": [
+      "gemini",
+      "google",
+      "coding-agent",
+      "terminal",
+      "ai",
+      "acp"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.gemini",
+      "agent.google.gemini"
+    ],
+    "base": [
+      "kite.nodejs",
+      "kite.git"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "npm",
+    "package": "@google/gemini-cli",
+    "repository": "https://github.com/google-gemini/gemini-cli"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.gemini.cli",
+    "installRoot": "/workspace/.kf/software/kite.gemini.cli",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "gemini",
+      "name": "Gemini CLI",
+      "description": "Gemini CLI 原生 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "gemini-cli"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "gemini",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["gemini", "--acp"],
+        "title": "Gemini CLI"
+      }
+    }
+  ],
+  "actions": {
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Gemini CLI",
+          "description": "启动 Gemini CLI Agent 会话",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "agent",
+            "agentId": "gemini",
+            "workdir": "/workspace"
+          }
+        ]
+      }
+    }
+  },
+  "homeCards": [
+    {
+      "label": "Gemini CLI",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Gemini CLI",
+          "description": "启动 Gemini CLI Agent 会话",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "agent",
+            "agentId": "gemini",
+            "workdir": "/workspace"
+          }
+        ]
+      }
+    }
+  ]
+}

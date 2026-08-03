@@ -21,6 +21,22 @@ class ProtocolSessionAgentConfigAdaptersTest {
     private val context by lazy { ApplicationProvider.getApplicationContext<Context>() }
 
     @Test
+    fun `Gemini CLI 保留 ACP 原生模式 ID 并只翻译显示语义`() {
+        val adapter = GeminiCliAgentConfigAdapter(context)
+        val modes = adapter.normalizeSessionModes(
+            listOf(
+                AgentMode("default", "Default"),
+                AgentMode("auto_edit", "Auto Edit"),
+                AgentMode("yolo", "YOLO"),
+                AgentMode("plan", "Plan"),
+            )
+        )
+
+        assertEquals(listOf("default", "auto_edit", "yolo", "plan"), modes.map { it.id })
+        assertEquals(listOf("审批", "自动编辑", "完全", "计划"), modes.map { it.name })
+    }
+
+    @Test
     fun `Reasonix 只把官方 ACP 公布的三档审批映射为统一权限`() {
         val adapter = ReasonixAgentConfigAdapter(context)
         val native = AgentConfigOption.Select(

@@ -424,6 +424,7 @@ class KiteResourceManifestProtocolTest {
             Expected("kite.openclaw", "openclaw", "OpenClaw", listOf("openclaw", "acp"), "openclaw"),
             Expected("kite.opencode", "opencode", "OpenCode", listOf("opencode", "acp"), "opencode"),
             Expected("kite.qwen.code", "qwen", "Qwen Code", listOf("qwen", "--acp"), "qwen-code"),
+            Expected("kite.gemini.cli", "gemini", "Gemini CLI", listOf("gemini", "--acp"), "gemini-cli"),
             Expected("kite.reasonix", "reasonix", "Reasonix", listOf("reasonix", "acp"), "reasonix"),
         )
 
@@ -594,6 +595,7 @@ class KiteResourceManifestProtocolTest {
                 "kite.codex.cli",
                 "kite.claude.code",
                 "kite.kimi.code",
+                "kite.gemini.cli",
                 "kite.qwen.code",
                 "kite.google.antigravity",
                 "kite.zai.coding.helper",
@@ -622,6 +624,7 @@ class KiteResourceManifestProtocolTest {
                 "kite.codex.cli",
                 "kite.claude.code",
                 "kite.kimi.code",
+                "kite.gemini.cli",
                 "kite.qwen.code",
                 "kite.google.antigravity",
                 "kite.zai.coding.helper",
@@ -645,7 +648,7 @@ class KiteResourceManifestProtocolTest {
             .filter { it.isFile }
             .sortedBy { it.parentFile?.name }
 
-        assertEquals(18, manifests.size)
+        assertEquals(19, manifests.size)
         manifests.forEach { manifestFile ->
             val resourceId = manifestFile.parentFile?.name.orEmpty()
             val loaded = loader.parseManifestJson(manifestFile.readText())

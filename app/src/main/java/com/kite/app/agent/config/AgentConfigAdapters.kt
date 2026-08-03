@@ -4,6 +4,7 @@ import android.content.Context
 import com.kite.app.agent.config.native.ClaudeCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.CodexAgentConfigAdapter
 import com.kite.app.agent.config.native.HermesAgentConfigAdapter
+import com.kite.app.agent.config.native.GeminiCliAgentConfigAdapter
 import com.kite.app.agent.config.native.KimiCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.MiMoCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.OpenClawAgentConfigAdapter
@@ -24,6 +25,7 @@ internal fun defaultAgentConfigAdapters(
     ClaudeCodeAgentConfigAdapter(context.applicationContext),
     KimiCodeAgentConfigAdapter(context.applicationContext),
     HermesAgentConfigAdapter(context.applicationContext),
+    GeminiCliAgentConfigAdapter(context.applicationContext),
     OpenClawAgentConfigAdapter(context.applicationContext),
     MiMoCodeAgentConfigAdapter(context.applicationContext),
     QwenCodeAgentConfigAdapter(context.applicationContext),
