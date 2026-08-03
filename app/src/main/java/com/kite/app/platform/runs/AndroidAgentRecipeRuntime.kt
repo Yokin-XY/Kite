@@ -11,6 +11,9 @@ import com.kite.app.agent.codex.CodexAppServerProcessLauncher
 import com.kite.app.agent.codex.CodexAppServerProviderDescriptor
 import com.kite.app.agent.codex.CodexOfficialModelCatalogSink
 import com.kite.app.agent.codex.CodexSessionConfigurationOverride
+import com.kite.app.agent.pi.PiRpcAgentProvider
+import com.kite.app.agent.pi.PiRpcProcessLauncher
+import com.kite.app.agent.pi.PiRpcProviderDescriptor
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.AgentPersistentConfigChange
@@ -570,6 +573,21 @@ internal class AndroidAgentRecipeRuntime(
                                 )
                             ),
                         )
+                    },
+                )
+                PROTOCOL_PI_RPC -> PiRpcAgentProvider(
+                    descriptor = PiRpcProviderDescriptor(
+                        id = providerId,
+                        name = resolved.displayName,
+                        title = resolved.title,
+                        version = resolved.version,
+                    ),
+                    launcher = PiRpcProcessLauncher {
+                        processFactory.start(processLaunch.process)
+                    },
+                    initializeTimeoutMs = resolved.initializeTimeoutMs,
+                    diagnosticSink = { line ->
+                        Log.w(TAG, "Agent ${resolved.providerId}: $line")
                     },
                 )
                 else -> error("已由 managed protocol 校验限制协议")
@@ -1171,6 +1189,7 @@ internal class AndroidAgentRecipeRuntime(
         const val DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS = 45_000L
         const val PROTOCOL_ACP = "acp"
         const val PROTOCOL_CODEX_APP_SERVER = "codex-app-server"
+        const val PROTOCOL_PI_RPC = "pi-rpc"
         const val CODEX_CHATGPT_ACCOUNT_ID = "chatgpt"
         const val CODEX_OFFICIAL_PROVIDER_ID = "openai"
         const val TRANSPORT_STDIO = "stdio"
@@ -1179,7 +1198,7 @@ internal class AndroidAgentRecipeRuntime(
         const val DEFAULT_WORKDIR = "/workspace"
         const val SESSION_COMMAND_TIMEOUT_MS = 20_000L
         val ENVIRONMENT_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
-        val MANAGED_PROTOCOLS = setOf(PROTOCOL_ACP, PROTOCOL_CODEX_APP_SERVER)
+        val MANAGED_PROTOCOLS = setOf(PROTOCOL_ACP, PROTOCOL_CODEX_APP_SERVER, PROTOCOL_PI_RPC)
     }
 
     private fun AgentSessionDraftPreferences.toRuntimePreferences(): AgentDraftPersistenceSnapshot =

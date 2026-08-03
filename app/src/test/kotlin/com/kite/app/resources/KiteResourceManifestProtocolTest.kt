@@ -586,6 +586,7 @@ class KiteResourceManifestProtocolTest {
                 "kite.opencode",
                 "kite.openclaw",
                 "kite.reasonix",
+                "kite.pi.coding.agent",
                 "kite.hermes.core"
             ),
             debugLayout?.sections?.first { it.id == "ai-community" }?.items
@@ -620,6 +621,7 @@ class KiteResourceManifestProtocolTest {
                 "kite.opencode",
                 "kite.openclaw",
                 "kite.reasonix",
+                "kite.pi.coding.agent",
                 "kite.hermes.core",
                 "kite.codex.cli",
                 "kite.claude.code",
@@ -648,7 +650,7 @@ class KiteResourceManifestProtocolTest {
             .filter { it.isFile }
             .sortedBy { it.parentFile?.name }
 
-        assertEquals(19, manifests.size)
+        assertEquals(20, manifests.size)
         manifests.forEach { manifestFile ->
             val resourceId = manifestFile.parentFile?.name.orEmpty()
             val loaded = loader.parseManifestJson(manifestFile.readText())

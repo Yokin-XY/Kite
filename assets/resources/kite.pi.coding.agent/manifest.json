@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.pi.coding.agent",
+  "base": {
+    "name": "Pi Coding Agent",
+    "description": "可扩展的终端 AI 编码 Agent",
+    "version": "npm",
+    "icon": {
+      "type": "text",
+      "value": "Pi"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["pi"],
+    "versionProbe": {
+      "command": "pi --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
+  },
+  "display": {
+    "sections": ["ai-community"],
+    "tabs": ["angel-cli"],
+    "order": 35,
+    "category": "AI",
+    "accent": "orange",
+    "sizeLabel": "网络包",
+    "longDescription": "Pi Coding Agent 是可扩展的终端编码 Agent。Kite 使用官方 npm 包安装 pi 命令，并通过 Pi 原生 JSONL RPC 接入统一会话、模型、推理强度、图片、工具流与命令目录。",
+    "recommendations": [
+      {"resourceId": "kite.nodejs", "label": "运行时"},
+      {"resourceId": "kite.git", "label": "源码工具"},
+      {"resourceId": "kite.opencode", "label": "同类 Agent"}
+    ],
+    "tags": ["pi", "coding-agent", "terminal", "ai", "rpc"]
+  },
+  "relations": {
+    "provides": ["cli.pi", "agent.pi.coding"],
+    "base": ["kite.nodejs", "kite.git"],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "npm",
+    "package": "@earendil-works/pi-coding-agent",
+    "repository": "https://github.com/earendil-works/pi"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.pi.coding.agent",
+    "installRoot": "/workspace/.kf/software/kite.pi.coding.agent",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "pi",
+      "name": "Pi Coding Agent",
+      "description": "Pi 原生 RPC 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "pi-coding-agent"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "pi",
+        "protocol": "pi-rpc",
+        "transport": "stdio",
+        "argv": ["pi", "--mode", "rpc"],
+        "title": "Pi Coding Agent"
+      }
+    }
+  ],
+  "actions": {
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Pi Coding Agent",
+          "description": "启动 Pi Coding Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "pi", "workdir": "/workspace"}]
+      }
+    }
+  },
+  "homeCards": [
+    {
+      "label": "Pi Coding Agent",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Pi Coding Agent",
+          "description": "启动 Pi Coding Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "pi", "workdir": "/workspace"}]
+      }
+    }
+  ]
+}
