@@ -707,10 +707,10 @@ object CardRunStore {
     }
 
     private fun CardRunState.normalizedAfterProcessRestore(): CardRunState {
-        if (agentBinding?.isActive() == true || (agentBinding != null && status.shouldResetAfterProcessRestore())) {
+        if (shouldNormalizeAgentAfterProcessRestore()) {
             val now = System.currentTimeMillis()
             return copy(
-                status = CardRunStatus.Failed,
+                status = CardRunStatus.Stopped,
                 surface = CardRunSurface.Summary,
                 runtimeRootOwnerId = null,
                 runtimeOwnerId = null,
@@ -722,12 +722,12 @@ object CardRunStore {
                 rootPid = null,
                 processGroupId = null,
                 systemSessionId = null,
-                lastMeaningfulOutput = AGENT_RESTORE_DISCONNECTED_MESSAGE,
-                lastError = AGENT_RESTORE_DISCONNECTED_MESSAGE,
+                lastMeaningfulOutput = null,
+                lastError = null,
                 nextActionUrl = null,
                 x11Display = null,
                 x11SocketPath = null,
-                agentBinding = agentBinding.copy(
+                agentBinding = requireNotNull(agentBinding).copy(
                     status = CardRunAgentConnectionStatus.Disconnected,
                     statusMessage = AGENT_RESTORE_DISCONNECTED_MESSAGE,
                     updatedAt = now
@@ -753,6 +753,14 @@ object CardRunStore {
             x11Display = null,
             x11SocketPath = null
         )
+    }
+
+    private fun CardRunState.shouldNormalizeAgentAfterProcessRestore(): Boolean {
+        val binding = agentBinding ?: return false
+        if (binding.isActive() || status.shouldResetAfterProcessRestore()) return true
+        return status == CardRunStatus.Failed &&
+            (lastError == AGENT_RESTORE_DISCONNECTED_MESSAGE ||
+                binding.statusMessage == AGENT_RESTORE_DISCONNECTED_MESSAGE)
     }
 
     private fun CardRunState.shouldDropCurrentAfterProcessRestore(): Boolean {

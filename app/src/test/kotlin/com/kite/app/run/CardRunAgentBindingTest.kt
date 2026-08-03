@@ -10,6 +10,7 @@ import com.kite.app.agent.store.AgentConversationStore
 import com.kite.app.feature.runsurface.RunSurfaceProjector
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -73,7 +74,7 @@ class CardRunAgentBindingTest {
     }
 
     @Test
-    fun `进程恢复保留 Agent 身份但明确降级为断开`() {
+    fun `进程恢复保留 Agent 身份但首页当前态回到中性停止`() {
         val recipe = TestRecipes.serviceRecipe("agent-restore")
         val run = CardRunStore.start(recipe, agentId = "opencode")
         CardRunStore.update(
@@ -95,14 +96,46 @@ class CardRunAgentBindingTest {
         CardRunStore.initialize(context)
 
         val restored = CardRunStore.get(run.instanceId)
-        assertEquals(CardRunStatus.Failed, restored?.status)
+        assertEquals(CardRunStatus.Stopped, restored?.status)
         assertEquals(CardRunAgentConnectionStatus.Disconnected, restored?.agentBinding?.status)
         assertEquals("opencode", restored?.agentId)
         assertEquals("opencode", restored?.agentBinding?.providerId)
         assertEquals("session-restore", restored?.agentBinding?.sessionId)
         assertNull(restored?.runId)
         assertNull(restored?.pid)
-        assertTrue(restored?.lastError?.contains("重新连接") == true)
+        assertNull(restored?.lastError)
+        assertTrue(restored?.agentBinding?.statusMessage?.contains("重新连接") == true)
+        assertEquals(KiteRunPrimaryAction.Start, KiteCardRunUiProjector.project(restored!!.status).primaryAction)
+        assertFalse(KiteCardRunUiProjector.project(restored.status).problem)
+        assertEquals(CardRunStatus.Failed, CardRunStore.historyForRecipe(recipe.id).first().status)
+    }
+
+    @Test
+    fun `旧版本留下的 Agent 重启失败态在升级后回到中性停止`() {
+        val recipe = TestRecipes.serviceRecipe("agent-restore-migration")
+        val run = CardRunStore.start(recipe, agentId = "opencode")
+        CardRunStore.updateAgentBinding(
+            instanceId = run.instanceId,
+            expectedGeneration = run.createdAt,
+            providerId = "opencode",
+            sessionId = "session-migration",
+            status = CardRunAgentConnectionStatus.Disconnected,
+            statusMessage = "Kite 重新启动，需要重新连接 Agent 会话"
+        )
+        CardRunStore.update(
+            recipe = recipe,
+            status = CardRunStatus.Failed,
+            lastError = "Kite 重新启动，需要重新连接 Agent 会话"
+        )
+
+        Thread.sleep(450)
+        CardRunStore.resetForTest()
+        CardRunStore.initialize(context)
+
+        val restored = CardRunStore.get(run.instanceId)
+        assertEquals(CardRunStatus.Stopped, restored?.status)
+        assertEquals("session-migration", restored?.agentBinding?.sessionId)
+        assertNull(restored?.lastError)
     }
 
     @Test
