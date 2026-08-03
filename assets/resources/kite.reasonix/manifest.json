@@ -74,6 +74,25 @@
     "installRoot": "/workspace/.kf/software/kite.reasonix",
     "binRoot": "/workspace/.kf/bin"
   },
+  "agents": [
+    {
+      "id": "reasonix",
+      "name": "Reasonix",
+      "description": "Reasonix 原生 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "reasonix"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "reasonix",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["reasonix", "acp"],
+        "title": "Reasonix"
+      }
+    }
+  ],
   "actions": {
     "open": {
       "runtime": "kite_recipe",
@@ -81,7 +100,7 @@
         "base": {
           "id": "",
           "name": "Reasonix",
-          "description": "在终端里启动 DeepSeek 编码 Agent",
+          "description": "启动 Reasonix Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -92,8 +111,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\nif [ -z \"$DEEPSEEK_API_KEY\" ]; then\n  echo \"请先设置 DEEPSEEK_API_KEY，例如：export DEEPSEEK_API_KEY=sk-...\"\nfi\nreasonix\n"
+            "type": "agent",
+            "agentId": "reasonix",
+            "workdir": "/workspace"
           }
         ]
       }
@@ -107,7 +127,7 @@
         "base": {
           "id": "",
           "name": "Reasonix",
-          "description": "在终端里启动 DeepSeek 编码 Agent",
+          "description": "启动 Reasonix Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -118,8 +138,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\nif [ -z \"$DEEPSEEK_API_KEY\" ]; then\n  echo \"请先设置 DEEPSEEK_API_KEY，例如：export DEEPSEEK_API_KEY=sk-...\"\nfi\nreasonix\n"
+            "type": "agent",
+            "agentId": "reasonix",
+            "workdir": "/workspace"
           }
         ]
       }

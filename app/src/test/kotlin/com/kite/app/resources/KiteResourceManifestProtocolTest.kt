@@ -422,7 +422,8 @@ class KiteResourceManifestProtocolTest {
             Expected("kite.kimi.code", "kimi", "Kimi Code", listOf("kimi", "acp"), "kimi-code"),
             Expected("kite.mimo.code", "mimo", "MiMo Code", listOf("mimo", "acp"), "mimo-code"),
             Expected("kite.openclaw", "openclaw", "OpenClaw", listOf("openclaw", "acp"), "openclaw"),
-            Expected("kite.opencode", "opencode", "OpenCode", listOf("opencode", "acp"), "opencode")
+            Expected("kite.opencode", "opencode", "OpenCode", listOf("opencode", "acp"), "opencode"),
+            Expected("kite.reasonix", "reasonix", "Reasonix", listOf("reasonix", "acp"), "reasonix"),
         )
 
         expected.forEach { item ->
