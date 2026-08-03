@@ -17,6 +17,9 @@ import com.kite.app.resources.KiteResourceSourceSpec
 import com.kite.app.resources.KiteResourceVersionProbeSpec
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -47,6 +50,25 @@ class ResourceFeatureControllerTest {
         assertEquals("tool", effect.request.resourceId)
         assertEquals(KiteResourceActionIntent.Install, effect.request.intent)
         assertEquals(KiteResourceActionSource.Detail, effect.request.source)
+    }
+
+    @Test
+    fun `目录后台刷新未完成时获取动作仍立即交付`() = runTest {
+        val gateway = FakeGateway()
+        val controller = ResourceFeatureController(gateway)
+        controller.dispatch(ResourceFeatureAction.Refresh())
+        gateway.loadGate = CompletableDeferred()
+
+        val refresh = launch { controller.dispatch(ResourceFeatureAction.Refresh(forceCatalogRefresh = true)) }
+        yield()
+
+        val effect = controller.requestAction(
+            ResourceFeatureAction.Primary("tool", KiteResourceActionSource.Detail)
+        ) as ResourceFeatureEffect.ActionRequested
+        assertEquals(KiteResourceActionIntent.Install, effect.request.intent)
+
+        gateway.loadGate?.complete(Unit)
+        refresh.join()
     }
 
     @Test
@@ -286,9 +308,11 @@ class ResourceFeatureControllerTest {
         val operationRuns = linkedMapOf<Pair<String, String>, ResourceFeatureRunSnapshot>()
         var loadFailure: Throwable? = null
         var loadCount: Int = 0
+        var loadGate: CompletableDeferred<Unit>? = null
 
         override suspend fun loadCatalog(forceRefresh: Boolean): List<ResourceFeatureDescriptor> {
             loadCount += 1
+            loadGate?.await()
             loadFailure?.let { throw it }
             return catalog
         }

@@ -26,22 +26,29 @@ internal class ResourceFeatureController(
     private val dispatchMutex = Mutex()
     val state: StateFlow<ResourceFeatureUiState> = mutableState.asStateFlow()
 
-    suspend fun dispatch(action: ResourceFeatureAction): ResourceFeatureEffect? =
-        dispatchMutex.withLock {
-            when (action) {
-                is ResourceFeatureAction.Refresh -> {
-                    refresh(action.forceCatalogRefresh)
-                    null
-                }
-                ResourceFeatureAction.ReconcileFacts -> {
-                    reconcileFacts()
-                    null
-                }
-                is ResourceFeatureAction.Primary -> requestPrimary(action)
-                is ResourceFeatureAction.Secondary -> requestSecondary(action)
-                is ResourceFeatureAction.Explicit -> requestExplicit(action)
-            }
+    suspend fun dispatch(action: ResourceFeatureAction): ResourceFeatureEffect? = when (action) {
+        is ResourceFeatureAction.Refresh -> dispatchMutex.withLock {
+            refresh(action.forceCatalogRefresh)
+            null
         }
+        ResourceFeatureAction.ReconcileFacts -> dispatchMutex.withLock {
+            reconcileFacts()
+            null
+        }
+        is ResourceFeatureAction.Primary -> requestAction(action)
+        is ResourceFeatureAction.Secondary -> requestAction(action)
+        is ResourceFeatureAction.Explicit -> requestAction(action)
+    }
+
+    /** 用户动作只读取最近一次投影，不得排在目录刷新或事实校准之后。 */
+    fun requestAction(action: ResourceFeatureAction.Primary): ResourceFeatureEffect =
+        requestPrimary(action)
+
+    fun requestAction(action: ResourceFeatureAction.Secondary): ResourceFeatureEffect =
+        requestSecondary(action)
+
+    fun requestAction(action: ResourceFeatureAction.Explicit): ResourceFeatureEffect =
+        requestExplicit(action)
 
     private suspend fun refresh(forceCatalogRefresh: Boolean) {
         mutableState.value = mutableState.value.copy(

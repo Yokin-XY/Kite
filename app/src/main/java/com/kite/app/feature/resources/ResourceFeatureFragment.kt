@@ -59,15 +59,12 @@ internal abstract class ResourceFeatureFragment : Fragment() {
         onAccepted: (KiteResourceActionIntent) -> Unit,
         onUnavailable: () -> Unit
     ) {
-        val item = controller.state.value.item(resourceId) ?: return
-        onAccepted(item.primaryIntent)
-        viewLifecycleOwner.lifecycleScope.launch {
-            when (val effect = controller.dispatch(ResourceFeatureAction.Primary(resourceId, source))) {
-                is ResourceFeatureEffect.ActionRequested ->
-                    send(ResourceFeatureRequest.SubmitAction(effect.request))
-                is ResourceFeatureEffect.ActionUnavailable -> onUnavailable()
-                null -> Unit
+        when (val effect = controller.requestAction(ResourceFeatureAction.Primary(resourceId, source))) {
+            is ResourceFeatureEffect.ActionRequested -> {
+                send(ResourceFeatureRequest.SubmitAction(effect.request))
+                onAccepted(effect.request.intent)
             }
+            is ResourceFeatureEffect.ActionUnavailable -> onUnavailable()
         }
     }
 
@@ -77,16 +74,12 @@ internal abstract class ResourceFeatureFragment : Fragment() {
         onAccepted: (KiteResourceActionIntent) -> Unit,
         onUnavailable: () -> Unit
     ) {
-        val item = controller.state.value.item(resourceId) ?: return
-        val intent = item.secondaryIntent ?: return onUnavailable()
-        onAccepted(intent)
-        viewLifecycleOwner.lifecycleScope.launch {
-            when (val effect = controller.dispatch(ResourceFeatureAction.Secondary(resourceId, source))) {
-                is ResourceFeatureEffect.ActionRequested ->
-                    send(ResourceFeatureRequest.SubmitAction(effect.request))
-                is ResourceFeatureEffect.ActionUnavailable -> onUnavailable()
-                null -> Unit
+        when (val effect = controller.requestAction(ResourceFeatureAction.Secondary(resourceId, source))) {
+            is ResourceFeatureEffect.ActionRequested -> {
+                send(ResourceFeatureRequest.SubmitAction(effect.request))
+                onAccepted(effect.request.intent)
             }
+            is ResourceFeatureEffect.ActionUnavailable -> onUnavailable()
         }
     }
 
@@ -97,13 +90,12 @@ internal abstract class ResourceFeatureFragment : Fragment() {
         onAccepted: (KiteResourceActionIntent) -> Unit,
         onUnavailable: () -> Unit
     ) {
-        onAccepted(intent)
-        viewLifecycleOwner.lifecycleScope.launch {
-            when (val effect = controller.dispatch(ResourceFeatureAction.Explicit(resourceId, intent, source))) {
-                is ResourceFeatureEffect.ActionRequested -> send(ResourceFeatureRequest.SubmitAction(effect.request))
-                is ResourceFeatureEffect.ActionUnavailable -> onUnavailable()
-                null -> Unit
+        when (val effect = controller.requestAction(ResourceFeatureAction.Explicit(resourceId, intent, source))) {
+            is ResourceFeatureEffect.ActionRequested -> {
+                send(ResourceFeatureRequest.SubmitAction(effect.request))
+                onAccepted(effect.request.intent)
             }
+            is ResourceFeatureEffect.ActionUnavailable -> onUnavailable()
         }
     }
 
