@@ -13,8 +13,11 @@ class AdapterBackedAgentConfigurationApi(
     override fun capabilities(target: AgentConfigurationTarget): AgentConfigCapabilities? =
         adapters.adapter(target.adapterId)?.capabilities()
 
-    override fun providerPresets(target: AgentConfigurationTarget): List<AgentProviderPreset> =
-        adapters.adapter(target.adapterId)?.let { AgentProviderPresetCatalog.presets }.orEmpty()
+    override fun providerPresets(target: AgentConfigurationTarget): List<AgentProviderPreset> {
+        val adapter = adapters.adapter(target.adapterId) ?: return emptyList()
+        if (AgentPersistentConfigCapability.Provider !in adapter.capabilities().supported) return emptyList()
+        return AgentProviderPresetCatalog.presetsFor(adapter.adapterId)
+    }
 
     override suspend fun read(target: AgentConfigurationTarget): AgentConfigReadResult =
         adapters.adapter(target.adapterId)?.readLive(target.agentId)

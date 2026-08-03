@@ -13,6 +13,26 @@ import org.junit.Test
 
 class AdapterBackedAgentConfigurationApiTest {
     @Test
+    fun `provider presets require both a matching adapter and provider capability`() {
+        val unsupported = RecordingAdapter()
+        val supported = RecordingAdapter(
+            adapterId = "opencode",
+            supported = setOf(AgentPersistentConfigCapability.Provider),
+        )
+
+        assertTrue(
+            AdapterBackedAgentConfigurationApi(AgentConfigAdapterRegistry(listOf(unsupported)))
+                .providerPresets(AgentConfigurationTarget("agent", unsupported.adapterId))
+                .isEmpty(),
+        )
+        assertTrue(
+            AdapterBackedAgentConfigurationApi(AgentConfigAdapterRegistry(listOf(supported)))
+                .providerPresets(AgentConfigurationTarget("agent", supported.adapterId))
+                .size >= 14,
+        )
+    }
+
+    @Test
     fun `model and permission intents are translated below the sdk boundary`() = runTest {
         val adapter = RecordingAdapter()
         val api = AdapterBackedAgentConfigurationApi(AgentConfigAdapterRegistry(listOf(adapter)))
@@ -90,17 +110,16 @@ class AdapterBackedAgentConfigurationApiTest {
 
     private class RecordingAdapter(
         private val failApply: Boolean = false,
+        override val adapterId: String = "recording",
+        private val supported: Set<AgentPersistentConfigCapability> = setOf(
+            AgentPersistentConfigCapability.DefaultModel,
+            AgentPersistentConfigCapability.PermissionProfiles,
+        ),
     ) : AgentConfigAdapter {
-        override val adapterId: String = "recording"
         var lastRequest: AgentConfigApplyRequest? = null
         var backfillCount = 0
 
-        override fun capabilities(): AgentConfigCapabilities = AgentConfigCapabilities(
-            setOf(
-                AgentPersistentConfigCapability.DefaultModel,
-                AgentPersistentConfigCapability.PermissionProfiles,
-            )
-        )
+        override fun capabilities(): AgentConfigCapabilities = AgentConfigCapabilities(supported)
 
         override fun defaultModelChange(
             option: AgentConfigOption.Select,
