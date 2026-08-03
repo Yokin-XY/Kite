@@ -42,6 +42,7 @@ class ResourceActionWorkflowCoordinatorTest {
         coordinator.createHomeCard("target")
         coordinator.installDirect("target")
         coordinator.checkUpdates(listOf("base", "target"))
+        coordinator.recoverFailedInstall("target", "wizard")
 
         assertEquals(
             listOf(
@@ -50,6 +51,7 @@ class ResourceActionWorkflowCoordinatorTest {
                 "home:target",
                 "direct:target",
                 "check_updates:base,target",
+                "recover:target:wizard",
             ),
             gateway.calls
         )
@@ -70,6 +72,8 @@ class ResourceActionWorkflowCoordinatorTest {
         override suspend fun reinstall(resourceId: String) = record("reinstall")
         override suspend fun cancelInstall(resourceId: String) = record("cancel")
         override suspend fun cancelFailedInstall(resourceId: String) = record("cancel_failed")
+        override suspend fun recoverFailedInstall(resourceId: String, parentInstanceId: String?) =
+            record("recover:$resourceId:$parentInstanceId")
         override suspend fun cancelPlan(targetResourceId: String, planResourceIds: List<String>) =
             record("cancel_plan:$targetResourceId:${planResourceIds.joinToString(",")}")
         override suspend fun cancelInstallWizard(

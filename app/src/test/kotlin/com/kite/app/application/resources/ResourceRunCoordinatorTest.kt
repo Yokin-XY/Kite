@@ -112,6 +112,32 @@ class ResourceRunCoordinatorTest {
     }
 
     @Test
+    fun `失败安装清理成功后立即恢复向导队列`() {
+        val gateway = FakeResourceRunGateway()
+        val hub = RunLifecycleEventHub()
+        val coordinator = coordinator(gateway, hub)
+        gateway.pendingResources += "tool"
+        gateway.plannedInstalls["tool"] = launch("tool", KiteResourceInstallRecipes.OP_INSTALL)
+        val cleanup = launch(
+            "tool",
+            KiteResourceInstallRecipes.OP_UNINSTALL,
+            continuation = ResourceRunContinuation.ResumeInstallWizard,
+        ).copy(parentInstanceId = "wizard-instance")
+        val started = coordinator.start(cleanup) as ResourceRunLaunchResult.Accepted
+
+        hub.onStateCommitted(
+            RunLifecycleEvent(
+                cleanup.recipe,
+                started.state.copy(status = CardRunStatus.Completed),
+            )
+        )
+
+        waitUntil { gateway.startedRequests.count { it.resourceId == "tool" } == 2 }
+        assertEquals(KiteResourceInstallRecipes.OP_INSTALL, gateway.startedRequests.last().operation)
+        assertEquals("wizard-instance", gateway.startedRequests.last().parentInstanceId)
+    }
+
+    @Test
     fun `同一运行代次的重复终态只结算一次`() {
         val gateway = FakeResourceRunGateway()
         val hub = RunLifecycleEventHub()

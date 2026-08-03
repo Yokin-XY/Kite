@@ -124,6 +124,15 @@ internal class AndroidResourceActionGateway(
             return message("${target.name} 是 Kite 管理的系统组件，无需单独获取")
         }
         if (installStore.isFailed(target.id, environmentId) &&
+            installStore.failedOperation(target.id, environmentId) == KiteResourceInstallStore.OP_UNINSTALL
+        ) {
+            return recoverFailedInstallLocked(
+                target = target,
+                parentInstanceId = null,
+                environmentId = environmentId,
+            )
+        }
+        if (installStore.isFailed(target.id, environmentId) &&
             installStore.failedOperation(target.id, environmentId) != KiteResourceInstallStore.OP_UNINSTALL
         ) {
             return uninstall(
@@ -372,6 +381,83 @@ internal class AndroidResourceActionGateway(
         val environmentId = installStore.currentEnvironmentId()
         val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
         return uninstall(target, ResourceRunContinuation.CancelFailedInstall, environmentId)
+    }
+
+    override suspend fun recoverFailedInstall(
+        resourceId: String,
+        parentInstanceId: String?,
+    ): List<ResourceActionEffect> {
+        val environmentId = installStore.currentEnvironmentId()
+        return planLifecycleGate.withEnvironment(environmentId) {
+            val target = target(resourceId)
+                ?: return@withEnvironment message("资源目录正在更新，请稍后重试")
+            recoverFailedInstallLocked(target, parentInstanceId, environmentId)
+        }
+    }
+
+    private suspend fun recoverFailedInstallLocked(
+        target: ResourceTarget,
+        parentInstanceId: String?,
+        environmentId: String,
+    ): List<ResourceActionEffect> {
+        val failedOperation = installStore.failedOperation(target.id, environmentId)
+        if (installStore.isFailed(target.id, environmentId) &&
+            failedOperation != KiteResourceInstallStore.OP_UNINSTALL
+        ) {
+            return uninstall(
+                target = target,
+                continuation = ResourceRunContinuation.ResumeInstallWizard,
+                environmentId = environmentId,
+                parentInstanceId = parentInstanceId,
+            )
+        }
+
+        val cleanupAttempted = installStore.isFailed(target.id, environmentId) &&
+            failedOperation == KiteResourceInstallStore.OP_UNINSTALL
+        val cleanupComplete = if (cleanupAttempted) {
+            cleanupCancelledResources(listOf(target.id), environmentId)
+        } else {
+            true
+        }
+        if (cleanupAttempted) installStore.clear(target.id, environmentId)
+        return resumeOrRestartInstall(
+            target = target,
+            parentInstanceId = parentInstanceId,
+            environmentId = environmentId,
+            cleanupResult = cleanupComplete.takeIf { cleanupAttempted },
+        )
+    }
+
+    private suspend fun resumeOrRestartInstall(
+        target: ResourceTarget,
+        parentInstanceId: String?,
+        environmentId: String,
+        cleanupResult: Boolean?,
+    ): List<ResourceActionEffect> {
+        val before = installStore.planSnapshot(environmentId)
+        if (target.id in before.resourceIds) installStore.resumePlanFrom(target.id, environmentId)
+        val plan = installStore.planSnapshot(environmentId)
+        val notice = explicitResult(
+            when (cleanupResult) {
+                true -> "${target.name} 的失败残留已清理，正在全量重新获取"
+                false -> "${target.name} 标准卸载失败，已切换为全量重新获取"
+                null -> "${target.name} 的失败状态已重置，正在重新获取"
+            }
+        )
+        if (target.id in plan.resourceIds && plan.isActive) {
+            if (runCoordinator.startRejectionReason() == RUN_NOTIFICATIONS_REQUIRED) {
+                return notice + ResourceActionEffect.RequireNotifications
+            }
+            return if (runCoordinator.startNextPlannedInstall(parentInstanceId)) {
+                notice
+            } else {
+                notice + explicitResult("获取队列已恢复，但下一项未能启动，请再次点击重新获取")
+            }
+        }
+        if (plan.targetResourceId.isBlank()) {
+            clearInstallTask(target.id, listOf(target.id), environmentId)
+        }
+        return notice + installLocked(target.id, environmentId)
     }
 
     override suspend fun cancelPlan(
@@ -760,6 +846,7 @@ internal class AndroidResourceActionGateway(
         continuation: ResourceRunContinuation,
         environmentId: String = installStore.currentEnvironmentId(),
         restartInstall: (suspend () -> List<ResourceActionEffect>)? = null,
+        parentInstanceId: String? = null,
     ): List<ResourceActionEffect> {
         val recipe = runCoordinator.recipe(target.id, KiteResourceInstallRecipes.OP_UNINSTALL)
         if (recipe == null) {
@@ -770,6 +857,12 @@ internal class AndroidResourceActionGateway(
                     installStore.clearPlan(environmentId)
                     message("已取消 ${target.name} 的失败获取")
                 }
+                ResourceRunContinuation.ResumeInstallWizard -> resumeOrRestartInstall(
+                    target = target,
+                    parentInstanceId = parentInstanceId,
+                    environmentId = environmentId,
+                    cleanupResult = null,
+                )
                 else -> message("已移除 ${target.name} 的获取记录")
             }
         }
@@ -779,6 +872,7 @@ internal class AndroidResourceActionGateway(
                 recipe = recipe,
                 operation = KiteResourceInstallRecipes.OP_UNINSTALL,
                 continuation = continuation,
+                parentInstanceId = parentInstanceId,
                 environmentId = environmentId
             )
         )) {

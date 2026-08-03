@@ -28,6 +28,18 @@ class KiteResourceInstallStepUiProjectorTest {
     }
 
     @Test
+    fun `卸载本身失败后进入重置而不是重复卸载`() {
+        val projection = project(
+            failed = true,
+            failedOperation = KiteResourceInstallStore.OP_UNINSTALL,
+        )
+
+        assertEquals("需重置", projection.statusLabel)
+        assertTrue(projection.failed)
+        assertEquals(KiteResourceStepTone.Danger, projection.tone)
+    }
+
+    @Test
     fun `运行完成和等待状态保持确定优先级`() {
         assertEquals(
             "获取中",

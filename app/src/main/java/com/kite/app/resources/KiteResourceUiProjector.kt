@@ -30,7 +30,7 @@ object KiteResourceUiProjector {
             installing && currentOperation == KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装中" to "重新安装中"
             installing -> "获取中" to "获取中"
             uninstalling -> "卸载中" to "卸载中"
-            failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "卸载失败" to "继续卸载"
+            failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "卸载失败" to "重新获取"
             failed -> "获取失败" to "重新获取"
             installed -> openRunLabels(openRunStatus) ?: ("已获取" to "打开")
             else -> idleStateLabel to "获取"

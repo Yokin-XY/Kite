@@ -54,6 +54,7 @@ internal interface ResourceActionGateway {
     suspend fun reinstall(resourceId: String): List<ResourceActionEffect>
     suspend fun cancelInstall(resourceId: String): List<ResourceActionEffect>
     suspend fun cancelFailedInstall(resourceId: String): List<ResourceActionEffect>
+    suspend fun recoverFailedInstall(resourceId: String, parentInstanceId: String?): List<ResourceActionEffect>
     suspend fun cancelPlan(targetResourceId: String, planResourceIds: List<String>): List<ResourceActionEffect>
     suspend fun cancelInstallWizard(
         targetResourceId: String,
@@ -116,4 +117,9 @@ internal class ResourceActionWorkflowCoordinator(
 
     suspend fun checkUpdates(resourceIds: List<String>): List<ResourceActionEffect> =
         gateway.checkUpdates(resourceIds)
+
+    suspend fun recoverFailedInstall(
+        resourceId: String,
+        parentInstanceId: String?,
+    ): List<ResourceActionEffect> = gateway.recoverFailedInstall(resourceId, parentInstanceId)
 }

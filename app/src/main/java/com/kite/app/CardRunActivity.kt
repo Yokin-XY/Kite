@@ -24,9 +24,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.action.KiteInstallPlanActionIntent
 import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.browser.BrowserHandoffLaunchResult
-import com.kite.app.application.resources.ResourceRunContinuation
-import com.kite.app.application.resources.ResourceRunLaunchRequest
-import com.kite.app.application.resources.ResourceRunLaunchResult
+import com.kite.app.application.resources.ResourceActionEffect
 import com.kite.app.application.runs.RunCommandResult
 import com.kite.app.application.runs.RunInstanceCloseCommand
 import com.kite.app.application.runs.RunInstanceCloseSource
@@ -726,36 +724,49 @@ class CardRunActivity : AppCompatActivity() {
             primaryAction = com.kite.app.ui.UiDialogAction(
                 label = getString(R.string.resource_wizard_cleanup_confirm_action),
                 role = com.kite.app.ui.UiActionRole.Danger,
-                onClick = { uninstallFailedResource(resourceId) },
+                onClick = { recoverFailedResource(resourceId) },
             ),
         )
     }
 
-    private fun uninstallFailedResource(resourceId: String) {
-        val recipe = graph.resourceRunCoordinator.recipe(resourceId, KiteResourceInstallRecipes.OP_UNINSTALL)
-        if (recipe == null) {
-            Toast.makeText(this, "缺少卸载动作", Toast.LENGTH_SHORT).show()
-            return
-        }
-        when (val result = graph.resourceRunCoordinator.start(
-            ResourceRunLaunchRequest(
+    private fun recoverFailedResource(resourceId: String) {
+        lifecycleScope.launch {
+            val effects = graph.resourceActionWorkflowCoordinator.recoverFailedInstall(
                 resourceId = resourceId,
-                recipe = recipe,
-                operation = KiteResourceInstallRecipes.OP_UNINSTALL,
                 parentInstanceId = currentTarget?.instanceId,
-                continuation = ResourceRunContinuation.ResumeInstallWizard
             )
-        )) {
-            is ResourceRunLaunchResult.Accepted -> Unit
-            is ResourceRunLaunchResult.Rejected -> if (result.reason == RUN_NOTIFICATIONS_REQUIRED) {
-                RunNotificationPermissionFragment.request(
-                    fragmentManager = supportFragmentManager,
-                    title = recipe.name,
-                    key = "resource-uninstall:$resourceId",
-                    retry = { uninstallFailedResource(resourceId) }
-                )
-            } else {
-                Toast.makeText(this, result.reason, Toast.LENGTH_SHORT).show()
+            effects.forEach { effect ->
+                when (effect) {
+                    is ResourceActionEffect.Message ->
+                        Toast.makeText(this@CardRunActivity, effect.text, Toast.LENGTH_SHORT).show()
+                    is ResourceActionEffect.OpenInstallWizard -> startActivity(
+                        CardRunIntents.resourceInstallWizardIntent(
+                            context = this@CardRunActivity,
+                            recipeId = effect.recipeId,
+                            instanceId = effect.instanceId,
+                            targetResourceId = effect.targetResourceId,
+                            planResourceIds = effect.planResourceIds,
+                            generation = effect.generation,
+                        )
+                    )
+                    is ResourceActionEffect.OpenRun -> startActivity(
+                        CardRunIntents.launchIntent(
+                            context = this@CardRunActivity,
+                            recipeId = effect.recipeId,
+                            instanceId = effect.instanceId,
+                            launchSource = CardRunIntents.SOURCE_RESOURCE_INSTALL,
+                            autoStart = effect.autoStart,
+                            generation = effect.generation,
+                        )
+                    )
+                    ResourceActionEffect.RequireNotifications ->
+                        RunNotificationPermissionFragment.request(
+                            fragmentManager = supportFragmentManager,
+                            title = "重新获取资源",
+                            key = "resource-recover:$resourceId",
+                            retry = { recoverFailedResource(resourceId) },
+                        )
+                }
             }
         }
     }

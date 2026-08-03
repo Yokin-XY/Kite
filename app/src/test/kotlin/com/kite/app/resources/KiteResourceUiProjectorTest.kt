@@ -27,7 +27,7 @@ class KiteResourceUiProjectorTest {
             failed = true,
             failedOperation = KiteResourceInstallStore.OP_UNINSTALL,
             state = "卸载失败",
-            action = "继续卸载",
+            action = "重新获取",
             enabled = true
         )
     }

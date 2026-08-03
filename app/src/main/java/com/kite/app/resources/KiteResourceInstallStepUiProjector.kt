@@ -27,7 +27,8 @@ object KiteResourceInstallStepUiProjector {
         val effectiveFailed = failed || planStepStatus == KiteResourceInstallStore.PLAN_STEP_FAILED
         val statusLabel = when {
             uninstalling -> "卸载中"
-            uninstallFailed || effectiveFailed -> "需卸载"
+            uninstallFailed -> "需重置"
+            effectiveFailed -> "需卸载"
             planStepStatus == KiteResourceInstallStore.PLAN_STEP_RUNNING -> "获取中"
             installed -> "已完成"
             planStepStatus == KiteResourceInstallStore.PLAN_STEP_BLOCKED -> "已暂停"

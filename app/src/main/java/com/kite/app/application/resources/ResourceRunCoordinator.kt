@@ -275,8 +275,15 @@ internal class ResourceRunCoordinator(
                             )
                     }
                     ResourceRunContinuation.CancelFailedInstall -> gateway.clearPlan(request.environmentId)
-                    ResourceRunContinuation.ResumeInstallWizard ->
-                        gateway.resumePlanFrom(request.resourceId, request.environmentId)
+                    ResourceRunContinuation.ResumeInstallWizard -> {
+                        if (gateway.resumePlanFrom(request.resourceId, request.environmentId)) {
+                            startNextPlannedInstall(
+                                gateway.pendingPlanResourceIds(request.environmentId),
+                                request.parentInstanceId,
+                                request.environmentId,
+                            )
+                        }
+                    }
                     ResourceRunContinuation.None -> Unit
                 }
             }

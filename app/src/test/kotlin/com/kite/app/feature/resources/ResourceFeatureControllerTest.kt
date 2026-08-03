@@ -148,7 +148,7 @@ class ResourceFeatureControllerTest {
     }
 
     @Test
-    fun `卸载失败保持继续卸载而不是错误回到获取`() = runTest {
+    fun `卸载失败进入全量重新获取而不是重复卸载`() = runTest {
         val gateway = FakeGateway().apply {
             registry["tool"] = entry(
                 status = KiteResourceRegistry.STATUS_FAILED,
@@ -161,8 +161,8 @@ class ResourceFeatureControllerTest {
 
         val item = controller.state.value.item("tool")!!
         assertEquals(ResourceItemPhase.UninstallFailed, item.phase)
-        assertEquals("继续卸载", item.projection.actionLabel)
-        assertEquals(KiteResourceActionIntent.Uninstall, item.primaryIntent)
+        assertEquals("重新获取", item.projection.actionLabel)
+        assertEquals(KiteResourceActionIntent.Install, item.primaryIntent)
     }
 
     @Test
