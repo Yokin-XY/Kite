@@ -268,7 +268,7 @@ private class CodexAppServerConnection(
     override val capabilities: AgentCapabilities = AgentCapabilities(
         prompt = AgentPromptCapabilities(
             text = true,
-            resourceLinks = false,
+            resourceLinks = true,
             images = true,
         ),
         sessions = AgentSessionCapabilities(

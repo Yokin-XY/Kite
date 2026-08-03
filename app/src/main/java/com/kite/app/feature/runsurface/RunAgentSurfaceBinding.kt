@@ -339,6 +339,9 @@ internal class RunAgentSurfaceBinding(
     private var composerPresentation: ComposerPresentation? = null
     private val pendingAttachments = mutableListOf<PendingAttachment>()
     private val selectedSkills = mutableListOf<AgentSelectedSkill>()
+    private var restoredComposerDraftIdentity: ComposerDraftIdentity? = null
+    private var restoringComposerDraft = false
+    private var suspendComposerDraftPersistence = false
     private var composerSkillLoadJob: Job? = null
     private var composerSkillLoadRevision: Long = 0L
     private var composerSkillLoading: Boolean = false
@@ -425,6 +428,9 @@ internal class RunAgentSurfaceBinding(
         agentTitleText.setTextIfChanged(agentDisplayName)
         providerId = content.providerId
         sessionId = content.sessionId
+        restoreComposerDraft(
+            ComposerDraftIdentity(instanceId, generation, content.sessionId),
+        )
         statusText.setTextIfChanged(content.statusMessage
             ?: content.connectionStatus?.let(::connectionStatusLabel)
             ?: state.statusLabel)
@@ -1128,11 +1134,14 @@ internal class RunAgentSurfaceBinding(
             if (text.isNotBlank()) add(AgentContent.Text(text))
             addAll(attachments.map(PendingAttachment::content))
         }
+        suspendComposerDraftPersistence = true
         input.setText("")
         pendingAttachments.clear()
         selectedSkills.clear()
         renderAttachments()
         renderSelectedSkills()
+        updateComposer()
+        suspendComposerDraftPersistence = false
         lifecycleOwner.lifecycleScope.launch {
             val result = AgentRuntimeRegistry.prompt(
                 instanceId,
@@ -1147,6 +1156,7 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun updateComposer() {
+        persistComposerDraft()
         val phase = composerPhase()
         val cancelling = phase == AgentSessionPhase.Prompting || phase == AgentSessionPhase.Cancelling
         val canSend = phase == AgentSessionPhase.Ready &&
@@ -1257,6 +1267,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun enterDraftUi() {
         sessionId = null
+        restoredComposerDraftIdentity = ComposerDraftIdentity(instanceId, generation, null)
         subscribe(providerId, observableSessionId(null))
         input.setText("")
         pendingAttachments.clear()
@@ -1265,6 +1276,61 @@ internal class RunAgentSurfaceBinding(
         renderSelectedSkills()
         statusText.text = "可以开始新会话"
         updateComposer()
+    }
+
+    private fun persistComposerDraft() {
+        if (restoringComposerDraft || suspendComposerDraftPersistence) return
+        if (instanceId.isBlank() || generation <= 0L) return
+        val text = input.text?.toString().orEmpty()
+        val content = buildList {
+            if (text.isNotEmpty()) add(AgentContent.Text(text))
+            addAll(pendingAttachments.map(PendingAttachment::content))
+        }
+        AgentRuntimeRegistry.updateComposerDraft(
+            instanceId = instanceId,
+            generation = generation,
+            sessionId = sessionId,
+            draft = AgentPromptDraft(content = content, skills = selectedSkills.toList()),
+        )
+    }
+
+    private fun restoreComposerDraft(identity: ComposerDraftIdentity) {
+        if (identity == restoredComposerDraftIdentity) return
+        restoredComposerDraftIdentity = identity
+        val draft = AgentRuntimeRegistry.composerDraft(
+            identity.instanceId,
+            identity.generation,
+            identity.sessionId,
+        )
+        restoringComposerDraft = true
+        try {
+            val text = draft?.content
+                ?.filterIsInstance<AgentContent.Text>()
+                ?.joinToString("\n\n", transform = AgentContent.Text::text)
+                .orEmpty()
+            input.setText(text)
+            input.setSelection(input.text?.length ?: 0)
+            pendingAttachments.clear()
+            pendingAttachments += draft?.content.orEmpty()
+                .filterNot { it is AgentContent.Text || it is AgentContent.SkillReference }
+                .map { content -> PendingAttachment(content.attachmentDisplayName(), content) }
+            selectedSkills.clear()
+            selectedSkills += draft?.skills.orEmpty()
+            renderAttachments()
+            renderSelectedSkills()
+        } finally {
+            restoringComposerDraft = false
+        }
+    }
+
+    private fun AgentContent.attachmentDisplayName(): String = when (this) {
+        is AgentContent.Image -> uri?.let(Uri::parse)?.lastPathSegment ?: "图片"
+        is AgentContent.Audio -> "音频"
+        is AgentContent.ResourceLink -> name
+        is AgentContent.EmbeddedText -> Uri.parse(uri).lastPathSegment ?: "文本文件"
+        is AgentContent.EmbeddedBlob -> Uri.parse(uri).lastPathSegment ?: "文件"
+        is AgentContent.Text -> "文本"
+        is AgentContent.SkillReference -> displayName
     }
 
     private fun observableSessionId(visibleSessionId: String?): String? {
@@ -8113,6 +8179,12 @@ internal class RunAgentSurfaceBinding(
     private data class PendingAttachment(
         val name: String,
         val content: AgentContent
+    )
+
+    private data class ComposerDraftIdentity(
+        val instanceId: String,
+        val generation: Long,
+        val sessionId: String?,
     )
 
     private companion object {

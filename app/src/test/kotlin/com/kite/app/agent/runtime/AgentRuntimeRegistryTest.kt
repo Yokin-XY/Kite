@@ -71,6 +71,44 @@ class AgentRuntimeRegistryTest {
     }
 
     @Test
+    fun `统一输入草稿按会话隔离并只在发送成功后清除`() = runTest {
+        val provider = FakeProvider(requestPermission = false)
+        start(provider, request("instance-composer-draft"))
+        val coldDraft = AgentPromptDraft(
+            content = listOf(
+                AgentContent.Text("冷草稿"),
+                AgentContent.ResourceLink("report.pdf", "file:///workspace/report.pdf"),
+            ),
+            skills = listOf(AgentSelectedSkill("docs", "文档处理")),
+        )
+        AgentRuntimeRegistry.updateComposerDraft("instance-composer-draft", 1L, null, coldDraft)
+
+        AgentRuntimeRegistry.loadSession("instance-composer-draft", 1L, "historical-1")
+        val historicalDraft = AgentPromptDraft(listOf(AgentContent.Text("历史会话下一轮")))
+        AgentRuntimeRegistry.updateComposerDraft(
+            "instance-composer-draft",
+            1L,
+            "historical-1",
+            historicalDraft,
+        )
+
+        assertEquals(coldDraft, AgentRuntimeRegistry.composerDraft("instance-composer-draft", 1L, null))
+        assertEquals(
+            historicalDraft,
+            AgentRuntimeRegistry.composerDraft("instance-composer-draft", 1L, "historical-1"),
+        )
+
+        AgentRuntimeRegistry.prepareNewSession("instance-composer-draft", 1L)
+        val sent = AgentRuntimeRegistry.prompt("instance-composer-draft", 1L, coldDraft)
+        assertTrue(sent is AgentOperationResult.Success)
+        assertEquals(null, AgentRuntimeRegistry.composerDraft("instance-composer-draft", 1L, null))
+        assertEquals(
+            historicalDraft,
+            AgentRuntimeRegistry.composerDraft("instance-composer-draft", 1L, "historical-1"),
+        )
+    }
+
+    @Test
     fun `Skill胶囊留在会话显示而中性提示只进入Agent请求`() = runTest {
         val provider = FakeProvider(requestPermission = false)
         start(provider, request("instance-skill-draft"))

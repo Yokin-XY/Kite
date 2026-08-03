@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -161,7 +162,6 @@ internal fun codexReasoningSemantics(value: String): AgentReasoningSemantics? = 
 }
 
 internal fun List<AgentContent>.toCodexInput(): JSONArray? {
-    if (any { it !is AgentContent.Text && it !is AgentContent.Image }) return null
     return JSONArray().apply {
         this@toCodexInput.forEach { content ->
             when (content) {
@@ -171,11 +171,24 @@ internal fun List<AgentContent>.toCodexInput(): JSONArray? {
                         .put("type", "image")
                         .put("url", content.codexDataUrl()),
                 )
-                else -> error("已由 Codex 输入类型校验限制分支")
+                is AgentContent.ResourceLink -> {
+                    val path = content.codexReadablePath() ?: return null
+                    put(JSONObject().put("type", "text").put(
+                        "text",
+                        "[用户附加文件，可按需通过文件工具读取：$path]",
+                    ))
+                }
+                else -> return null
             }
         }
     }
 }
+
+private fun AgentContent.ResourceLink.codexReadablePath(): String? = runCatching {
+    val parsed = URI(uri)
+    if (!parsed.scheme.equals("file", ignoreCase = true)) return@runCatching null
+    parsed.path?.takeIf { it.startsWith('/') }
+}.getOrNull()
 
 private fun AgentContent.Image.codexDataUrl(): String =
     data.takeIf { it.startsWith("data:", ignoreCase = true) }

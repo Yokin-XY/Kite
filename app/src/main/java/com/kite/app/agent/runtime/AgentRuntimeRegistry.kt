@@ -143,7 +143,9 @@ fun interface AgentRuntimeStatusSink {
  */
 object AgentRuntimeRegistry {
     private const val MAX_SESSION_LIST_PAGES = 100
+    private const val MAX_COMPOSER_DRAFTS = 64
     private const val DRAFT_CONVERSATION_PREFIX = "kite-draft:"
+    private const val COLD_COMPOSER_DRAFT_KEY = "kite-cold-draft"
 
     private class ActiveRuntime(
         @Volatile var session: AgentRuntimeSession,
@@ -170,6 +172,8 @@ object AgentRuntimeRegistry {
         @Volatile var draftCatalog: AgentDraftCapabilityCatalog = AgentDraftCapabilityCatalog(),
         val draftCatalogLock: Any = Any(),
         val draftConfiguration: LinkedHashMap<String, AgentConfigValue> = linkedMapOf(),
+        val composerDrafts: LinkedHashMap<String, AgentPromptDraft> = linkedMapOf(),
+        val composerDraftLock: Any = Any(),
         @Volatile var defaultDraftPermissionSelection: AgentDraftConfigurationSelection? = null,
         @Volatile var draftModeId: String? = null,
         @Volatile var defaultDraftModeId: String? = null,
@@ -520,6 +524,7 @@ object AgentRuntimeRegistry {
             val modelId = providerId?.let { groupId ->
                 choice.value.removePrefix("$groupId/")
             }
+
             if (providerId != null && modelId != null) {
                 active.connection.previewDraftModelConfiguration(providerId, modelId)
                     ?.let { preview -> active.applyDraftConfigurationPreview(preview) }
@@ -536,6 +541,46 @@ object AgentRuntimeRegistry {
                 modeId = active.draftModeId
             )
         )
+    }
+
+    /** 页面重建或切换会话时使用的统一输入草稿；只保存在当前 Runtime 生命周期内。 */
+    fun composerDraft(
+        instanceId: String,
+        generation: Long,
+        sessionId: String?,
+    ): AgentPromptDraft? = activeByInstance[instanceId]
+        ?.takeIf { it.session.generation == generation }
+        ?.let { active ->
+            synchronized(active.composerDraftLock) {
+                active.composerDrafts[composerDraftKey(sessionId)]?.immutableCopy()
+            }
+        }
+
+    fun updateComposerDraft(
+        instanceId: String,
+        generation: Long,
+        sessionId: String?,
+        draft: AgentPromptDraft,
+    ): AgentOperationResult<Unit> {
+        val active = activeByInstance[instanceId]
+            ?.takeIf { it.session.generation == generation }
+            ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
+        active.storeComposerDraft(sessionId, draft)
+        return AgentOperationResult.Success(Unit)
+    }
+
+    fun clearComposerDraft(
+        instanceId: String,
+        generation: Long,
+        sessionId: String?,
+    ): AgentOperationResult<Unit> {
+        val active = activeByInstance[instanceId]
+            ?.takeIf { it.session.generation == generation }
+            ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
+        synchronized(active.composerDraftLock) {
+            active.composerDrafts.remove(composerDraftKey(sessionId))
+        }
+        return AgentOperationResult.Success(Unit)
     }
 
     fun selectDraftMode(
@@ -756,6 +801,8 @@ object AgentRuntimeRegistry {
         if (transportContent.isEmpty() || transportContent.any { it is AgentContent.SkillReference }) {
             return AgentOperationResult.Failure("Skill 草稿未能转换为 Agent 输入")
         }
+        val sourceComposerSessionId = active.session.sessionId
+        active.storeComposerDraft(sourceComposerSessionId, draft)
         return active.sessionOperationMutex.withLock {
             val localMessageId = "local-${System.currentTimeMillis()}"
             val optimisticKey = AgentConversationKey(
@@ -814,6 +861,10 @@ object AgentRuntimeRegistry {
             val result = active.connection.prompt(AgentPromptRequest(sessionId, transportContent))
             if (result !is AgentOperationResult.Success) {
                 AgentConversationStore.discardLocalMessage(key, localMessageId)
+            } else {
+                synchronized(active.composerDraftLock) {
+                    active.composerDrafts.remove(composerDraftKey(sourceComposerSessionId))
+                }
             }
             result
         }
@@ -1378,6 +1429,30 @@ object AgentRuntimeRegistry {
 
     private fun draftConversationId(instanceId: String, generation: Long): String =
         "$DRAFT_CONVERSATION_PREFIX$instanceId:$generation"
+
+    private fun composerDraftKey(sessionId: String?): String =
+        sessionId?.trim()?.takeIf(String::isNotBlank) ?: COLD_COMPOSER_DRAFT_KEY
+
+    private fun ActiveRuntime.storeComposerDraft(sessionId: String?, draft: AgentPromptDraft) {
+        val snapshot = draft.immutableCopy()
+        synchronized(composerDraftLock) {
+            val key = composerDraftKey(sessionId)
+            if (snapshot.content.isEmpty() && snapshot.skills.isEmpty()) {
+                composerDrafts.remove(key)
+            } else {
+                composerDrafts.remove(key)
+                composerDrafts[key] = snapshot
+                while (composerDrafts.size > MAX_COMPOSER_DRAFTS) {
+                    composerDrafts.remove(composerDrafts.keys.first())
+                }
+            }
+        }
+    }
+
+    private fun AgentPromptDraft.immutableCopy(): AgentPromptDraft = AgentPromptDraft(
+        content = content.toList(),
+        skills = skills.toList(),
+    )
 
     private suspend fun restoreExistingSession(
         connection: KiteAgentConnection,

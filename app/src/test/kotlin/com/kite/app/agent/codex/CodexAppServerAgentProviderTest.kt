@@ -43,6 +43,21 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class CodexAppServerAgentProviderTest {
     @Test
+    fun `本地文件引用转换为Codex可读取路径而远程链接不冒充文件`() {
+        val input = listOf(
+            AgentContent.Text("检查附件"),
+            AgentContent.ResourceLink("report.pdf", "file:///workspace/.kf/attachments/report.pdf"),
+        ).toCodexInput()
+        assertNotNull(input)
+        assertEquals("text", input!!.getJSONObject(1).getString("type"))
+        assertTrue(input.getJSONObject(1).getString("text").contains("/workspace/.kf/attachments/report.pdf"))
+        assertEquals(
+            null,
+            listOf(AgentContent.ResourceLink("remote", "https://example.com/file")).toCodexInput(),
+        )
+    }
+
+    @Test
     fun `官方模型按模型目录提供推理强度且权限只有四项`() = runBlocking {
         val fixture = CodexAppServerFixture(modelProvider = "openai", selectedModel = "gpt-5.6-sol")
         val events = mutableListOf<Pair<String, AgentSessionEvent>>()
