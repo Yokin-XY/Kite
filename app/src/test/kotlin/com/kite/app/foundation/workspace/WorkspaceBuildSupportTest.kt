@@ -68,23 +68,27 @@ class WorkspaceBuildSupportTest {
     }
 
     @Test
-    fun ensure_replacesContainerSymlinkFdWrapper() {
+    fun ensure_writesSystemFdWrapperWithoutMutatingContainerEnvBin() {
         val workspace = Files.createTempDirectory("kite-workspace-support-").toFile()
         try {
             val helperBin = WorkspaceBuildSupport.helperBinDir(workspace).also { it.mkdirs() }
             val fd = helperBin.resolve("fd")
+            val legacyTarget = Paths.get("/workspace/.kf/software/kite.tool.env/bin/fd")
             val symlinkCreated = runCatching {
                 Files.createSymbolicLink(
                     fd.toPath(),
-                    Paths.get("/workspace/.kf/software/kite.tool.env/bin/fd")
+                    legacyTarget
                 )
             }.isSuccess
             assumeTrue("symlink creation is not available on this host", symlinkCreated)
 
             WorkspaceBuildSupport.ensure(workspace)
 
-            assertFalse(Files.isSymbolicLink(fd.toPath()))
-            assertTrue(fd.readText().contains("exec fdfind"))
+            assertTrue(Files.isSymbolicLink(fd.toPath()))
+            assertEquals(legacyTarget, Files.readSymbolicLink(fd.toPath()))
+            val systemFd = WorkspaceBuildSupport.helperSystemBinDir(workspace).resolve("fd")
+            assertFalse(Files.isSymbolicLink(systemFd.toPath()))
+            assertTrue(systemFd.readText().contains("exec fdfind"))
         } finally {
             workspace.deleteRecursively()
         }
