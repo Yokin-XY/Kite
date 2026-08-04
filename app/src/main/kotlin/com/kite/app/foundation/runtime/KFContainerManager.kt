@@ -54,10 +54,13 @@ object KFContainerManager {
     private const val RUNTIME_SMOKE_TIMEOUT_MS = 12_000L
     private const val CONTAINER_ROOTFS_READY_MARKER = ".kf-container-rootfs-ready"
     private const val CONTAINER_ROOTFS_READY_MARKER_SCHEMA = "1"
-    private val CONTAINER_ROOTFS_REQUIRED_FILES = listOf(
+    internal val CONTAINER_ROOTFS_REQUIRED_FILES = listOf(
         "bin/sh",
         "bin/bash",
-        "usr/bin/env"
+        "usr/bin/env",
+        "usr/bin/supervisord",
+        "usr/bin/supervisorctl",
+        "etc/supervisor/supervisord.conf"
     )
 
     /**

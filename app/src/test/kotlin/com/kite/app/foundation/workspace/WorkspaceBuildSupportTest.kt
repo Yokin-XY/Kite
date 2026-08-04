@@ -14,6 +14,37 @@ import java.nio.file.Paths
 @RunWith(RobolectricTestRunner::class)
 class WorkspaceBuildSupportTest {
     @Test
+    fun ensure_removesLegacyToolchainServiceShimsButPreservesCustomCommands() {
+        val workspace = Files.createTempDirectory("kite-service-shim-migration-").toFile()
+        try {
+            val helperBin = WorkspaceBuildSupport.helperBinDir(workspace).also { it.mkdirs() }
+            val systemctl = helperBin.resolve("systemctl").apply {
+                writeText(
+                    "#!/usr/bin/env sh\n" +
+                        "echo 'KFShell runs Android/proot without systemd. Use KFShell runtime controls instead.'\n"
+                )
+            }
+            val service = helperBin.resolve("service").apply {
+                writeText(
+                    "#!/usr/bin/env sh\n" +
+                        "echo 'KFShell does not provide SysV/systemd service management. Use KFShell runtime controls instead.'\n"
+                )
+            }
+            val custom = helperBin.resolve("custom-service-command").apply {
+                writeText("#!/usr/bin/env sh\necho custom\n")
+            }
+
+            WorkspaceBuildSupport.migrateLegacyEnvBinIfNeeded(workspace, sealed = false)
+
+            assertFalse(systemctl.exists())
+            assertFalse(service.exists())
+            assertTrue(custom.isFile)
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
     fun ensure_writesVersionedSupervisordHealthHelperWithoutArguments() {
         val workspace = Files.createTempDirectory("kite-supervisord-health-helper-").toFile()
         try {

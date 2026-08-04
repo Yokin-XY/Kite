@@ -26,7 +26,7 @@ class ToolchainCommandProbeAssetTest {
         assertFalse(installScript.contains("timeout -k 2s 5s \"\$command_name\""))
         assertTrue(probeLibrary.contains("KF_TOOLCHAIN_PROBE_TIMEOUT_SECONDS:-30"))
         assertTrue(probeLibrary.contains("KF_PROBE_REASON=\"timeout(\${timeout_seconds}s)\""))
-        assertTrue(manifest.contains("\"version\": 18"))
+        assertTrue(manifest.contains("\"version\": 19"))
     }
 
     private fun projectFile(vararg candidates: String): File =

@@ -97,7 +97,7 @@ object ToolchainPackInstaller {
         BootstrapResource(
             resourceId = RESOURCE_TOOL_ENV,
             mode = "--install-system-tools",
-            version = "v16",
+            version = "v17",
             label = "系统工具集合",
             dependencies = setOf(RESOURCE_NODEJS),
             requiredPaths = listOf(

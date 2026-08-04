@@ -66,11 +66,63 @@ class BackgroundRuntimeSpacePolicyTest {
     }
 
     @Test
+    fun `core supervisor retries after its packaged dependency is restored`() {
+        val core = record().copy(
+            kind = BackgroundRuntimeKind.CONTAINER_SUPERVISOR,
+            lastExitCode = 127,
+        )
+
+        assertTrue(BackgroundRuntimeRestartGate.blocksAutomaticStart(core))
+        assertFalse(
+            BackgroundRuntimeRestartGate.blocksAutomaticStart(
+                record = core,
+                coreDependencyRestored = true,
+            )
+        )
+        assertTrue(
+            BackgroundRuntimeRestartGate.blocksAutomaticStart(
+                record = record().copy(lastExitCode = 127),
+                coreDependencyRestored = true,
+            )
+        )
+    }
+
+    @Test
+    fun `new active attempt clears stale command unavailable exit`() {
+        assertNull(
+            BackgroundRuntimeStatusTransitionPolicy.nextExitCode(
+                previousExitCode = 127,
+                observedExitCode = null,
+                nextStatus = BackgroundRuntimeStatus.STARTING,
+            )
+        )
+        assertEquals(
+            127,
+            BackgroundRuntimeStatusTransitionPolicy.nextExitCode(
+                previousExitCode = 127,
+                observedExitCode = null,
+                nextStatus = BackgroundRuntimeStatus.ERROR,
+            )
+        )
+        assertEquals(
+            1,
+            BackgroundRuntimeStatusTransitionPolicy.nextExitCode(
+                previousExitCode = 127,
+                observedExitCode = 1,
+                nextStatus = BackgroundRuntimeStatus.RUNNING,
+            )
+        )
+    }
+
+    @Test
     fun `builtin supervisor reports missing dependency with standard exit code`() {
         val command = BackgroundRuntimeRegistry.builtinContainerSupervisorStartCommand()
 
         assertTrue(command.contains("test -x /usr/bin/supervisord"))
         assertTrue(command.contains("test -f /etc/supervisor/supervisord.conf"))
+        assertTrue(command.contains("grep -Fq 'KFShell runs Android/proot without systemd'"))
+        assertTrue(command.contains("rm -f /workspace/.kf/bin/systemctl"))
+        assertTrue(command.contains("rm -f /workspace/.kf/bin/service"))
         assertTrue(command.contains("exit 127"))
         assertTrue(command.contains("exec /usr/bin/supervisord"))
     }

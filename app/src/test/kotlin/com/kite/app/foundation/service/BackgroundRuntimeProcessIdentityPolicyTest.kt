@@ -2,9 +2,44 @@ package com.kite.app.foundation.service
 
 import com.kite.app.foundation.runtime.HostProcessIdentityObservation
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BackgroundRuntimeProcessIdentityPolicyTest {
+
+    @Test
+    fun `confirmed original process exit releases only an inactive managed lease`() {
+        assertTrue(
+            shouldReleaseManagedProotLeaseAfterConfirmedProcessExit(
+                localHandleAlive = false,
+                externalServiceAlive = false,
+                originalProcessGone = true,
+            )
+        )
+        assertFalse(
+            shouldReleaseManagedProotLeaseAfterConfirmedProcessExit(
+                localHandleAlive = true,
+                externalServiceAlive = false,
+                originalProcessGone = true,
+            )
+        )
+        assertFalse(
+            shouldReleaseManagedProotLeaseAfterConfirmedProcessExit(
+                localHandleAlive = false,
+                externalServiceAlive = true,
+                originalProcessGone = true,
+            )
+        )
+        assertFalse(
+            shouldReleaseManagedProotLeaseAfterConfirmedProcessExit(
+                localHandleAlive = false,
+                externalServiceAlive = false,
+                originalProcessGone = false,
+            )
+        )
+    }
+
     @Test
     fun `only exact boot pid and generation can attach or receive a signal`() {
         val decision = decide(persisted = identity(), observed = identity())

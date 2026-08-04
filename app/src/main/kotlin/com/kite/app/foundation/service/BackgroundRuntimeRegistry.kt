@@ -38,7 +38,13 @@ object BackgroundRuntimeRegistry {
     }
 
     internal fun builtinContainerSupervisorStartCommand(): String {
-        return "test -x /usr/bin/supervisord || " +
+        return "if [ -f /workspace/.kf/bin/systemctl ] && " +
+            "grep -Fq 'KFShell runs Android/proot without systemd' /workspace/.kf/bin/systemctl; then " +
+            "rm -f /workspace/.kf/bin/systemctl; fi; " +
+            "if [ -f /workspace/.kf/bin/service ] && " +
+            "grep -Fq 'KFShell does not provide SysV/systemd service management' /workspace/.kf/bin/service; then " +
+            "rm -f /workspace/.kf/bin/service; fi; " +
+            "test -x /usr/bin/supervisord || " +
             "{ printf 'supervisord is unavailable\\n' >&2; exit 127; }; " +
             "test -f /etc/supervisor/supervisord.conf || " +
             "{ printf 'supervisord.conf is unavailable\\n' >&2; exit 127; }; " +
@@ -381,7 +387,11 @@ object BackgroundRuntimeRegistry {
                 )
                 record.withProcessPid(pid).copy(
                     status = status,
-                    lastExitCode = lastExitCode ?: record.lastExitCode,
+                    lastExitCode = BackgroundRuntimeStatusTransitionPolicy.nextExitCode(
+                        previousExitCode = record.lastExitCode,
+                        observedExitCode = lastExitCode,
+                        nextStatus = status,
+                    ),
                     lastStartedAt = if (status.isActiveStatus()) {
                         if (record.status.isActiveStatus() && record.lastStartedAt != null) {
                             record.lastStartedAt

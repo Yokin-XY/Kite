@@ -78,17 +78,22 @@ export LD_LIBRARY_PATH=\"$lib_dir\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\"
 exec \"$target\" \"\$@\""
 }
 
+remove_owned_legacy_wrapper() {
+  local name="$1"
+  local marker="$2"
+  local wrapper="$BIN_DIR/$name"
+  if [ -f "$wrapper" ] && grep -Fq "$marker" "$wrapper"; then
+    rm -f "$wrapper"
+  fi
+}
+
 repair_wrappers() {
   if ! has fd && has fdfind; then
     write_wrapper fd '#!/usr/bin/env sh
 exec fdfind "$@"'
   fi
-  write_wrapper systemctl '#!/usr/bin/env sh
-echo "KFShell runs Android/proot without systemd. Use KFShell runtime controls instead." >&2
-exit 3'
-  write_wrapper service '#!/usr/bin/env sh
-echo "KFShell does not provide SysV/systemd service management. Use KFShell runtime controls instead." >&2
-exit 3'
+  remove_owned_legacy_wrapper systemctl "KFShell runs Android/proot without systemd"
+  remove_owned_legacy_wrapper service "KFShell does not provide SysV/systemd service management"
 }
 
 install_python() {

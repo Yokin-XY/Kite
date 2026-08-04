@@ -45,10 +45,13 @@ object AssetExtractor {
     private const val ROOTFS_READY_MARKER_SCHEMA = "2"
     private const val PERMISSION_MASK = 0x1FF
     private const val PROGRESS_EMIT_INTERVAL_MS = 500L
-    private val ROOTFS_REQUIRED_FILES = listOf(
+    internal val ROOTFS_REQUIRED_FILES = listOf(
         "bin/sh",
         "bin/bash",
-        "usr/bin/env"
+        "usr/bin/env",
+        "usr/bin/supervisord",
+        "usr/bin/supervisorctl",
+        "etc/supervisor/supervisord.conf"
     )
 
     enum class RootfsExtractionPhase {

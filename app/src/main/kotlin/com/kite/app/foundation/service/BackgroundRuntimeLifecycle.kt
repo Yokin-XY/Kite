@@ -41,9 +41,21 @@ internal object BackgroundRuntimeSpacePolicy {
 }
 
 internal object BackgroundRuntimeRestartGate {
-    fun blocksAutomaticStart(record: BackgroundRuntimeRecord): Boolean {
-        return ProcessExitSemantics.isCommandUnavailableExit(record.lastExitCode)
+    fun blocksAutomaticStart(
+        record: BackgroundRuntimeRecord,
+        coreDependencyRestored: Boolean = false,
+    ): Boolean {
+        if (!ProcessExitSemantics.isCommandUnavailableExit(record.lastExitCode)) return false
+        return record.kind != BackgroundRuntimeKind.CONTAINER_SUPERVISOR || !coreDependencyRestored
     }
+}
+
+internal object BackgroundRuntimeStatusTransitionPolicy {
+    fun nextExitCode(
+        previousExitCode: Int?,
+        observedExitCode: Int?,
+        nextStatus: BackgroundRuntimeStatus,
+    ): Int? = observedExitCode ?: previousExitCode.takeUnless { nextStatus.isActiveStatus() }
 }
 
 object BackgroundRuntimeHealthText {

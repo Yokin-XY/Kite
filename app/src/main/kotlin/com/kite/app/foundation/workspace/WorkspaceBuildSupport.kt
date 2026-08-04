@@ -565,7 +565,9 @@ object WorkspaceBuildSupport {
                     text.contains("KF_RUNTIME_PROCESS_TABLE_PATH") ||
                         text.contains("Ubuntu signal semantics") ||
                         text.contains("systemctl-compatible") ||
-                        text.contains("supervisord backend")
+                        text.contains("supervisord backend") ||
+                        text.contains("KFShell runs Android/proot without systemd") ||
+                        text.contains("KFShell does not provide SysV/systemd service management")
                 )
             if (ownedLegacyShim) {
                 file.delete()

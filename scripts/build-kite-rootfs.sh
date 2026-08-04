@@ -25,7 +25,7 @@ APT_PROXY=""
 APT_PACKAGES=(
   bash ca-certificates coreutils findutils sed grep tar xz-utils unzip zip zstd file
   curl wget git jq ripgrep fd-find procps iproute2 net-tools dnsutils
-  adb fastboot
+  adb fastboot supervisor
 )
 SUDO=()
 
@@ -115,7 +115,7 @@ unbind_mounts() {
 
 write_manifest() {
   as_root tee "$ROOTFS_DIR/etc/kite-rootfs-release" >/dev/null <<EOF
-kite_rootfs_version=24.04-kite-offline-20260627
+kite_rootfs_version=24.04-kite-offline-20260804
 ubuntu_codename=$CODENAME
 apt_packages=${APT_PACKAGES[*]}
 network_required_at_phone_boot=false
@@ -124,7 +124,8 @@ EOF
 
 package_rootfs() {
   as_root rm -f "$OUT_FILE.tmp"
-  as_root tar --numeric-owner --xattrs --acls -C "$ROOTFS_DIR" -czf "$OUT_FILE.tmp" .
+  as_root tar --numeric-owner --xattrs --acls -C "$ROOTFS_DIR" \
+    --use-compress-program='pigz -11 -n' -cf "$OUT_FILE.tmp" .
   as_root chown "$(id -u):$(id -g)" "$OUT_FILE.tmp"
   mv "$OUT_FILE.tmp" "$OUT_FILE"
 }
@@ -132,6 +133,7 @@ package_rootfs() {
 main() {
   need curl
   need debootstrap
+  need pigz
   need qemu-aarch64-static
   init_privilege
   select_network
@@ -162,6 +164,9 @@ EOF
   as_root chroot "$ROOTFS_DIR" apt-get clean
   as_root rm -f "$ROOTFS_DIR/etc/apt/apt.conf.d/99kite-proxy"
   as_root rm -rf "$ROOTFS_DIR/var/lib/apt/lists/"* "$ROOTFS_DIR/tmp/"* "$ROOTFS_DIR/var/tmp/"*
+  as_root rm -f "$ROOTFS_DIR/var/cache/debconf/"*-old
+  as_root rm -f "$ROOTFS_DIR/var/log/apt/"* "$ROOTFS_DIR/var/log/alternatives.log" \
+    "$ROOTFS_DIR/var/log/bootstrap.log" "$ROOTFS_DIR/var/log/dpkg.log"
   as_root rm -f "$ROOTFS_DIR/usr/bin/qemu-aarch64-static"
   unbind_mounts
   package_rootfs

@@ -169,6 +169,12 @@ internal fun selectRefreshedBackgroundRuntimePid(
     else -> null
 }
 
+internal fun shouldReleaseManagedProotLeaseAfterConfirmedProcessExit(
+    localHandleAlive: Boolean,
+    externalServiceAlive: Boolean,
+    originalProcessGone: Boolean,
+): Boolean = !localHandleAlive && !externalServiceAlive && originalProcessGone
+
 internal fun selectRefreshedBackgroundRuntimeStatus(
     currentStatus: BackgroundRuntimeStatus,
     localHandleAlive: Boolean,

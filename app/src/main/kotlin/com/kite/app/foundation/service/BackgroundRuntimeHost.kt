@@ -891,7 +891,13 @@ object BackgroundRuntimeHost {
                 return
             }
             val isExplicitStart = recoverySource == null || recoverySource == "manual_restart"
-            if (!isExplicitStart && BackgroundRuntimeRestartGate.blocksAutomaticStart(record)) {
+            val coreDependencyRestored = recoverySource == "core_ensure" &&
+                areCoreContainerSupervisorDependenciesReady(appContext, record)
+            if (!isExplicitStart && BackgroundRuntimeRestartGate.blocksAutomaticStart(
+                    record = record,
+                    coreDependencyRestored = coreDependencyRestored,
+                )
+            ) {
                 Logger.i(
                     LOG_TAG,
                     "后台运行项自动启动已阻止: runtime=${record.id} exit=${record.lastExitCode} source=$recoverySource"
@@ -964,6 +970,21 @@ object BackgroundRuntimeHost {
         } finally {
             lease.close()
         }
+    }
+
+    private fun areCoreContainerSupervisorDependenciesReady(
+        appContext: Context,
+        record: BackgroundRuntimeRecord,
+    ): Boolean {
+        if (record.kind != BackgroundRuntimeKind.CONTAINER_SUPERVISOR) return false
+        val rootfsPath = WorkSurfaceRuntimeBridge.getSavedContainer(appContext)
+            ?.rootfsPath
+            ?.takeIf(String::isNotBlank)
+            ?: return false
+        val rootfs = File(rootfsPath)
+        return File(rootfs, "usr/bin/supervisord").canExecute() &&
+            File(rootfs, "usr/bin/supervisorctl").canExecute() &&
+            File(rootfs, "etc/supervisor/supervisord.conf").isFile
     }
 
     private suspend fun stopRuntimeInternal(appContext: Context, runtimeId: String) {
@@ -1757,6 +1778,14 @@ object BackgroundRuntimeHost {
                 withinStartingGrace = withinStartingGrace
             )
         )
+        if (shouldReleaseManagedProotLeaseAfterConfirmedProcessExit(
+                localHandleAlive = isAlive,
+                externalServiceAlive = externalAlive,
+                originalProcessGone = externalProbe.originalProcessGone,
+            )
+        ) {
+            releaseManagedProotLeaseAfterConfirmedStop(appContext, record.id)
+        }
         when (nextStatus) {
             BackgroundRuntimeStatus.RUNNING -> {
                 (updatedRecord ?: BackgroundRuntimeRegistry.get(appContext, record.id))?.let { latest ->
