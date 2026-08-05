@@ -1,0 +1,65 @@
+name: 贡献方向申请
+description: 认领一个边界清楚的功能、修复、测试或文档方向
+title: "[共建] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢参与 Kite 共建。请先确认一个小而完整的方向；范围确认后，再从个人 Fork 提交 Pull Request。
+
+        提交前请阅读 [参与开发](https://github.com/Yokin-XY/Kite/blob/main/CONTRIBUTING.md)。资源安装、Shell/PRoot、Agent 进程、认证凭据、Android 权限、构建和发布链会进行额外安全审查。
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标
+      description: 希望解决什么问题，用户最终会看到什么结果？
+      placeholder: 请用一至三段说明目标和用户价值。
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 计划范围
+      description: 列出计划修改的模块、行为边界和明确不包含的内容。
+      placeholder: |
+        包含：
+        - ...
+
+        不包含：
+        - ...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: risk
+    attributes:
+      label: 风险范围
+      description: 请勾选全部涉及的范围；勾选不会阻止申请，只用于提前确定审查方式。
+      options:
+        - label: 资源卡、资源清单、下载地址、依赖或第三方脚本
+        - label: Shell、终端、PRoot、Bridge 或 Agent 进程
+        - label: 网络、认证、凭据、文件访问或 Android 权限
+        - label: GitHub Actions、构建、签名、发布或自动更新
+        - label: 不涉及以上高风险范围
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: 验证计划
+      description: 计划补充哪些测试、构建、页面或真机证据？
+      placeholder: 单元测试、静态检查、Debug 构建、真机步骤等。
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: agreement
+    attributes:
+      label: 协作确认
+      options:
+        - label: 我会在范围确认后通过个人 Fork 提交 Pull Request，并保持一个 PR 只处理一个行为边界。
+          required: true
+        - label: 我会说明第三方代码、素材、模型、数据和生成内容的来源及许可。
+          required: true

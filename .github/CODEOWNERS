@@ -1,0 +1,20 @@
+# 默认由项目所有者审查所有进入主线的改动。
+* @Yokin-XY
+
+# 以下路径具有执行、供应链、权限或发布风险，显式保留所有者审查。
+/.github/ @Yokin-XY
+/assets/ @Yokin-XY
+/scripts/ @Yokin-XY
+/app/build.gradle @Yokin-XY
+/build.gradle @Yokin-XY
+/settings.gradle @Yokin-XY
+/gradle.properties @Yokin-XY
+/app/src/main/AndroidManifest.xml @Yokin-XY
+/app/src/main/java/com/kite/app/agent/ @Yokin-XY
+/app/src/main/java/com/kite/app/bridge/ @Yokin-XY
+/app/src/main/java/com/kite/app/foundation/runtime/ @Yokin-XY
+/app/src/main/java/com/kite/app/foundation/service/ @Yokin-XY
+/app/src/main/java/com/kite/app/platform/ @Yokin-XY
+/CONTRIBUTOR_LICENSE_AGREEMENT.md @Yokin-XY
+/CONTRIBUTING.md @Yokin-XY
+/LICENSE @Yokin-XY
