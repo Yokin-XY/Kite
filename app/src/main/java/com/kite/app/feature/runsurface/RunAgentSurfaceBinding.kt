@@ -164,6 +164,7 @@ internal class RunAgentSurfaceBinding(
     private val onCloseInstance: () -> Unit,
     private val onPickImages: () -> Unit,
     private val onPickFiles: () -> Unit,
+    private val onPickCodexAuthJson: () -> Unit,
     private val agentRegistry: KiteAgentRegistry,
     private val officialAccountManager: AgentOfficialAccountManager,
     private val agentConfigurationApi: AgentConfigurationApi,
@@ -5637,6 +5638,12 @@ internal class RunAgentSurfaceBinding(
                     setTextColor(tokens.textSecondary)
                     setPadding(0, ui.dp(5), 0, ui.dp(13))
                 })
+                if (providerLibraryMode == AgentProviderLibraryMode.Browse && targetAgentId == "codex") {
+                    addView(buildCodexAuthImportCard(), LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { bottomMargin = ui.dp(12) })
+                }
                 if (providerLibraryMode == AgentProviderLibraryMode.Browse) {
                     addView(buildProviderGroupStrip(
                         selected,
@@ -6339,6 +6346,49 @@ internal class RunAgentSurfaceBinding(
                 else -> officialAccountManager.login(agentId, account.id)
             }
         }
+    }
+
+    private fun buildCodexAuthImportCard(): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(ui.dp(16), ui.dp(12), ui.dp(10), ui.dp(12))
+        background = ui.roundedBox(
+            agentSettingsSurface,
+            tokens.border,
+            ui.dp(18).toFloat(),
+            ui.dp(1),
+        )
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(context).apply {
+                text = context.getString(R.string.agent_codex_auth_import_title)
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = context.getString(R.string.agent_codex_auth_import_summary)
+                textSize = 12.5f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, ui.dp(4), ui.dp(10), 0)
+            })
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(TextView(context).apply {
+            text = context.getString(R.string.agent_codex_auth_import_action)
+            textSize = 13.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.textPrimary)
+            setPadding(ui.dp(12), 0, ui.dp(12), 0)
+            background = ui.roundedBox(agentSurface, tokens.border, ui.dp(16).toFloat(), ui.dp(1))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onPickCodexAuthJson() }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(40)))
+    }
+
+    fun refreshCodexOfficialAccountStatus() {
+        officialAccountManager.refresh("codex", "chatgpt")
     }
 
     private fun AgentOfficialAccountStatus.officialAccountLabel(): String = when (this) {

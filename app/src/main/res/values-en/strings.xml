@@ -9,6 +9,10 @@
     <string name="common_retry">Retry</string>
     <string name="common_more">More</string>
     <string name="common_cancel">Cancel</string>
+    <string name="agent_codex_auth_import_title">Import Codex JSON auth</string>
+    <string name="agent_codex_auth_import_summary">Supports official auth.json, CPA single-account, and Sub2API accounts exports; processed locally only.</string>
+    <string name="agent_codex_auth_import_action">Choose JSON</string>
+    <string name="agent_codex_auth_import_success">Codex authentication imported and activated; existing auth and config were backed up.</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_section_personalization">Personalization</string>

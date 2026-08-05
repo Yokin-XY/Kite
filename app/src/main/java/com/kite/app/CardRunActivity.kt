@@ -22,6 +22,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.action.KiteInstallPlanActionIntent
+import com.kite.app.agent.auth.CodexAuthImportError
+import com.kite.app.agent.auth.CodexAuthJsonImporter
 import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.browser.BrowserHandoffLaunchResult
 import com.kite.app.application.resources.ResourceActionEffect
@@ -85,7 +87,9 @@ import com.kite.app.ui.theme.applyKiteWindowTheme
 import com.kite.app.ui.UiKit
 import com.kite.app.ui.terminal.KiteTerminalShellTheme
 import com.kite.app.shell.TerminalSurfaceShellBinding
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 只托管一个运行实例及其可见显示面，不拥有首页、资源目录或底层任务生命周期。 */
 class CardRunActivity : AppCompatActivity() {
@@ -120,6 +124,31 @@ class CardRunActivity : AppCompatActivity() {
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         agentSurfaceBinding?.addAttachments(uris)
+    }
+    private val codexAuthJsonPicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                CodexAuthJsonImporter.importFromUri(this@CardRunActivity, uri)
+            }
+            if (result.success) {
+                Toast.makeText(
+                    this@CardRunActivity,
+                    getString(com.kite.app.R.string.agent_codex_auth_import_success),
+                    Toast.LENGTH_LONG,
+                ).show()
+                graph.agentOfficialAccountManager.refresh("codex", "chatgpt")
+                agentSurfaceBinding?.refreshCodexOfficialAccountStatus()
+            } else {
+                Toast.makeText(
+                    this@CardRunActivity,
+                    codexAuthImportFailureMessage(result.error),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
     }
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
@@ -414,6 +443,9 @@ class CardRunActivity : AppCompatActivity() {
                 agentAttachmentPicker.launch(
                     arrayOf("text/*", "application/pdf", "application/octet-stream")
                 )
+            },
+            onPickCodexAuthJson = {
+                codexAuthJsonPicker.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
             },
             agentRegistry = graph.agentRegistry,
             officialAccountManager = graph.agentOfficialAccountManager,
@@ -982,6 +1014,17 @@ class CardRunActivity : AppCompatActivity() {
     }
 
     private fun activeEnvironmentId(): String = graph.resourceInstallStore.currentEnvironmentId()
+
+    private fun codexAuthImportFailureMessage(error: CodexAuthImportError?): String = when (error) {
+        CodexAuthImportError.INVALID_JSON -> "导入失败：不是受支持的 JSON 认证文件，或文件超过 1 MB。"
+        CodexAuthImportError.MISSING_ID_TOKEN -> "导入失败：缺少 id_token。"
+        CodexAuthImportError.MISSING_ACCESS_TOKEN -> "导入失败：缺少 access_token。"
+        CodexAuthImportError.MISSING_REFRESH_TOKEN -> "导入失败：缺少 refresh_token。"
+        CodexAuthImportError.INVALID_ID_TOKEN -> "导入失败：id_token 不是有效的 JWT。"
+        CodexAuthImportError.CONTAINER_NOT_READY -> "导入失败：默认容器尚未准备完成。"
+        CodexAuthImportError.WRITE_FAILED,
+        null -> "导入失败：无法安全写入 Codex 认证文件。"
+    }
 
     private fun targetEnvironmentId(): String = boundEnvironmentId ?: activeEnvironmentId()
 
