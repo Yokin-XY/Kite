@@ -26,9 +26,9 @@ Latest Release 是已经锁定的正式产物；`main` 是下一版本的开发�
 
 ## 参与共建
 
-Kite 欢迎问题反馈、方案讨论、文档、测试和代码贡献。默认协作流程是：先确认一个边界清楚的方向，在个人 Fork 中实现并提交 Pull Request，经过自动检查、代码审查和必要的运行验证后，由维护方合并进入主线。
+Kite 欢迎问题反馈、方案讨论、文档、测试和代码贡献。默认协作流程是：先通过 Issue 公开消费场景、预期效果和实现机制，再自行认领并在个人 Fork 中实现；Pull Request 经过自动检查、代码审查和必要的运行验证后，由维护方决定是否合并进入主线。
 
-资源安装、Shell/PRoot、Agent 进程、认证凭据、Android 权限、构建和发布链属于高风险范围，会进行额外的来源与安全审查。完整流程、角色职责和验证要求见 [参与开发](CONTRIBUTING.md)；提交贡献前请阅读 [贡献者许可协议](CONTRIBUTOR_LICENSE_AGREEMENT.md)。
+资源安装、Shell/PRoot、Agent 进程、认证凭据、Android 权限、构建和发布链属于高风险范围，会进行额外的来源与安全审查。完整流程见 [参与开发](CONTRIBUTING.md)（[English](CONTRIBUTING.en.md)），身份与权限见 [社区治理 / Community Governance](GOVERNANCE.md)；提交贡献前请阅读 [贡献者许可协议](CONTRIBUTOR_LICENSE_AGREEMENT.md)。
 
 ## 文档入口
 
@@ -42,6 +42,7 @@ Kite 欢迎问题反馈、方案讨论、文档、测试和代码贡献。默认
 | 状态拥有者与生命周期 | [状态与生命周期](docs/architecture/state-and-lifecycle.md) |
 | Recipe、资源清单和 Bridge 协议 | [参考文档](docs/README.md#协议参考) |
 | 参与开发和提交要求 | [参与开发](CONTRIBUTING.md) |
+| 社区身份、职责与权限 | [社区治理 / Community Governance](GOVERNANCE.md) |
 
 详细内容由对应文档维护，根 README 只提供长期稳定的项目介绍和入口。
 
