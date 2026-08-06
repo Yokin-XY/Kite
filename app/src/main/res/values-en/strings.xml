@@ -10,9 +10,15 @@
     <string name="common_more">More</string>
     <string name="common_cancel">Cancel</string>
     <string name="agent_codex_auth_import_title">Import Codex JSON auth</string>
-    <string name="agent_codex_auth_import_summary">Supports official auth.json, CPA single-account, and Sub2API accounts exports; processed locally only.</string>
-    <string name="agent_codex_auth_import_action">Choose JSON</string>
-    <string name="agent_codex_auth_import_success">Codex authentication imported and activated; existing auth and config were backed up.</string>
+    <string name="agent_codex_auth_import_summary">Supports official, CPA, and Sub2API multi-account exports; accounts stay in the active container and can be switched.</string>
+    <string name="agent_codex_auth_import_action">Import accounts</string>
+    <string name="agent_codex_auth_import_success">Imported %1$d Codex account(s) and activated the first account.</string>
+    <string name="agent_codex_auth_manage_action">Switch account</string>
+    <string name="agent_codex_auth_manage_title">Choose Codex account</string>
+    <string name="agent_codex_auth_manage_empty">No imported Codex accounts yet.</string>
+    <string name="agent_codex_auth_switch_success">Switched to %1$s.</string>
+    <string name="agent_codex_auth_switch_failed">Could not switch Codex account. Check the container state.</string>
+    <string name="agent_codex_auth_active_suffix">%1$s (current)</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_section_personalization">Personalization</string>

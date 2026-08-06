@@ -8,9 +8,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.time.Instant
 import java.time.format.DateTimeParseException
 import java.util.Base64
@@ -31,6 +33,26 @@ internal data class CodexAuthImportResult(
     val authBackupCreated: Boolean = false,
     val configBackupCreated: Boolean = false,
     val accountLabel: String? = null,
+    val importedAccountCount: Int = 0,
+    val activeAccountId: String? = null,
+)
+
+internal data class CodexImportedAccount(
+    val id: String,
+    val label: String,
+)
+
+internal data class CodexImportedAccountSnapshot(
+    val containerReady: Boolean = false,
+    val accounts: List<CodexImportedAccount> = emptyList(),
+    val activeAccountId: String? = null,
+)
+
+internal data class CodexAccountSwitchResult(
+    val success: Boolean,
+    val snapshot: CodexImportedAccountSnapshot,
+    val error: CodexAuthImportError? = null,
+    val accountLabel: String? = null,
 )
 
 /**
@@ -44,6 +66,8 @@ internal object CodexAuthJsonImporter {
     private const val MAX_JSON_NODES = 512
     private const val AUTH_PATH = "/root/.codex/auth.json"
     private const val CONFIG_PATH = "/root/.codex/config.toml"
+    private const val ACCOUNT_STORE_DIRECTORY = "kite-json-accounts"
+    private const val ACCOUNT_STORE_VERSION = 1
 
     fun importFromUri(context: Context, uri: Uri): CodexAuthImportResult {
         val payload = runCatching { readLimited(context, uri) }.getOrNull()
@@ -78,6 +102,51 @@ internal object CodexAuthJsonImporter {
         }.getOrElse { CodexAuthImportResult(false, CodexAuthImportError.WRITE_FAILED) }
     }
 
+    fun accountSnapshot(context: Context): CodexImportedAccountSnapshot {
+        val appContext = context.applicationContext
+        val container = WorkSurfaceRuntimeBridge.getSavedContainer(appContext)
+            ?: return CodexImportedAccountSnapshot()
+        val projection = ContainerAgentConfigProjection { container }
+        return runCatching {
+            val authProjection = projection.resolve(AUTH_PATH)
+                ?: return@runCatching CodexImportedAccountSnapshot()
+            snapshotFiles(authProjection.writeFile)
+        }.getOrDefault(CodexImportedAccountSnapshot())
+    }
+
+    fun activateAccount(context: Context, accountId: String): CodexAccountSwitchResult {
+        val appContext = context.applicationContext
+        val container = WorkSurfaceRuntimeBridge.getSavedContainer(appContext)
+            ?: return CodexAccountSwitchResult(
+                success = false,
+                snapshot = CodexImportedAccountSnapshot(),
+                error = CodexAuthImportError.CONTAINER_NOT_READY,
+            )
+        val projection = ContainerAgentConfigProjection { container }
+        return runCatching {
+            val authProjection = projection.resolve(AUTH_PATH)
+                ?: return@runCatching CodexAccountSwitchResult(
+                    success = false,
+                    snapshot = CodexImportedAccountSnapshot(),
+                    error = CodexAuthImportError.CONTAINER_NOT_READY,
+                )
+            val configProjection = projection.resolve(CONFIG_PATH)
+            activateAccountFiles(
+                authFile = authProjection.writeFile,
+                authReadFile = authProjection.readFile,
+                configFile = configProjection?.writeFile,
+                configReadFile = configProjection?.readFile,
+                accountId = accountId,
+            )
+        }.getOrElse {
+            CodexAccountSwitchResult(
+                success = false,
+                snapshot = CodexImportedAccountSnapshot(containerReady = true),
+                error = CodexAuthImportError.WRITE_FAILED,
+            )
+        }
+    }
+
     internal fun importIntoRootfs(
         rootfsDir: File,
         payload: String,
@@ -94,15 +163,38 @@ internal object CodexAuthJsonImporter {
         )
     }
 
-    internal fun parseCredentials(payload: String): ImportedCodexCredentials? {
-        val roots = parseRoots(payload) ?: return null
+    internal fun snapshotRootfs(rootfsDir: File): CodexImportedAccountSnapshot =
+        snapshotFiles(File(rootfsDir, "root/.codex/auth.json"))
+
+    internal fun activateAccountRootfs(
+        rootfsDir: File,
+        accountId: String,
+    ): CodexAccountSwitchResult {
+        val codexDir = File(rootfsDir, "root/.codex")
+        return activateAccountFiles(
+            authFile = File(codexDir, "auth.json"),
+            authReadFile = File(codexDir, "auth.json"),
+            configFile = File(codexDir, "config.toml"),
+            configReadFile = File(codexDir, "config.toml"),
+            accountId = accountId,
+        )
+    }
+
+    internal fun parseCredentials(payload: String): ImportedCodexCredentials? =
+        parseCredentialList(payload).firstOrNull()
+
+    internal fun parseCredentialList(payload: String): List<ImportedCodexCredentials> {
+        val roots = parseRoots(payload) ?: return emptyList()
         val objects = candidateObjects(roots)
+        val credentials = mutableListOf<ImportedCodexCredentials>()
+        val seenTokenSets = mutableSetOf<String>()
         for (candidate in objects) {
             val tokenObject = candidate.optJSONObject("tokens") ?: candidate
             val idToken = tokenObject.firstString("id_token", "idToken") ?: continue
             val accessToken = tokenObject.firstString("access_token", "accessToken") ?: continue
             val refreshToken = tokenObject.firstString("refresh_token", "refreshToken") ?: continue
-            val idClaims = decodeJwtClaims(idToken) ?: return null
+            val idClaims = decodeJwtClaims(idToken) ?: continue
+            if (!seenTokenSets.add("$idToken\u0000$accessToken\u0000$refreshToken")) continue
             val accountId = tokenObject.firstString(
                 "account_id",
                 "accountId",
@@ -114,13 +206,15 @@ internal object CodexAuthJsonImporter {
                 "chatgpt_account_id",
                 "chatgptAccountId",
             ) ?: accountIdFromClaims(idClaims)
-            val lastRefresh = candidate.firstString("last_refresh", "lastRefresh")
+            val lastRefresh = tokenObject.firstString("last_refresh", "lastRefresh")
+                ?.takeIf(::isIsoInstant)
+                ?: candidate.firstString("last_refresh", "lastRefresh")
                 ?.takeIf(::isIsoInstant)
                 ?: roots.firstNotNullOfOrNull { it.firstString("last_refresh", "lastRefresh")?.takeIf(::isIsoInstant) }
-            val email = candidate.firstString("email")
-                ?: roots.firstNotNullOfOrNull { it.firstString("email") }
+            val email = tokenObject.firstString("email")
+                ?: candidate.firstString("email")
                 ?: idClaims.firstString("email")
-            return ImportedCodexCredentials(
+            credentials += ImportedCodexCredentials(
                 idToken = idToken,
                 accessToken = accessToken,
                 refreshToken = refreshToken,
@@ -129,7 +223,7 @@ internal object CodexAuthJsonImporter {
                 email = email,
             )
         }
-        return null
+        return credentials
     }
 
     internal fun parseError(payload: String): CodexAuthImportError {
@@ -211,44 +305,231 @@ internal object CodexAuthJsonImporter {
         payload: String,
         now: Instant,
     ): CodexAuthImportResult {
-        val credentials = parseCredentials(payload)
-            ?: return CodexAuthImportResult(false, parseError(payload))
-        val authExisted = authBackupSource.isFile
-        val configExisted = configBackupSource?.isFile == true
-        var authBackup: File? = null
-        var configBackup: File? = null
+        val importedCredentials = parseCredentialList(payload)
+        if (importedCredentials.isEmpty()) {
+            return CodexAuthImportResult(false, parseError(payload))
+        }
+        val store = AccountStore(authFile)
+        val rollbacks = mutableListOf<Pair<File, RollbackSnapshot>>()
         return try {
             val codexDir = authFile.parentFile ?: error("Codex auth directory is unavailable")
             check(codexDir.exists() || codexDir.mkdirs())
-            val backupDir = File(codexDir, "import-backups").apply {
-                check(isDirectory || mkdirs())
-            }
-            val suffix = timestampSuffix(now)
-            authBackup = File(backupDir, "auth.$suffix.json.bak")
-                .takeIf { backupIfPresent(authBackupSource, it) }
-            configBackup = configBackupSource?.let { source ->
-                File(backupDir, "config.$suffix.toml.bak").takeIf { backupIfPresent(source, it) }
-            }
+            initializeStore(store)
+            saveActiveAccount(store, authBackupSource)
 
-            atomicWrite(authFile, buildOfficialAuth(credentials, now).toString(2) + "\n")
+            rollbacks += authFile to createRollbackSnapshot(authBackupSource, codexDir)
+            if (configFile != null && configBackupSource != null) {
+                rollbacks += configFile to createRollbackSnapshot(configBackupSource, codexDir)
+            }
+            rollbacks += store.state to createRollbackSnapshot(store.state, store.directory)
+
+            val importedAccounts = importedCredentials.map { credentials ->
+                val auth = buildOfficialAuth(credentials, now)
+                val id = profileId(credentials, auth)
+                val label = accountLabel(credentials, id)
+                val profileFile = accountFile(store, id)
+                rollbacks += profileFile to createRollbackSnapshot(profileFile, store.directory)
+                writeAccount(store, id, label, auth)
+                CodexImportedAccount(id, label)
+            }
+            val active = importedAccounts.first()
+
+            val activeProfile = readAccount(accountFile(store, active.id))
+                ?: error("Imported account profile is invalid")
+            atomicWrite(authFile, activeProfile.auth.toString(2) + "\n")
             if (configFile?.isFile == true) {
-                val currentConfig = configFile.readText()
+                val currentConfig = configBackupSource?.takeIf(File::isFile)?.readText()
+                    ?: configFile.readText()
                 val activatedConfig = activateBuiltInOpenAiConfig(currentConfig)
                 if (activatedConfig != currentConfig) atomicWrite(configFile, activatedConfig)
             }
+            writeActiveAccountId(store, active.id)
+            val authBackupCreated = rollbacks
+                .firstOrNull { (target, _) -> target == authFile }
+                ?.second
+                ?.existedBefore == true
+            val configBackupCreated = configFile != null && rollbacks
+                .firstOrNull { (target, _) -> target == configFile }
+                ?.second
+                ?.existedBefore == true
+            rollbacks.forEach { it.second.delete() }
             CodexAuthImportResult(
                 success = true,
-                authBackupCreated = authBackup != null,
-                configBackupCreated = configBackup != null,
-                accountLabel = credentials.email
-                    ?: credentials.accountId?.let(::compactAccountLabel),
+                authBackupCreated = authBackupCreated,
+                configBackupCreated = configBackupCreated,
+                accountLabel = active.label,
+                importedAccountCount = importedAccounts.size,
+                activeAccountId = active.id,
             )
         } catch (_: Exception) {
-            restoreAfterFailedImport(authFile, authBackup, authExisted)
-            if (configFile != null) restoreAfterFailedImport(configFile, configBackup, configExisted)
+            rollbacks.asReversed().forEach { (target, snapshot) ->
+                restoreAfterFailedImport(target, snapshot)
+                snapshot.delete()
+            }
             CodexAuthImportResult(false, CodexAuthImportError.WRITE_FAILED)
         }
     }
+
+    @Synchronized
+    private fun activateAccountFiles(
+        authFile: File,
+        authReadFile: File,
+        configFile: File?,
+        configReadFile: File?,
+        accountId: String,
+    ): CodexAccountSwitchResult {
+        val store = AccountStore(authFile)
+        return runCatching {
+            initializeStore(store)
+            val account = readAccount(accountFile(store, accountId))
+                ?: return CodexAccountSwitchResult(
+                    false,
+                    snapshotFiles(authFile),
+                    CodexAuthImportError.INVALID_JSON,
+                )
+            saveActiveAccount(store, authReadFile)
+
+            val codexDir = authFile.parentFile ?: error("Codex auth directory is unavailable")
+            val authRollback = createRollbackSnapshot(authReadFile, codexDir)
+            val configRollback = configReadFile?.let { createRollbackSnapshot(it, codexDir) }
+            val stateRollback = createRollbackSnapshot(store.state, store.directory)
+            try {
+                atomicWrite(authFile, account.auth.toString(2) + "\n")
+                if (configFile != null) {
+                    val currentConfig = configReadFile?.takeIf(File::isFile)?.readText()
+                        ?: configFile.takeIf(File::isFile)?.readText().orEmpty()
+                    val activatedConfig = activateBuiltInOpenAiConfig(currentConfig)
+                    if (activatedConfig != currentConfig || !configFile.isFile) {
+                        atomicWrite(configFile, activatedConfig)
+                    }
+                }
+                writeActiveAccountId(store, account.id)
+                authRollback.delete()
+                configRollback?.delete()
+                stateRollback.delete()
+                CodexAccountSwitchResult(
+                    success = true,
+                    snapshot = snapshotFiles(authFile),
+                    accountLabel = account.label,
+                )
+            } catch (_: Exception) {
+                restoreAfterFailedImport(authFile, authRollback)
+                if (configFile != null && configRollback != null) {
+                    restoreAfterFailedImport(configFile, configRollback)
+                }
+                restoreAfterFailedImport(store.state, stateRollback)
+                authRollback.delete()
+                configRollback?.delete()
+                stateRollback.delete()
+                CodexAccountSwitchResult(
+                    false,
+                    snapshotFiles(authFile),
+                    CodexAuthImportError.WRITE_FAILED,
+                )
+            }
+        }.getOrElse {
+            CodexAccountSwitchResult(
+                false,
+                snapshotFiles(authFile),
+                CodexAuthImportError.WRITE_FAILED,
+            )
+        }
+    }
+
+    private fun snapshotFiles(authFile: File): CodexImportedAccountSnapshot {
+        val store = AccountStore(authFile)
+        val containerReady = authFile.parentFile?.isDirectory == true
+        if (!containerReady || !store.accounts.isDirectory) {
+            return CodexImportedAccountSnapshot(containerReady = containerReady)
+        }
+        val accounts = store.accounts.listFiles()
+            .orEmpty()
+            .filter(File::isFile)
+            .mapNotNull(::readAccount)
+            .map { CodexImportedAccount(it.id, it.label) }
+            .sortedBy { it.label.lowercase() }
+        return CodexImportedAccountSnapshot(
+            containerReady = true,
+            accounts = accounts,
+            activeAccountId = readActiveAccountId(store),
+        )
+    }
+
+    private fun initializeStore(store: AccountStore) {
+        check(store.directory.isDirectory || store.directory.mkdirs())
+        check(store.accounts.isDirectory || store.accounts.mkdirs())
+        secureDirectory(store.directory)
+        secureDirectory(store.accounts)
+    }
+
+    private fun writeAccount(
+        store: AccountStore,
+        id: String,
+        label: String,
+        auth: JSONObject,
+    ) {
+        val wrapper = JSONObject()
+            .put("version", ACCOUNT_STORE_VERSION)
+            .put("id", id)
+            .put("label", label)
+            .put("auth", auth)
+        atomicWrite(accountFile(store, id), wrapper.toString(2) + "\n")
+    }
+
+    private fun readAccount(file: File): StoredAccount? = runCatching {
+        val wrapper = JSONObject(file.readText())
+        val id = wrapper.optString("id").trim().takeIf(String::isNotBlank) ?: return null
+        val label = wrapper.optString("label").trim().takeIf(String::isNotBlank)
+            ?: "JSON account ${id.takeLast(6)}"
+        val auth = wrapper.optJSONObject("auth") ?: return null
+        if (!isOfficialAuth(auth)) return null
+        StoredAccount(id, label, auth)
+    }.getOrNull()
+
+    private fun saveActiveAccount(store: AccountStore, visibleAuth: File) {
+        val activeId = readActiveAccountId(store) ?: return
+        val previous = readAccount(accountFile(store, activeId)) ?: return
+        val refreshed = runCatching { JSONObject(visibleAuth.readText()) }.getOrNull() ?: return
+        if (!isOfficialAuth(refreshed)) return
+        writeAccount(store, activeId, previous.label, refreshed)
+    }
+
+    private fun writeActiveAccountId(store: AccountStore, accountId: String) {
+        val state = JSONObject()
+            .put("version", ACCOUNT_STORE_VERSION)
+            .put("active_account_id", accountId)
+        atomicWrite(store.state, state.toString(2) + "\n")
+    }
+
+    private fun readActiveAccountId(store: AccountStore): String? = runCatching {
+        JSONObject(store.state.readText())
+            .optString("active_account_id")
+            .trim()
+            .takeIf(String::isNotBlank)
+    }.getOrNull()
+
+    private fun accountFile(store: AccountStore, accountId: String): File {
+        require(accountId.matches(Regex("""[a-zA-Z0-9_-]+""")))
+        return File(store.accounts, "$accountId.json")
+    }
+
+    private fun profileId(credentials: ImportedCodexCredentials, auth: JSONObject): String {
+        val stable = credentials.accountId
+            ?: credentials.email
+            ?: decodeJwtClaims(credentials.idToken)?.firstString("sub")
+            ?: auth.optJSONObject("tokens")?.optString("refresh_token").orEmpty()
+        val digest = MessageDigest.getInstance("SHA-256").digest(stable.toByteArray())
+        return "json-${digest.joinToString("") { "%02x".format(it) }.take(16)}"
+    }
+
+    private fun accountLabel(credentials: ImportedCodexCredentials, profileId: String): String =
+        credentials.email
+            ?: credentials.accountId?.let(::compactAccountLabel)
+            ?: "JSON account ${profileId.takeLast(6)}"
+
+    private fun isOfficialAuth(auth: JSONObject): Boolean =
+        auth.optString("auth_mode") == "chatgpt" &&
+            auth.optJSONObject("tokens")?.optString("refresh_token").isNullOrBlank().not()
 
     private fun parseRoots(payload: String): List<JSONObject>? {
         val value = runCatching { JSONObject(payload) }.getOrNull()
@@ -324,37 +605,50 @@ internal object CodexAuthJsonImporter {
         return output.toByteArray()
     }
 
-    private fun backupIfPresent(source: File, destination: File): Boolean {
-        if (!source.isFile) return false
-        source.copyTo(destination, overwrite = false)
-        securePermissions(destination)
-        return true
+    private fun createRollbackSnapshot(source: File, directory: File): RollbackSnapshot {
+        if (!source.isFile) return RollbackSnapshot(null, existedBefore = false)
+        val snapshot = File(
+            directory,
+            ".${source.name}.kite-rollback-${System.nanoTime()}.tmp",
+        )
+        secureCopy(source, snapshot)
+        return RollbackSnapshot(snapshot, existedBefore = true)
     }
 
-    private fun restoreAfterFailedImport(target: File, backup: File?, existedBefore: Boolean) {
+    private fun restoreAfterFailedImport(target: File, snapshot: RollbackSnapshot) {
         runCatching {
-            if (existedBefore && backup?.isFile == true) secureCopy(backup, target)
-            else if (!existedBefore && target.exists()) target.delete()
+            if (snapshot.existedBefore && snapshot.file?.isFile == true) {
+                secureCopy(snapshot.file, target)
+            } else if (!snapshot.existedBefore && target.exists()) {
+                target.delete()
+            }
         }
     }
 
     private fun atomicWrite(target: File, content: String) {
         target.parentFile?.mkdirs()
         val temporary = File(target.parentFile, ".${target.name}.${System.nanoTime()}.tmp")
-        temporary.writeText(content)
         try {
-            Files.move(
-                temporary.toPath(),
-                target.toPath(),
-                StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING,
-            )
-        } catch (_: Exception) {
-            Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            FileOutputStream(temporary).use { stream ->
+                stream.write(content.toByteArray(StandardCharsets.UTF_8))
+                stream.flush()
+                stream.fd.sync()
+            }
+            securePermissions(temporary)
+            try {
+                Files.move(
+                    temporary.toPath(),
+                    target.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: Exception) {
+                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            securePermissions(target)
         } finally {
             temporary.delete()
         }
-        securePermissions(target)
     }
 
     private fun secureCopy(source: File, destination: File) {
@@ -369,6 +663,15 @@ internal object CodexAuthJsonImporter {
         file.setExecutable(false, false)
         file.setReadable(true, true)
         file.setWritable(true, true)
+    }
+
+    private fun secureDirectory(directory: File) {
+        directory.setReadable(false, false)
+        directory.setWritable(false, false)
+        directory.setExecutable(false, false)
+        directory.setReadable(true, true)
+        directory.setWritable(true, true)
+        directory.setExecutable(true, true)
     }
 
     private fun isProviderSection(section: String, provider: String): Boolean {
@@ -389,11 +692,6 @@ internal object CodexAuthJsonImporter {
     private fun compactAccountLabel(accountId: String): String =
         if (accountId.length <= 12) accountId else "${accountId.take(6)}…${accountId.takeLast(4)}"
 
-    private fun timestampSuffix(now: Instant): String = now.toString()
-        .replace(":", "")
-        .replace("-", "")
-        .replace(".", "")
-
     internal data class ImportedCodexCredentials(
         val idToken: String,
         val accessToken: String,
@@ -402,6 +700,27 @@ internal object CodexAuthJsonImporter {
         val lastRefresh: String?,
         val email: String?,
     )
+
+    private data class StoredAccount(
+        val id: String,
+        val label: String,
+        val auth: JSONObject,
+    )
+
+    private data class RollbackSnapshot(
+        val file: File?,
+        val existedBefore: Boolean,
+    ) {
+        fun delete() {
+            file?.delete()
+        }
+    }
+
+    private class AccountStore(authFile: File) {
+        val directory = File(authFile.parentFile, ACCOUNT_STORE_DIRECTORY)
+        val accounts = File(directory, "accounts")
+        val state = File(directory, "state.json")
+    }
 
     private val SESSION_KEYS = setOf("session", "session_json", "sessionJson")
 }

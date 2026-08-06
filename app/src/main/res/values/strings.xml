@@ -9,9 +9,15 @@
     <string name="common_more">更多</string>
     <string name="common_cancel">取消</string>
     <string name="agent_codex_auth_import_title">导入 Codex JSON 认证</string>
-    <string name="agent_codex_auth_import_summary">支持官方 auth.json、CPA 单账号和 Sub2API accounts 导出；文件只在本机处理。</string>
-    <string name="agent_codex_auth_import_action">选择 JSON</string>
-    <string name="agent_codex_auth_import_success">Codex 认证已导入并激活；现有认证和配置已备份。</string>
+    <string name="agent_codex_auth_import_summary">支持官方、CPA、Sub2API 多账号导出；账号保存在当前容器并可随时切换。</string>
+    <string name="agent_codex_auth_import_action">导入账号</string>
+    <string name="agent_codex_auth_import_success">已导入 %1$d 个 Codex 账号并激活第一个账号。</string>
+    <string name="agent_codex_auth_manage_action">切换账号</string>
+    <string name="agent_codex_auth_manage_title">选择 Codex 账号</string>
+    <string name="agent_codex_auth_manage_empty">还没有已导入的 Codex 账号。</string>
+    <string name="agent_codex_auth_switch_success">已切换到 %1$s。</string>
+    <string name="agent_codex_auth_switch_failed">Codex 账号切换失败，请检查容器状态。</string>
+    <string name="agent_codex_auth_active_suffix">%1$s（当前）</string>
 
     <string name="settings_title">设置</string>
     <string name="settings_section_personalization">个性化</string>

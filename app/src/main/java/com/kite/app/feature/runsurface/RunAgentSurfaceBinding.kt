@@ -170,6 +170,7 @@ internal class RunAgentSurfaceBinding(
     private val agentConfigurationApi: AgentConfigurationApi,
     private val agentProviderCatalogApi: AgentProviderCatalogApi,
     private val agentSessionControlApi: AgentSessionControlApi = RuntimeBackedAgentSessionControlApi(),
+    private val onManageCodexAccounts: () -> Unit = {},
 ) : RunSurfaceBinding {
     private val isDark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
         Configuration.UI_MODE_NIGHT_YES
@@ -6373,19 +6374,40 @@ internal class RunAgentSurfaceBinding(
                 setPadding(0, ui.dp(4), ui.dp(10), 0)
             })
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(TextView(context).apply {
-            text = context.getString(R.string.agent_codex_auth_import_action)
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(
+                codexAuthCardAction(
+                    context.getString(R.string.agent_codex_auth_import_action),
+                    onPickCodexAuthJson,
+                ),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(40)),
+            )
+            addView(
+                codexAuthCardAction(
+                    context.getString(R.string.agent_codex_auth_manage_action),
+                    onManageCodexAccounts,
+                ),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(40)).apply {
+                    topMargin = ui.dp(8)
+                },
+            )
+        }, LinearLayout.LayoutParams(ui.dp(126), ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    private fun codexAuthCardAction(label: String, onClick: () -> Unit): TextView =
+        TextView(context).apply {
+            text = label
             textSize = 13.5f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(tokens.textPrimary)
-            setPadding(ui.dp(12), 0, ui.dp(12), 0)
+            setPadding(ui.dp(10), 0, ui.dp(10), 0)
             background = ui.roundedBox(agentSurface, tokens.border, ui.dp(16).toFloat(), ui.dp(1))
             isClickable = true
             isFocusable = true
-            setOnClickListener { onPickCodexAuthJson() }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(40)))
-    }
+            setOnClickListener { onClick() }
+        }
 
     fun refreshCodexOfficialAccountStatus() {
         officialAccountManager.refresh("codex", "chatgpt")

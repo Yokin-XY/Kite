@@ -54,6 +54,7 @@ class CodexAuthJsonImporterTest {
         )
 
         assertTrue(result.success)
+        assertEquals(1, result.importedAccountCount)
         assertTrue(result.authBackupCreated)
         assertTrue(result.configBackupCreated)
         val auth = JSONObject(File(codexDir, "auth.json").readText())
@@ -68,29 +69,38 @@ class CodexAuthJsonImporterTest {
     }
 
     @Test
-    fun `Sub2API accounts export is normalized from nested credentials`() {
+    fun `Sub2API accounts export stores every account and supports switching`() {
         val rootfs = temp.newFolder("sub2api-rootfs")
-        val idToken = jwt("""{"sub":"sub2api-user","email":"sub2api@example.test"}""")
+        val firstIdToken = jwt("""{"sub":"sub2api-user-1","email":"first@example.test"}""")
+        val secondIdToken = jwt("""{"sub":"sub2api-user-2","email":"second@example.test"}""")
         val payload = JSONObject()
             .put("exported_at", "2026-08-05T00:00:00Z")
             .put("proxies", JSONArray())
             .put(
                 "accounts",
-                JSONArray().put(
-                    JSONObject()
-                        .put("name", "sub2api-account")
-                        .put("type", "codex")
-                        .put(
+                JSONArray()
+                    .put(
+                        JSONObject().put(
                             "credentials",
                             JSONObject()
-                                .put("access_token", "access")
-                                .put("expires_at", "2026-08-06T00:00:00Z")
-                                .put("refresh_token", "refresh")
-                                .put("id_token", idToken)
-                                .put("email", "sub2api@example.test")
-                                .put("chatgpt_account_id", "sub2api-account-id"),
+                                .put("access_token", "access-1")
+                                .put("refresh_token", "refresh-1")
+                                .put("id_token", firstIdToken)
+                                .put("email", "first@example.test")
+                                .put("chatgpt_account_id", "sub2api-account-1"),
                         ),
-                ),
+                    )
+                    .put(
+                        JSONObject().put(
+                            "credentials",
+                            JSONObject()
+                                .put("access_token", "access-2")
+                                .put("refresh_token", "refresh-2")
+                                .put("id_token", secondIdToken)
+                                .put("email", "second@example.test")
+                                .put("chatgpt_account_id", "sub2api-account-2"),
+                        ),
+                    ),
             )
             .put("type", "sub2api")
             .put("version", 1)
@@ -99,9 +109,24 @@ class CodexAuthJsonImporterTest {
         val result = CodexAuthJsonImporter.importIntoRootfs(rootfs, payload)
 
         assertTrue(result.success)
-        assertEquals("sub2api@example.test", result.accountLabel)
+        assertEquals(2, result.importedAccountCount)
+        assertEquals("first@example.test", result.accountLabel)
         assertEquals(
-            "sub2api-account-id",
+            "sub2api-account-1",
+            JSONObject(File(rootfs, "root/.codex/auth.json").readText())
+                .getJSONObject("tokens")
+                .getString("account_id"),
+        )
+
+        val snapshot = CodexAuthJsonImporter.snapshotRootfs(rootfs)
+        assertEquals(2, snapshot.accounts.size)
+        val second = snapshot.accounts.single { it.label == "second@example.test" }
+        val switch = CodexAuthJsonImporter.activateAccountRootfs(rootfs, second.id)
+
+        assertTrue(switch.success)
+        assertEquals(second.id, switch.snapshot.activeAccountId)
+        assertEquals(
+            "sub2api-account-2",
             JSONObject(File(rootfs, "root/.codex/auth.json").readText())
                 .getJSONObject("tokens")
                 .getString("account_id"),

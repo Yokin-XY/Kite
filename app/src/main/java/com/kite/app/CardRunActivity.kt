@@ -16,6 +16,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.lifecycle.Lifecycle
@@ -136,7 +137,10 @@ class CardRunActivity : AppCompatActivity() {
             if (result.success) {
                 Toast.makeText(
                     this@CardRunActivity,
-                    getString(com.kite.app.R.string.agent_codex_auth_import_success),
+                    getString(
+                        com.kite.app.R.string.agent_codex_auth_import_success,
+                        result.importedAccountCount,
+                    ),
                     Toast.LENGTH_LONG,
                 ).show()
                 graph.agentOfficialAccountManager.refresh("codex", "chatgpt")
@@ -148,6 +152,59 @@ class CardRunActivity : AppCompatActivity() {
                     Toast.LENGTH_LONG,
                 ).show()
             }
+        }
+    }
+
+    private fun showCodexAccountSwitcher() {
+        lifecycleScope.launch {
+            val snapshot = withContext(Dispatchers.IO) {
+                CodexAuthJsonImporter.accountSnapshot(this@CardRunActivity)
+            }
+            if (snapshot.accounts.isEmpty()) {
+                Toast.makeText(
+                    this@CardRunActivity,
+                    getString(com.kite.app.R.string.agent_codex_auth_manage_empty),
+                    Toast.LENGTH_LONG,
+                ).show()
+                return@launch
+            }
+            val labels = snapshot.accounts.map { account ->
+                if (account.id == snapshot.activeAccountId) {
+                    getString(com.kite.app.R.string.agent_codex_auth_active_suffix, account.label)
+                } else {
+                    account.label
+                }
+            }.toTypedArray()
+            val selectedIndex = snapshot.accounts.indexOfFirst { it.id == snapshot.activeAccountId }
+            AlertDialog.Builder(this@CardRunActivity)
+                .setTitle(com.kite.app.R.string.agent_codex_auth_manage_title)
+                .setSingleChoiceItems(labels, selectedIndex) { dialog, index ->
+                    val selected = snapshot.accounts[index]
+                    dialog.dismiss()
+                    lifecycleScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            CodexAuthJsonImporter.activateAccount(
+                                this@CardRunActivity,
+                                selected.id,
+                            )
+                        }
+                        val message = if (result.success) {
+                            getString(
+                                com.kite.app.R.string.agent_codex_auth_switch_success,
+                                result.accountLabel ?: selected.label,
+                            )
+                        } else {
+                            getString(com.kite.app.R.string.agent_codex_auth_switch_failed)
+                        }
+                        Toast.makeText(this@CardRunActivity, message, Toast.LENGTH_LONG).show()
+                        if (result.success) {
+                            graph.agentOfficialAccountManager.refresh("codex", "chatgpt")
+                            agentSurfaceBinding?.refreshCodexOfficialAccountStatus()
+                        }
+                    }
+                }
+                .setNegativeButton(com.kite.app.R.string.common_cancel, null)
+                .show()
         }
     }
     private val backCallback = object : OnBackPressedCallback(true) {
@@ -447,6 +504,7 @@ class CardRunActivity : AppCompatActivity() {
             onPickCodexAuthJson = {
                 codexAuthJsonPicker.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
             },
+            onManageCodexAccounts = ::showCodexAccountSwitcher,
             agentRegistry = graph.agentRegistry,
             officialAccountManager = graph.agentOfficialAccountManager,
             agentConfigurationApi = graph.agentConfigurationApi,
