@@ -1,14 +1,18 @@
-name: 贡献方向说明与认领 / Contribution proposal and claim
-description: 在开始实现前公开说明并认领方向 / Describe and claim work before implementation
+name: 代码贡献方向与认领 / Code contribution proposal and claim
+description: 准备亲自实现时，公开机制并认领工作 / Disclose the mechanism and claim work you plan to implement
 title: "[共建] "
 labels: []
 body:
   - type: markdown
     attributes:
       value: |
-        感谢参与 Kite 共建。这个表单用于在写代码前公开消费场景、预期效果和实现机制，不是申请维护者批准。说明清楚后即可自行认领并从个人 Fork 开始实现；最终是否合并以 Pull Request 的代码、安全和验证审查为准。
+        感谢参与 Kite 共建。这个表单面向准备亲自提交代码、文档、测试或设计的贡献者。普通想法请先发到 [Ideas](https://github.com/Yokin-XY/Kite/discussions/categories/ideas)，使用问题请进入 [Q&A](https://github.com/Yokin-XY/Kite/discussions/categories/q-a)。
 
-        Thank you for contributing to Kite. Use this form to disclose the use case, expected outcome, and implementation mechanism before writing code. This is not a request for prior maintainer approval. Once the direction is clear, you may claim it and work in your fork. Merge decisions are made during Pull Request review.
+        这里用于在实现前公开消费场景、预期效果和实现机制，不是申请维护者批准。说明清楚后即可自行认领并从个人 Fork 开始实现；最终是否合并以 Pull Request 的代码、安全和验证审查为准。
+
+        This form is for contributors who plan to implement code, documentation, tests, or design. Share ordinary ideas in [Ideas](https://github.com/Yokin-XY/Kite/discussions/categories/ideas) and usage questions in [Q&A](https://github.com/Yokin-XY/Kite/discussions/categories/q-a).
+
+        Disclose the use case, expected outcome, and implementation mechanism before writing code. This is not a request for prior maintainer approval. Once the direction is clear, you may claim it and work in your fork. Merge decisions are made during Pull Request review.
 
         提交前请阅读 [参与开发](https://github.com/Yokin-XY/Kite/blob/main/CONTRIBUTING.md) / [Contributing Guide](https://github.com/Yokin-XY/Kite/blob/main/CONTRIBUTING.en.md)。资源安装、Shell/PRoot、Agent 进程、认证凭据、Android 权限、构建和发布链会进行额外安全审查。
 

@@ -8,7 +8,9 @@ Kite currently prioritizes stabilizing existing capabilities. Before making chan
 
 Kite welcomes problem reports, design discussions, documentation, tests, and code contributions. The default public collaboration model is `Fork + Pull Request`; ordinary contributions require no write access to the upstream repository.
 
-1. Before starting a new feature, fix, test, or documentation change, open or claim a public Issue. Existing tasks can be claimed without opening a duplicate.
+Share ordinary feature ideas, usage questions, and open conversation in [Discussions](https://github.com/Yokin-XY/Kite/discussions). Create a linked Issue once an idea has an actionable scope or someone plans to implement it; do not present an unresolved conversation as a development task.
+
+1. Before starting a new feature, fix, test, or documentation change, open or claim a public Issue. Existing tasks can be claimed without opening a duplicate, and work originating in a Discussion should link back to it.
 2. The Issue must state the real use case, expected outcome, implementation mechanism, scope, risk, and verification plan. Update the Issue before any material mechanism change so code review can compare the implementation with the disclosed approach.
 3. Opening an Issue is pre-implementation disclosure, not a request for maintainer approval. Once the direction is clear, contributors may claim it and implement it in their own forks. Maintainers and community members may point out duplication, conflicts, architecture boundaries, or security risk early.
 4. Each Pull Request must address one explainable behavior boundary and link to the corresponding Issue. Formal direction, provenance, dependency, permission, execution-surface, code, and verification review happens at the Pull Request stage. Automated checks do not replace human review.

@@ -1,0 +1,30 @@
+title: "[General] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        欢迎讨论 Kite 的使用体验、社区建设、兼容性观察和其他开放话题。明确的功能想法请使用 Ideas，可复现缺陷请使用 Bug Report。
+
+        Discuss Kite usage, community building, compatibility observations, and other open topics. Use Ideas for feature concepts and Bug Report for reproducible defects.
+
+  - type: textarea
+    id: topic
+    attributes:
+      label: 话题 / Topic
+      description: 你希望社区讨论什么？ / What would you like the community to discuss?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景 / Context
+      description: 提供理解这个话题所需的背景和你的当前判断。 / Provide the context and your current perspective.
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 希望获得的反馈 / Desired feedback
+      description: 希望其他成员补充事实、经验、方案还是决策意见？ / Are you looking for facts, experience, options, or decision input?

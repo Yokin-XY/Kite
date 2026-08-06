@@ -26,9 +26,11 @@ Latest Release 是已经锁定的正式产物；`main` 是下一版本的开发�
 
 ## 参与共建
 
-Kite 欢迎问题反馈、方案讨论、文档、测试和代码贡献。默认协作流程是：先通过 Issue 公开消费场景、预期效果和实现机制，再自行认领并在个人 Fork 中实现；Pull Request 经过自动检查、代码审查和必要的运行验证后，由维护方决定是否合并进入主线。
+Kite 欢迎问题反馈、方案讨论、文档、测试和代码贡献。普通交流、功能想法和使用帮助进入 [Discussions](https://github.com/Yokin-XY/Kite/discussions)；可复现 Bug、可执行任务和代码认领进入 [Issues](https://github.com/Yokin-XY/Kite/issues)；代码通过 Pull Request 接受正式审查。
 
-资源安装、Shell/PRoot、Agent 进程、认证凭据、Android 权限、构建和发布链属于高风险范围，会进行额外的来源与安全审查。完整流程见 [参与开发](CONTRIBUTING.md)（[English](CONTRIBUTING.en.md)），身份与权限见 [社区治理 / Community Governance](GOVERNANCE.md)；提交贡献前请阅读 [贡献者许可协议](CONTRIBUTOR_LICENSE_AGREEMENT.md)。
+准备亲自实现时，先通过 Issue 公开消费场景、预期效果和实现机制，再自行认领并在个人 Fork 中实现；Pull Request 经过自动检查、代码审查和必要的运行验证后，由维护方决定是否合并进入主线。
+
+资源安装、Shell/PRoot、Agent 进程、认证凭据、Android 权限、构建和发布链属于高风险范围，会进行额外的来源与安全审查。先看 [社区入口 / Community Hub](COMMUNITY.md)；完整流程见 [参与开发](CONTRIBUTING.md)（[English](CONTRIBUTING.en.md)），身份与权限见 [社区治理 / Community Governance](GOVERNANCE.md)；提交贡献前请阅读 [贡献者许可协议](CONTRIBUTOR_LICENSE_AGREEMENT.md)。
 
 ## 文档入口
 
@@ -43,6 +45,7 @@ Kite 欢迎问题反馈、方案讨论、文档、测试和代码贡献。默认
 | Recipe、资源清单和 Bridge 协议 | [参考文档](docs/README.md#协议参考) |
 | 参与开发和提交要求 | [参与开发](CONTRIBUTING.md) |
 | 社区身份、职责与权限 | [社区治理 / Community Governance](GOVERNANCE.md) |
+| 交流、支持、行为和安全入口 | [社区入口 / Community Hub](COMMUNITY.md) |
 
 详细内容由对应文档维护，根 README 只提供长期稳定的项目介绍和入口。
 

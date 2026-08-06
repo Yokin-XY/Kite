@@ -1,5 +1,14 @@
 blank_issues_enabled: false
 contact_links:
+  - name: 功能想法 / Feature ideas
+    url: https://github.com/Yokin-XY/Kite/discussions/categories/ideas
+    about: 讨论尚未形成实施任务的产品想法 / Discuss product ideas before they become implementation work
+  - name: 使用帮助 / Q&A
+    url: https://github.com/Yokin-XY/Kite/discussions/categories/q-a
+    about: 询问安装、使用和配置问题 / Ask installation, usage, and configuration questions
+  - name: 社区交流 / General discussion
+    url: https://github.com/Yokin-XY/Kite/discussions/categories/general
+    about: 不属于 Bug 或开发任务的开放交流 / Open conversation that is not a bug or implementation task
   - name: 近期任务与认领 / Current tasks and claims
     url: https://github.com/Yokin-XY/Kite/issues/10
     about: 查看近期可认领任务和协作边界 / Browse current claimable tasks and collaboration boundaries

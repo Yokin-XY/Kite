@@ -17,12 +17,20 @@ Kite 采用公开协作、事前说明、最小权限和职责分离的治理方
 
 ### 协作流程
 
-1. **说明或认领**：创建新的 `[共建]` Issue，或者认领已有 Issue。
-2. **公开方案**：说明消费场景、预期效果、实现机制、范围、风险和验证计划。
-3. **自行实现**：不需要等待事前批准，在个人 Fork 和独立分支中实现。
-4. **保持同步**：方案发生实质变化时，先更新 Issue；一个 Pull Request 只处理一个行为边界。
-5. **正式审查**：Pull Request 关联 Issue，并接受方向、架构、来源、安全、代码和验证审查。
-6. **合并与发布**：只有满足主线保护规则并由具备职责的维护者确认后才能合并；合并不等于立即发布。
+| 区域 | 用途 | 不用于 |
+| --- | --- | --- |
+| Discussions | 普通交流、Ideas、Q&A、经验展示和维护公告 | 代码准入和必须完成的开发任务 |
+| Issues | 可复现 Bug、已经收敛的需求、可执行任务与认领 | 没有边界的闲聊和敏感漏洞公开披露 |
+| Pull Requests | 代码、文档和配置的正式审查与合并 | 用代码代替事前需求与机制说明 |
+| Security | 漏洞私密报告和协调修复 | 普通使用问题和公开争论 |
+
+1. **讨论或反馈**：普通想法和问题进入 Discussion；可复现 Bug 使用 Bug Report。
+2. **形成工作**：想法具备消费场景和可执行范围后创建关联 Issue；已有任务可以直接认领。
+3. **公开方案**：准备实现的人说明预期效果、实现机制、范围、风险和验证计划。
+4. **自行实现**：不需要等待事前批准，在个人 Fork 和独立分支中实现。
+5. **保持同步**：方案发生实质变化时，先更新 Issue；一个 Pull Request 只处理一个行为边界。
+6. **正式审查**：Pull Request 关联 Issue，并接受方向、架构、来源、安全、代码和验证审查。
+7. **合并与发布**：只有满足主线保护规则并由具备职责的维护者确认后才能合并；合并不等于立即发布。
 
 ### 任务分类与状态
 
@@ -88,12 +96,20 @@ Kite uses public collaboration, pre-implementation disclosure, least privilege, 
 
 ### Collaboration flow
 
-1. **Describe or claim**: open a new `[共建]` Issue or claim an existing Issue.
-2. **Disclose the approach**: state the use case, expected outcome, implementation mechanism, scope, risk, and verification plan.
-3. **Implement independently**: no prior approval is required; work in a personal fork and dedicated branch.
-4. **Keep the proposal current**: update the Issue before material mechanism changes; keep one behavior boundary per Pull Request.
-5. **Formal review**: link the Pull Request to its Issue and complete direction, architecture, provenance, security, code, and verification review.
-6. **Merge and release**: changes merge only after branch protections and responsible maintainer review are satisfied; merge does not imply immediate release.
+| Area | Used for | Not used for |
+| --- | --- | --- |
+| Discussions | General conversation, Ideas, Q&A, show-and-tell, and maintainer announcements | Code admission or committed development tasks |
+| Issues | Reproducible bugs, scoped requirements, actionable tasks, and claims | Unscoped chat or public disclosure of sensitive vulnerabilities |
+| Pull Requests | Formal review and merge of code, documentation, and configuration | Replacing pre-implementation requirement and mechanism disclosure with code |
+| Security | Private vulnerability reports and coordinated fixes | Ordinary support questions or public debate |
+
+1. **Discuss or report**: use Discussions for ordinary ideas and questions, and Bug Report for reproducible defects.
+2. **Create actionable work**: open a linked Issue once an idea has a use case and actionable scope; existing tasks may be claimed directly.
+3. **Disclose the approach**: implementers state the expected outcome, mechanism, scope, risk, and verification plan.
+4. **Implement independently**: no prior approval is required; work in a personal fork and dedicated branch.
+5. **Keep the proposal current**: update the Issue before material mechanism changes; keep one behavior boundary per Pull Request.
+6. **Formal review**: link the Pull Request to its Issue and complete direction, architecture, provenance, security, code, and verification review.
+7. **Merge and release**: changes merge only after branch protections and responsible maintainer review are satisfied; merge does not imply immediate release.
 
 ### Task classification and status
 

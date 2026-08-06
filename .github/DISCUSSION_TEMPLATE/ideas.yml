@@ -1,0 +1,46 @@
+title: "[Idea] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这里用于讨论尚未形成开发任务的功能想法。普通用户不需要先设计代码机制；当有人准备实现时，再创建关联的代码贡献 Issue，补齐实现机制、范围、风险和验证计划。
+
+        Use this category for ideas that are not yet implementation tasks. Ordinary users do not need to design the code mechanism. When someone plans to implement the idea, create a linked code-contribution Issue with mechanism, scope, risk, and verification details.
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: 消费场景 / Use case
+      description: 谁在什么情况下遇到什么问题？ / Who encounters what problem, and when?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 希望得到的效果 / Desired outcome
+      description: 完成后用户能做什么？ / What should users be able to do afterward?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_flow
+    attributes:
+      label: 当前替代方式 / Current workaround
+      description: 现在如何处理？为什么不够好？ / How is this handled today, and why is it insufficient?
+
+  - type: textarea
+    id: mechanism
+    attributes:
+      label: 可选的实现想法 / Optional implementation idea
+      description: 如果你了解实现方式，可以说明；普通用户可以留空。 / Share a possible mechanism if known; ordinary users may leave this blank.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 发布确认 / Submission checks
+      options:
+        - label: 我已搜索现有 Discussions 和 Issues，未发现相同内容。 / I searched existing Discussions and Issues for duplicates.
+          required: true
+        - label: 内容不包含 Token、API Key、账号或隐私数据。 / This post contains no token, API key, account data, or private information.
+          required: true
