@@ -19,6 +19,13 @@ class AgentConfigAdapterRegistry(adapters: List<AgentConfigAdapter>) {
     fun adapterFor(registration: AgentRegistration): AgentConfigAdapter? =
         adapter(registration.configAdapterId)
 
+    /** 账号能力只从具体 Adapter 获取，页面不按 Agent 名称猜测原生凭据位置。 */
+    internal fun officialAccountAdapterFor(registration: AgentRegistration): com.kite.app.agent.sdk.account.AgentOfficialAccountAdapter? =
+        adapterFor(registration)
+            ?.let { adapter ->
+                (adapter as? AgentOfficialAccountAdapterProvider)?.officialAccountAdapter()
+            }
+
     fun adapterIds(): Set<String> = adaptersById.keys
 
     private companion object {

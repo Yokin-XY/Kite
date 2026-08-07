@@ -6,6 +6,7 @@ import com.kite.app.agent.config.AgentConfigApplyResult
 import com.kite.app.agent.config.AgentConfigCapabilities
 import com.kite.app.agent.config.AgentConfigReadResult
 import com.kite.app.agent.config.AgentConfigValidationProblem
+import com.kite.app.agent.config.AgentOfficialAccountAdapterProvider
 import com.kite.app.agent.config.AgentCredentialOwnership
 import com.kite.app.agent.config.AgentCredentialPresence
 import com.kite.app.agent.config.AgentLiveConfigSnapshot
@@ -59,14 +60,17 @@ internal class CodexAgentConfigAdapter(
     CONFIG_KEY,
     containerProvider,
     fileStore
-) {
+), AgentOfficialAccountAdapterProvider {
     private val skillDirectory = NativeAgentSkillDirectory(
         project = projection::resolve,
         roots = listOf(CODEX_SKILL_ROOT, AGENTS_SKILL_ROOT),
         mutableRoots = setOf(CODEX_SKILL_ROOT, AGENTS_SKILL_ROOT),
     )
+    private val officialAccountAdapter = CodexOfficialAccountAdapter(containerProvider, fileStore)
 
     override fun displayName(): String = "Codex"
+
+    override fun officialAccountAdapter() = officialAccountAdapter
 
     override fun reasoningControl(): AgentReasoningControl = codexReasoningControl
 
