@@ -38,17 +38,8 @@ import com.kite.app.agent.codex.codexPermissionOption
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentModelSource
-import com.kite.app.agent.sdk.account.AgentAccountCapabilities
-import com.kite.app.agent.sdk.account.AgentAccountCapability
-import com.kite.app.agent.sdk.account.AgentAccountCredentialReadResult
-import com.kite.app.agent.sdk.account.AgentAccountCredentialSnapshot
-import com.kite.app.agent.sdk.account.AgentAccountCredentialWriteResult
-import com.kite.app.agent.sdk.account.AgentAccountIdentity
-import com.kite.app.agent.sdk.account.AgentAccountIdentityResult
-import com.kite.app.agent.sdk.account.AgentOfficialAccountAdapter
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
-import org.json.JSONObject
 import org.tomlj.Toml
 import java.net.URI
 
@@ -69,79 +60,17 @@ internal class CodexAgentConfigAdapter(
     CONFIG_KEY,
     containerProvider,
     fileStore
-), AgentOfficialAccountAdapterProvider, AgentOfficialAccountAdapter {
+), AgentOfficialAccountAdapterProvider {
     private val skillDirectory = NativeAgentSkillDirectory(
         project = projection::resolve,
         roots = listOf(CODEX_SKILL_ROOT, AGENTS_SKILL_ROOT),
         mutableRoots = setOf(CODEX_SKILL_ROOT, AGENTS_SKILL_ROOT),
     )
+    private val officialAccountAdapter = CodexOfficialAccountAdapter(containerProvider, fileStore)
 
     override fun displayName(): String = "Codex"
 
-    override fun officialAccountAdapter(): AgentOfficialAccountAdapter = this
-
-    override fun accountCapabilities(): AgentAccountCapabilities = AgentAccountCapabilities(
-        supported = setOf(
-            AgentAccountCapability.SaveCurrent,
-            AgentAccountCapability.Switch,
-            AgentAccountCapability.Delete,
-            AgentAccountCapability.StableId,
-        ),
-    )
-
-    override suspend fun currentIdentity(agentId: String): AgentAccountIdentityResult = runCatching {
-        val bytes = readAuthBytes()
-            ?: return@runCatching AgentAccountIdentityResult.Unavailable("Codex 官方登录尚未生成原生凭据")
-        val accountId = codexAccountId(bytes)
-            ?: return@runCatching AgentAccountIdentityResult.Unavailable("Codex 没有提供稳定账号 ID")
-        codexIdentity(accountId).let(AgentAccountIdentityResult::Ready)
-    }.getOrElse { error ->
-        AgentAccountIdentityResult.Failed(error.message ?: "无法读取 Codex 官方账号状态")
-    }
-
-    override suspend fun captureCurrent(agentId: String): AgentAccountCredentialReadResult = runCatching {
-        val bytes = readAuthBytes()
-            ?: return@runCatching AgentAccountCredentialReadResult.Missing()
-        val accountId = codexAccountId(bytes)
-            ?: return@runCatching AgentAccountCredentialReadResult.Unavailable("Codex 凭据缺少稳定账号 ID")
-        AgentAccountCredentialReadResult.Ready(
-            snapshot = AgentAccountCredentialSnapshot(bytes.copyOf()),
-            identity = codexIdentity(accountId),
-        )
-    }.getOrElse { error ->
-        AgentAccountCredentialReadResult.Failed(error.message ?: "无法读取 Codex 官方凭据")
-    }
-
-    override suspend fun restoreCurrent(
-        agentId: String,
-        snapshot: AgentAccountCredentialSnapshot,
-    ): AgentAccountCredentialWriteResult {
-        val target = projection.resolve(AUTH_PATH)?.writeFile
-            ?: return AgentAccountCredentialWriteResult.Unavailable("Kite 运行容器尚未创建")
-        val before = runCatching { fileStore.read(target) }.getOrElse { error ->
-            return AgentAccountCredentialWriteResult.Failed(
-                error.message ?: "无法读取 Codex 原生凭据",
-                restored = false,
-            )
-        }
-        return when (
-            val result = fileStore.replace(
-                target = target,
-                expectedRevision = before.revision,
-                nextBytes = snapshot.bytes.copyOf(),
-                validate = ::validateAuthBytes,
-            )
-        ) {
-            is com.kite.app.agent.config.AtomicConfigFileWriteResult.Applied ->
-                AgentAccountCredentialWriteResult.Applied
-            is com.kite.app.agent.config.AtomicConfigFileWriteResult.Conflict ->
-                AgentAccountCredentialWriteResult.Failed("Codex 原生凭据在切换期间发生变化", restored = false)
-            is com.kite.app.agent.config.AtomicConfigFileWriteResult.Rejected ->
-                AgentAccountCredentialWriteResult.Failed(result.message, restored = false)
-            is com.kite.app.agent.config.AtomicConfigFileWriteResult.Failed ->
-                AgentAccountCredentialWriteResult.Failed(result.message, result.restored)
-        }
-    }
+    override fun officialAccountAdapter() = officialAccountAdapter
 
     override fun reasoningControl(): AgentReasoningControl = codexReasoningControl
 
@@ -570,42 +499,6 @@ internal class CodexAgentConfigAdapter(
         ?.trim()
         .orEmpty()
 
-    private fun readAuthBytes(): ByteArray? = projection.resolve(AUTH_PATH)
-        ?.readFile
-        ?.let(fileStore::read)
-        ?.bytes
-        ?.takeIf { it.isNotEmpty() }
-
-    private fun codexAccountId(bytes: ByteArray): String? = runCatching {
-        val root = JSONObject(bytes.toString(Charsets.UTF_8))
-        val tokens = root.optJSONObject("tokens")
-        listOf(
-            root.optString("account_id"),
-            root.optString("accountId"),
-            tokens?.optString("account_id").orEmpty(),
-            tokens?.optString("accountId").orEmpty(),
-            tokens?.optString("chatgpt_account_id").orEmpty(),
-        ).firstOrNull { value ->
-            value.isNotBlank() && value.length <= MAX_ACCOUNT_ID && value.none(Char::isISOControl)
-        }
-    }.getOrNull()
-
-    private fun validateAuthBytes(bytes: ByteArray): String? = runCatching {
-        require(bytes.isNotEmpty()) { "Codex 官方凭据不能为空" }
-        val root = JSONObject(bytes.toString(Charsets.UTF_8))
-        require(root.optJSONObject("tokens") != null) { "Codex 官方凭据格式无效" }
-        require(codexAccountId(bytes) != null) { "Codex 官方凭据缺少稳定账号 ID" }
-        null
-    }.getOrElse { error -> error.message ?: "Codex 官方凭据格式无效" }
-
-    private fun compactAccountId(accountId: String): String =
-        if (accountId.length <= 12) accountId else "${accountId.take(6)}…${accountId.takeLast(4)}"
-
-    private fun codexIdentity(accountId: String): AgentAccountIdentity = AgentAccountIdentity(
-        accountId = accountId,
-        displayName = "ChatGPT · ${compactAccountId(accountId)}",
-    )
-
     private fun codexSkillActivation(parsed: org.tomlj.TomlParseResult, path: String): AgentSkillActivation {
         val overrides = parsed.getArray("skills.config") ?: return AgentSkillActivation.Enabled
         repeat(overrides.size()) { index ->
@@ -666,7 +559,6 @@ internal class CodexAgentConfigAdapter(
         const val ADAPTER_ID = "codex"
         private const val CONFIG_KEY = "config"
         private const val CONFIG_PATH = "/root/.codex/config.toml"
-        private const val AUTH_PATH = "/root/.codex/auth.json"
         private const val RELAY_UPSTREAM_KEY = "relay-upstream"
         private const val RELAY_UPSTREAM_PATH = "/workspace/.kf/secrets/kite.codex-relay-upstream"
         private const val RELAY_API_KEY_KEY = "relay-api-key"
@@ -682,7 +574,6 @@ internal class CodexAgentConfigAdapter(
         private const val MAX_MCP_TEXT = 2_048
         private const val MAX_RELAY_UPSTREAM_BYTES = 4 * 1024
         private const val MAX_RELAY_API_KEY_BYTES = 64 * 1024
-        private const val MAX_ACCOUNT_ID = 256
         private val CODEX_PERMISSION_LEVELS = mapOf(
             "read-only" to AgentPermissionLevel.ReadOnly,
             "agent" to AgentPermissionLevel.Approval,
