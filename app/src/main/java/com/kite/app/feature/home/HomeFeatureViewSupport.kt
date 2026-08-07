@@ -49,7 +49,7 @@ internal class HomeFeatureViewFactory(
     internal val foundations: ThemeFoundations = KiteTheme.foundations,
     internal val components: ThemeComponentRecipes = KiteTheme.catalog.stylePacks.first().components,
     private val onOpenEditor: (String) -> Unit,
-    private val onPrimaryAction: (String) -> Unit
+    private val onPrimaryAction: (HomePrimaryActionTarget) -> Unit
 ) {
     private val ui = UiKit(context, tokens)
 
@@ -270,7 +270,7 @@ internal class HomeFeatureViewFactory(
             background = roundedBox(fill, fill, dp(16).toFloat())
             setOnClickListener(null)
             if (projection.primaryActionEnabled) {
-                setOnClickListener { onPrimaryAction(item.recipeId) }
+                setOnClickListener { onPrimaryAction(item.primaryTarget()) }
             }
         }
     }

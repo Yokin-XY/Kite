@@ -77,7 +77,11 @@ internal class AndroidRecipeActionGateway(
         )
     }
 
-    override fun stop(recipe: KiteRecipe, state: CardRunState): RunCommandResult {
+    override fun stop(
+        recipe: KiteRecipe,
+        state: CardRunState,
+        expectedGeneration: Long?
+    ): RunCommandResult {
         diagnostics.logBridgeEvent(
             "stop_orchestrator_request",
             recipe,
@@ -88,7 +92,7 @@ internal class AndroidRecipeActionGateway(
             )
         )
         return orchestrator.stop(
-            RunStopCommand(state.instanceId, state.createdAt)
+            RunStopCommand(state.instanceId, expectedGeneration ?: state.createdAt)
         ).also { result ->
             if (result is RunCommandResult.Ignored) {
                 diagnostics.logBridgeEvent(

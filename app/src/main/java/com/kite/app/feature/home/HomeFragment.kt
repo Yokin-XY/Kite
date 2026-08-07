@@ -123,10 +123,10 @@ internal class HomeFragment : Fragment() {
         }
     }
 
-    private fun submitPrimary(recipeId: String) {
-        screen?.acknowledge(recipeId)
+    private fun submitPrimary(target: HomePrimaryActionTarget) {
+        screen?.acknowledge(target.recipeId)
         viewLifecycleOwner.lifecycleScope.launch {
-            when (val effect = controller.dispatch(HomeFeatureAction.Primary(recipeId))) {
+            when (val effect = controller.dispatch(HomeFeatureAction.Primary(target))) {
                 is HomeFeatureEffect.ActionRequested ->
                     send(HomeFeatureResultContract.actionRequest(effect.request))
                 is HomeFeatureEffect.ActionUnavailable -> screen?.render(controller.state.value)

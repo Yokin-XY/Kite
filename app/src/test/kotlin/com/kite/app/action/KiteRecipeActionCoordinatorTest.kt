@@ -102,6 +102,27 @@ class KiteRecipeActionCoordinatorTest {
     }
 
     @Test
+    fun `显式启动遇到运行实例时只打开而不停止`() {
+        val plan = plan(KiteRecipeActionIntent.Start, CardRunStatus.Running)
+
+        assertEquals(KiteRecipeActionPlan.OpenRun, plan)
+    }
+
+    @Test
+    fun `显式启动需要独立实例时仍先启动同一任务`() {
+        val request = KiteRecipeActionRequest(
+            recipe = recipe,
+            intent = KiteRecipeActionIntent.Start,
+            source = KiteRecipeActionSource.ConsoleCard,
+            openTaskOnStart = true
+        )
+
+        val plan = coordinator.plan(request, state(CardRunStatus.Stopped), runtimeBlocked = false)
+
+        assertEquals(KiteRecipeActionPlan.LaunchTask, plan)
+    }
+
+    @Test
     fun `普通启动计划继续委托动作路由器`() {
         val plan = plan(KiteRecipeActionIntent.Start, CardRunStatus.Stopped)
 

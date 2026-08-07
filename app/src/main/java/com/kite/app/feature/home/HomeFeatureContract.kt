@@ -5,6 +5,7 @@ import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.run.CardRunState
 import com.kite.app.run.KiteCardRunUiProjection
+import com.kite.app.run.KiteRunPrimaryAction
 
 internal enum class HomeCatalogPhase {
     Idle,
@@ -20,7 +21,22 @@ internal data class HomeRecipeItemUiState(
     val runtimeBlocked: Boolean
 ) {
     val recipeId: String get() = recipe.id
+
+    fun primaryTarget(): HomePrimaryActionTarget = HomePrimaryActionTarget(
+        recipeId = recipeId,
+        action = projection.primaryAction,
+        instanceId = run.instanceId,
+        generation = run.createdAt
+    )
 }
+
+/** 固定用户实际看到并点击的主动作，避免下游按更晚状态把“启动”重新解释成“停止”。 */
+internal data class HomePrimaryActionTarget(
+    val recipeId: String,
+    val action: KiteRunPrimaryAction,
+    val instanceId: String,
+    val generation: Long
+)
 
 internal data class HomeFeatureUiState(
     val phase: HomeCatalogPhase = HomeCatalogPhase.Idle,
@@ -38,7 +54,7 @@ internal sealed interface HomeFeatureAction {
     data class Refresh(val forceCatalogRefresh: Boolean = false) : HomeFeatureAction
     data object ReconcileRuns : HomeFeatureAction
     data class SetRuntimeBlocked(val blocked: Boolean) : HomeFeatureAction
-    data class Primary(val recipeId: String) : HomeFeatureAction
+    data class Primary(val target: HomePrimaryActionTarget) : HomeFeatureAction
     data class CreateGroup(val name: String) : HomeFeatureAction
     data object RefreshExternalRecipes : HomeFeatureAction
 }

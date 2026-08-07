@@ -1496,7 +1496,8 @@ open class MainActivity : AppCompatActivity() {
                                 intent = request.intent,
                                 source = request.source,
                                 openTaskOnStart = request.openTaskOnStart,
-                                instanceId = request.instanceId
+                                instanceId = request.instanceId,
+                                expectedGeneration = request.expectedGeneration
                             )
                         )
                     }

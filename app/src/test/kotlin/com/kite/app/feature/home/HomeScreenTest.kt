@@ -26,14 +26,15 @@ import org.robolectric.RobolectricTestRunner
 class HomeScreenTest {
     @Test
     fun runFactChangeRebindsExistingActionView() {
-        val clicked = mutableListOf<String>()
+        val clicked = mutableListOf<HomePrimaryActionTarget>()
         val screen = screen(onPrimary = clicked::add)
         attach(screen)
         screen.render(state(CardRunStatus.Unknown))
         val initial = screen.actionViewForTest("tool")!!
 
         initial.performClick()
-        assertEquals(listOf("tool"), clicked)
+        assertEquals(listOf("tool"), clicked.map(HomePrimaryActionTarget::recipeId))
+        assertEquals(com.kite.app.run.KiteRunPrimaryAction.Start, clicked.single().action)
 
         screen.render(state(CardRunStatus.Running))
         val rebound = screen.actionViewForTest("tool")!!
@@ -182,7 +183,7 @@ class HomeScreenTest {
     }
 
     private fun screen(
-        onPrimary: (String) -> Unit = {},
+        onPrimary: (HomePrimaryActionTarget) -> Unit = {},
         initialSortMode: HomeSortMode = HomeSortMode.Default
     ): HomeScreen = HomeScreen(
         context = ContextThemeWrapper(

@@ -13,7 +13,8 @@ internal sealed interface HomeFeatureRequest {
         val intent: KiteRecipeActionIntent,
         val source: KiteRecipeActionSource,
         val openTaskOnStart: Boolean,
-        val instanceId: String?
+        val instanceId: String?,
+        val expectedGeneration: Long?
     ) : HomeFeatureRequest
 }
 
@@ -26,6 +27,7 @@ internal object HomeFeatureResultContract {
     private const val KEY_SOURCE = "source"
     private const val KEY_OPEN_TASK = "open_task"
     private const val KEY_INSTANCE_ID = "instance_id"
+    private const val KEY_EXPECTED_GENERATION = "expected_generation"
     private const val KIND_EDITOR = "editor"
     private const val KIND_ACTION = "action"
 
@@ -39,7 +41,8 @@ internal object HomeFeatureResultContract {
             intent = request.intent,
             source = request.source,
             openTaskOnStart = request.openTaskOnStart,
-            instanceId = request.instanceId
+            instanceId = request.instanceId,
+            expectedGeneration = request.expectedGeneration
         )
 
     fun parse(bundle: Bundle): HomeFeatureRequest? {
@@ -58,7 +61,9 @@ internal object HomeFeatureResultContract {
                     intent = intent,
                     source = source,
                     openTaskOnStart = bundle.getBoolean(KEY_OPEN_TASK),
-                    instanceId = bundle.getString(KEY_INSTANCE_ID)?.takeIf(String::isNotBlank)
+                    instanceId = bundle.getString(KEY_INSTANCE_ID)?.takeIf(String::isNotBlank),
+                    expectedGeneration = bundle.getLong(KEY_EXPECTED_GENERATION)
+                        .takeIf { bundle.containsKey(KEY_EXPECTED_GENERATION) && it > 0L }
                 )
             }
             else -> null
@@ -78,6 +83,9 @@ internal object HomeFeatureResultContract {
                 putString(KEY_SOURCE, request.source.name)
                 putBoolean(KEY_OPEN_TASK, request.openTaskOnStart)
                 request.instanceId?.let { putString(KEY_INSTANCE_ID, it) }
+                request.expectedGeneration?.takeIf { it > 0L }?.let {
+                    putLong(KEY_EXPECTED_GENERATION, it)
+                }
             }
         }
     }

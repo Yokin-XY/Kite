@@ -101,6 +101,50 @@ class RecipeActionWorkflowCoordinatorTest {
     }
 
     @Test
+    fun `home displayed start opens a run that became active without stopping it`() {
+        gateway.state = gateway.state.copy(status = CardRunStatus.Running)
+
+        val effects = dispatch(
+            intent = KiteRecipeActionIntent.Start,
+            source = KiteRecipeActionSource.ConsoleCard,
+            openTaskOnStart = true
+        )
+
+        assertEquals(emptyList<String>(), gateway.calls)
+        assertEquals(
+            listOf(
+                RecipeActionEffect.OpenRun(
+                    recipe.id,
+                    "instance-1",
+                    autoStart = false,
+                    generation = gateway.state.createdAt,
+                )
+            ),
+            effects
+        )
+    }
+
+    @Test
+    fun `stale home stop generation cannot stop the replacement run`() {
+        gateway.state = gateway.state.copy(status = CardRunStatus.Running, createdAt = 200L)
+
+        val effects = coordinator.dispatch(
+            KiteRecipeActionRequest(
+                recipe = recipe,
+                intent = KiteRecipeActionIntent.Stop,
+                source = KiteRecipeActionSource.ConsoleCard,
+                instanceId = "instance-1",
+                expectedGeneration = 100L
+            ),
+            runtimeBlocked = false,
+            focusedInstanceId = null
+        )
+
+        assertEquals(listOf("stop_rejected:instance-1@100"), gateway.calls)
+        assertEquals(emptyList<RecipeActionEffect>(), effects)
+    }
+
+    @Test
     fun `home launch task requests notifications without opening an unstarted run`() {
         gateway.startCommand = RunCommandResult.Ignored(RUN_NOTIFICATIONS_REQUIRED)
 
@@ -201,7 +245,15 @@ class RecipeActionWorkflowCoordinatorTest {
             )
         }
 
-        override fun stop(recipe: KiteRecipe, state: CardRunState): RunCommandResult {
+        override fun stop(
+            recipe: KiteRecipe,
+            state: CardRunState,
+            expectedGeneration: Long?
+        ): RunCommandResult {
+            if (expectedGeneration != null && expectedGeneration != state.createdAt) {
+                calls += "stop_rejected:${state.instanceId}@$expectedGeneration"
+                return RunCommandResult.Ignored("generation_mismatch")
+            }
             calls += "stop:${state.instanceId}"
             return RunCommandResult.Accepted(state.instanceId)
         }

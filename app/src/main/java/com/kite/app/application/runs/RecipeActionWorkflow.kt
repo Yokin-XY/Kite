@@ -42,7 +42,11 @@ internal interface RecipeActionGateway {
         preferredInstanceId: String?
     ): RecipeActionStartResult
 
-    fun stop(recipe: KiteRecipe, state: CardRunState): RunCommandResult
+    fun stop(
+        recipe: KiteRecipe,
+        state: CardRunState,
+        expectedGeneration: Long? = null
+    ): RunCommandResult
     fun markFailed(recipe: KiteRecipe, state: CardRunState, reason: String)
     fun logSubmit(request: KiteRecipeActionRequest, state: CardRunState)
 }
@@ -71,7 +75,7 @@ internal class RecipeActionWorkflowCoordinator(
                 )
             )
             KiteRecipeActionPlan.LaunchTask -> launchTask(request, state)
-            KiteRecipeActionPlan.Stop -> stopEffects(request.recipe, state)
+            KiteRecipeActionPlan.Stop -> stopEffects(request, state)
             is KiteRecipeActionPlan.Execute -> execute(request, state, plan.route)
         }
     }
@@ -99,7 +103,7 @@ internal class RecipeActionWorkflowCoordinator(
         state: CardRunState,
         route: KiteActionRoute
     ): List<RecipeActionEffect> = when (route) {
-        is KiteActionRoute.StopRecipe -> stopEffects(request.recipe, state)
+        is KiteActionRoute.StopRecipe -> stopEffects(request, state)
         is KiteActionRoute.RunRecipe -> {
             val started = gateway.start(route.recipe, state, request.instanceId)
             when (val command = started.command) {
@@ -127,10 +131,13 @@ internal class RecipeActionWorkflowCoordinator(
         }
     }
 
-    private fun stopEffects(recipe: KiteRecipe, state: CardRunState): List<RecipeActionEffect> =
-        when (gateway.stop(recipe, state)) {
+    private fun stopEffects(
+        request: KiteRecipeActionRequest,
+        state: CardRunState
+    ): List<RecipeActionEffect> =
+        when (gateway.stop(request.recipe, state, request.expectedGeneration)) {
             is RunCommandResult.Accepted -> listOf(
-                RecipeActionEffect.CloseRunTask(recipe.id, state.instanceId),
+                RecipeActionEffect.CloseRunTask(request.recipe.id, state.instanceId),
                 RecipeActionEffect.ShowConsole
             )
             is RunCommandResult.Ignored -> emptyList()

@@ -7,6 +7,7 @@ import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.run.CardRunState
 import com.kite.app.run.KiteCardRunUiProjector
+import com.kite.app.run.KiteRunPrimaryAction
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,7 +47,7 @@ internal class HomeFeatureController(
                     }
                     null
                 }
-                is HomeFeatureAction.Primary -> requestPrimary(action.recipeId)
+                is HomeFeatureAction.Primary -> requestPrimary(action.target)
                 is HomeFeatureAction.CreateGroup -> createGroup(action.name)
                 HomeFeatureAction.RefreshExternalRecipes -> refreshExternalRecipes()
             }
@@ -98,17 +99,41 @@ internal class HomeFeatureController(
         )
     }
 
-    private fun requestPrimary(recipeId: String): HomeFeatureEffect {
-        val item = mutableState.value.item(recipeId)
-            ?: return HomeFeatureEffect.ActionUnavailable(recipeId, "recipe_not_in_catalog")
+    private fun requestPrimary(target: HomePrimaryActionTarget): HomeFeatureEffect {
+        val item = mutableState.value.item(target.recipeId)
+            ?: return HomeFeatureEffect.ActionUnavailable(target.recipeId, "recipe_not_in_catalog")
         if (!item.projection.primaryActionEnabled) {
-            return HomeFeatureEffect.ActionUnavailable(recipeId, "action_busy")
+            return HomeFeatureEffect.ActionUnavailable(target.recipeId, "action_busy")
+        }
+        val intent = when (target.action) {
+            KiteRunPrimaryAction.Start,
+            KiteRunPrimaryAction.Retry -> KiteRecipeActionIntent.Start
+            KiteRunPrimaryAction.Stop,
+            KiteRunPrimaryAction.ContinueStop -> KiteRecipeActionIntent.Stop
+            KiteRunPrimaryAction.Busy,
+            KiteRunPrimaryAction.Blocked ->
+                return HomeFeatureEffect.ActionUnavailable(target.recipeId, "action_busy")
+        }
+        val targetsExactRun = intent == KiteRecipeActionIntent.Stop
+        if (
+            targetsExactRun && (
+                item.run.instanceId != target.instanceId ||
+                    item.run.createdAt != target.generation ||
+                    item.projection.primaryAction !in setOf(
+                        KiteRunPrimaryAction.Stop,
+                        KiteRunPrimaryAction.ContinueStop
+                    )
+                )
+        ) {
+            return HomeFeatureEffect.ActionUnavailable(target.recipeId, "run_changed")
         }
         return HomeFeatureEffect.ActionRequested(
             KiteRecipeActionRequest(
                 recipe = item.recipe,
-                intent = KiteRecipeActionIntent.Primary,
+                intent = intent,
                 source = KiteRecipeActionSource.ConsoleCard,
+                instanceId = target.instanceId.takeIf { targetsExactRun },
+                expectedGeneration = target.generation.takeIf { targetsExactRun },
                 openTaskOnStart = item.recipe.launch.openInstance
             )
         )

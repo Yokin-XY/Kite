@@ -24,6 +24,7 @@ internal data class KiteRecipeActionRequest(
     val intent: KiteRecipeActionIntent,
     val source: KiteRecipeActionSource,
     val instanceId: String? = null,
+    val expectedGeneration: Long? = null,
     val openTaskOnStart: Boolean = false
 )
 
@@ -73,6 +74,7 @@ internal class KiteRecipeActionCoordinator(
                 runtimeBlocked -> KiteRecipeActionPlan.RuntimeRequired
                 state.status == CardRunStatus.CleanupPending -> KiteRecipeActionPlan.OpenRun
                 state.isInterruptible() || state.hasRunBinding() -> KiteRecipeActionPlan.OpenRun
+                request.openTaskOnStart -> KiteRecipeActionPlan.LaunchTask
                 else -> KiteRecipeActionPlan.Execute(
                     router.route(request.recipe, KiteRecipe.ACTION_START)
                 )

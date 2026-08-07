@@ -63,18 +63,88 @@ class HomeFeatureControllerTest {
     }
 
     @Test
-    fun `首页主动作只提交稳定请求且保留独立运行窗口语义`() = runTest {
+    fun `首页显示启动时只提交显式启动且不绑定旧实例`() = runTest {
         val gateway = FakeGateway()
         val controller = HomeFeatureController(gateway, initiallyBlocksUbuntuActions = false)
         controller.dispatch(HomeFeatureAction.Refresh())
+        val target = controller.state.value.item("tool")!!.primaryTarget()
 
-        val effect = controller.dispatch(HomeFeatureAction.Primary("tool"))
+        val effect = controller.dispatch(HomeFeatureAction.Primary(target))
             as HomeFeatureEffect.ActionRequested
 
-        assertEquals(KiteRecipeActionIntent.Primary, effect.request.intent)
+        assertEquals(KiteRecipeActionIntent.Start, effect.request.intent)
         assertEquals(KiteRecipeActionSource.ConsoleCard, effect.request.source)
         assertTrue(effect.request.openTaskOnStart)
         assertEquals("tool", effect.request.recipe.id)
+        assertEquals(null, effect.request.instanceId)
+        assertEquals(null, effect.request.expectedGeneration)
+    }
+
+    @Test
+    fun `首页显示停止时提交同一实例与代次的显式停止`() = runTest {
+        val running = CardRunState(
+            instanceId = "run-tool",
+            recipeId = "tool",
+            status = CardRunStatus.Running,
+            createdAt = 1234L
+        )
+        val gateway = FakeGateway().apply { runs["tool"] = running }
+        val controller = HomeFeatureController(gateway, initiallyBlocksUbuntuActions = false)
+        controller.dispatch(HomeFeatureAction.Refresh())
+
+        val effect = controller.dispatch(
+            HomeFeatureAction.Primary(controller.state.value.item("tool")!!.primaryTarget())
+        ) as HomeFeatureEffect.ActionRequested
+
+        assertEquals(KiteRecipeActionIntent.Stop, effect.request.intent)
+        assertEquals("run-tool", effect.request.instanceId)
+        assertEquals(1234L, effect.request.expectedGeneration)
+    }
+
+    @Test
+    fun `返回首页遇到停止中实例时投影为不可操作且拒绝动作`() = runTest {
+        val gateway = FakeGateway().apply {
+            runs["tool"] = CardRunState(
+                instanceId = "run-tool",
+                recipeId = "tool",
+                status = CardRunStatus.Stopping,
+                createdAt = 1234L
+            )
+        }
+        val controller = HomeFeatureController(gateway, initiallyBlocksUbuntuActions = false)
+
+        controller.dispatch(HomeFeatureAction.Refresh())
+
+        val item = controller.state.value.item("tool")!!
+        assertEquals(KiteRunPrimaryAction.Busy, item.projection.primaryAction)
+        assertFalse(item.projection.primaryActionEnabled)
+        assertEquals(
+            HomeFeatureEffect.ActionUnavailable("tool", "action_busy"),
+            controller.dispatch(HomeFeatureAction.Primary(item.primaryTarget()))
+        )
+    }
+
+    @Test
+    fun `旧代次停止按钮不能命中新代运行实例`() = runTest {
+        val gateway = FakeGateway().apply {
+            runs["tool"] = CardRunState(
+                instanceId = "run-tool",
+                recipeId = "tool",
+                status = CardRunStatus.Running,
+                createdAt = 100L
+            )
+        }
+        val controller = HomeFeatureController(gateway, initiallyBlocksUbuntuActions = false)
+        controller.dispatch(HomeFeatureAction.Refresh())
+        val staleTarget = controller.state.value.item("tool")!!.primaryTarget()
+        gateway.runs["tool"] = gateway.runs.getValue("tool").copy(createdAt = 200L)
+        controller.dispatch(HomeFeatureAction.ReconcileRuns)
+
+        assertEquals(
+            HomeFeatureEffect.ActionUnavailable("tool", "run_changed"),
+            controller.dispatch(HomeFeatureAction.Primary(staleTarget))
+        )
+        assertEquals(200L, controller.state.value.item("tool")!!.run.createdAt)
     }
 
     @Test

@@ -18,7 +18,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.withContext
@@ -45,12 +44,7 @@ internal class AndroidRecipeFeatureGateway(
     private var cachedRecipes: List<KiteRecipe>? = null
 
     override val changes: Flow<RecipeFeatureChange> = merge(
-        CardRunStore.runs.drop(1).map { runs ->
-            RecipeFeatureChange(
-                reason = "card_run_state",
-                affectedRecipeIds = runs.map(CardRunState::recipeId).toSet()
-            )
-        },
+        CardRunStore.runs.asRecipeFeatureChanges(),
         mutationChanges.asSharedFlow()
     )
 
@@ -238,4 +232,12 @@ internal class AndroidRecipeFeatureGateway(
         private const val KEY_EDITOR_ICON_COLLECTION = "recipe_icon_collection"
         private const val MAX_EDITOR_ICON_BYTES = 5 * 1024 * 1024
     }
+}
+
+/** StateFlow 的首个值就是当前事实；返回首页时必须消费，不能把它当成旧事件丢弃。 */
+internal fun Flow<List<CardRunState>>.asRecipeFeatureChanges(): Flow<RecipeFeatureChange> = map { runs ->
+    RecipeFeatureChange(
+        reason = "card_run_state",
+        affectedRecipeIds = runs.map(CardRunState::recipeId).toSet()
+    )
 }

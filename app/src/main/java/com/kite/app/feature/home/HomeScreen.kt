@@ -53,7 +53,7 @@ internal class HomeScreen(
     initialSearchQuery: String,
     initialSortMode: HomeSortMode,
     private val onOpenEditor: (String) -> Unit,
-    private val onPrimaryAction: (String) -> Unit,
+    private val onPrimaryAction: (HomePrimaryActionTarget) -> Unit,
     private val onCreateGroup: () -> Unit,
     private val onExternalRefresh: () -> Unit,
     private val onRetry: () -> Unit
