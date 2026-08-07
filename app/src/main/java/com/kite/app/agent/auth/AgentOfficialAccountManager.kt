@@ -323,15 +323,8 @@ internal class AgentOfficialAccountManager(
         ) {
             return AgentOfficialAccountOperationResult.Unsupported("当前 Agent 不支持保存官方账号")
         }
-        val identity = when (val result = adapter.currentIdentity(agentId)) {
-            is AgentAccountIdentityResult.Ready -> result.identity
-            is AgentAccountIdentityResult.Unavailable ->
-                return AgentOfficialAccountOperationResult.Failed(result.message)
-            is AgentAccountIdentityResult.Failed ->
-                return AgentOfficialAccountOperationResult.Failed(result.message)
-        }
-        val credential = when (val result = adapter.captureCurrent(agentId)) {
-            is AgentAccountCredentialReadResult.Ready -> result.snapshot
+        val captured = when (val result = adapter.captureCurrent(agentId)) {
+            is AgentAccountCredentialReadResult.Ready -> result
             is AgentAccountCredentialReadResult.Missing ->
                 return AgentOfficialAccountOperationResult.Failed(result.message)
             is AgentAccountCredentialReadResult.Unavailable ->
@@ -339,6 +332,8 @@ internal class AgentOfficialAccountManager(
             is AgentAccountCredentialReadResult.Failed ->
                 return AgentOfficialAccountOperationResult.Failed(result.message)
         }
+        val identity = captured.identity
+        val credential = captured.snapshot
         val existing = savedAccounts(agentId).firstOrNull { it.accountId == identity.accountId }
             ?: withContext(storageDispatcher) { vault.account(agentId, identity.accountId) }
         val now = System.currentTimeMillis()
@@ -372,17 +367,48 @@ internal class AgentOfficialAccountManager(
         }
         val target = withContext(storageDispatcher) { vault.account(agentId, targetAccountId) }
             ?: return AgentOfficialAccountOperationResult.Failed("目标账号档案不存在")
-        val targetCredential = withContext(storageDispatcher) {
-            vault.credential(agentId, targetAccountId)
-        } ?: return AgentOfficialAccountOperationResult.Failed("目标账号凭据不可用")
-        val before = when (val result = adapter.captureCurrent(agentId)) {
-            is AgentAccountCredentialReadResult.Ready -> result.snapshot
+        val captured = when (val result = adapter.captureCurrent(agentId)) {
+            is AgentAccountCredentialReadResult.Ready -> result
             is AgentAccountCredentialReadResult.Missing ->
                 return AgentOfficialAccountOperationResult.Failed("切换前无法取得当前凭据，已停止切换")
             is AgentAccountCredentialReadResult.Unavailable ->
                 return AgentOfficialAccountOperationResult.Failed(result.message)
             is AgentAccountCredentialReadResult.Failed ->
                 return AgentOfficialAccountOperationResult.Failed(result.message)
+        }
+        val before = captured.snapshot
+        val currentIdentity = captured.identity
+        val targetCredential = withContext(storageDispatcher) {
+            vault.credential(agentId, targetAccountId)
+        } ?: return AgentOfficialAccountOperationResult.Failed("目标账号凭据不可用")
+        val currentSaved = withContext(storageDispatcher) {
+            vault.account(agentId, currentIdentity.accountId)
+        }
+        if (currentSaved != null) {
+            try {
+                withContext(storageDispatcher) { vault.save(currentSaved, before) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                return AgentOfficialAccountOperationResult.Failed(
+                    "无法更新当前账号最新凭据，已停止切换",
+                    restored = true,
+                )
+            }
+        }
+        if (currentIdentity.accountId == targetAccountId) {
+            return try {
+                withContext(storageDispatcher) { vault.markCurrent(agentId, targetAccountId) }
+                updateSavedCache(agentId)
+                AgentOfficialAccountOperationResult.Switched(target)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                AgentOfficialAccountOperationResult.Failed(
+                    "无法同步当前账号档案",
+                    restored = true,
+                )
+            }
         }
         var nativeChanged = false
         return try {

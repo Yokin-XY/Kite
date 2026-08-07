@@ -94,10 +94,7 @@ internal class CodexAgentConfigAdapter(
             ?: return@runCatching AgentAccountIdentityResult.Unavailable("Codex 官方登录尚未生成原生凭据")
         val accountId = codexAccountId(bytes)
             ?: return@runCatching AgentAccountIdentityResult.Unavailable("Codex 没有提供稳定账号 ID")
-        AgentAccountIdentity(
-            accountId = accountId,
-            displayName = "ChatGPT · ${compactAccountId(accountId)}",
-        ).let(AgentAccountIdentityResult::Ready)
+        codexIdentity(accountId).let(AgentAccountIdentityResult::Ready)
     }.getOrElse { error ->
         AgentAccountIdentityResult.Failed(error.message ?: "无法读取 Codex 官方账号状态")
     }
@@ -105,10 +102,12 @@ internal class CodexAgentConfigAdapter(
     override suspend fun captureCurrent(agentId: String): AgentAccountCredentialReadResult = runCatching {
         val bytes = readAuthBytes()
             ?: return@runCatching AgentAccountCredentialReadResult.Missing()
-        if (codexAccountId(bytes) == null) {
-            return@runCatching AgentAccountCredentialReadResult.Unavailable("Codex 凭据缺少稳定账号 ID")
-        }
-        AgentAccountCredentialReadResult.Ready(AgentAccountCredentialSnapshot(bytes.copyOf()))
+        val accountId = codexAccountId(bytes)
+            ?: return@runCatching AgentAccountCredentialReadResult.Unavailable("Codex 凭据缺少稳定账号 ID")
+        AgentAccountCredentialReadResult.Ready(
+            snapshot = AgentAccountCredentialSnapshot(bytes.copyOf()),
+            identity = codexIdentity(accountId),
+        )
     }.getOrElse { error ->
         AgentAccountCredentialReadResult.Failed(error.message ?: "无法读取 Codex 官方凭据")
     }
@@ -601,6 +600,11 @@ internal class CodexAgentConfigAdapter(
 
     private fun compactAccountId(accountId: String): String =
         if (accountId.length <= 12) accountId else "${accountId.take(6)}…${accountId.takeLast(4)}"
+
+    private fun codexIdentity(accountId: String): AgentAccountIdentity = AgentAccountIdentity(
+        accountId = accountId,
+        displayName = "ChatGPT · ${compactAccountId(accountId)}",
+    )
 
     private fun codexSkillActivation(parsed: org.tomlj.TomlParseResult, path: String): AgentSkillActivation {
         val overrides = parsed.getArray("skills.config") ?: return AgentSkillActivation.Enabled

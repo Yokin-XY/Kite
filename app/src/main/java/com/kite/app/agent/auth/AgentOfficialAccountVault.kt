@@ -132,7 +132,7 @@ internal class AndroidAgentOfficialAccountVault(context: Context) : AgentOfficia
             if (updated == 0) {
                 insertOrThrow(TABLE_ACCOUNTS, null, metadata)
             }
-            insertWithOnConflict(
+            val credentialRow = insertWithOnConflict(
                 TABLE_CREDENTIALS,
                 null,
                 ContentValues().apply {
@@ -142,6 +142,7 @@ internal class AndroidAgentOfficialAccountVault(context: Context) : AgentOfficia
                 },
                 SQLiteDatabase.CONFLICT_REPLACE,
             )
+            check(credentialRow != -1L) { "无法保存账号加密凭据" }
         }
     }
 
@@ -163,7 +164,7 @@ internal class AndroidAgentOfficialAccountVault(context: Context) : AgentOfficia
 
     override fun markCurrent(agentId: String, accountId: String) {
         database.writableDatabase.runInTransaction {
-            insertWithOnConflict(
+            val currentRow = insertWithOnConflict(
                 TABLE_CURRENT,
                 null,
                 ContentValues().apply {
@@ -172,6 +173,7 @@ internal class AndroidAgentOfficialAccountVault(context: Context) : AgentOfficia
                 },
                 SQLiteDatabase.CONFLICT_REPLACE,
             )
+            check(currentRow != -1L) { "无法更新当前账号档案" }
             execSQL(
                 "UPDATE $TABLE_ACCOUNTS SET $COL_LAST_USED_AT = ? WHERE $COL_AGENT_ID = ? AND $COL_ACCOUNT_ID = ?",
                 arrayOf<Any?>(System.currentTimeMillis(), agentId, accountId),

@@ -39,7 +39,11 @@ internal sealed interface AgentAccountIdentityResult {
 }
 
 internal sealed interface AgentAccountCredentialReadResult {
-    data class Ready(val snapshot: AgentAccountCredentialSnapshot) : AgentAccountCredentialReadResult
+    /** 身份与凭据必须来自同一次原生快照，避免账号在两次读取之间变化。 */
+    data class Ready(
+        val snapshot: AgentAccountCredentialSnapshot,
+        val identity: AgentAccountIdentity,
+    ) : AgentAccountCredentialReadResult
     data class Missing(val message: String = "当前 Agent 没有可保存的官方凭据") : AgentAccountCredentialReadResult
     data class Unavailable(val message: String) : AgentAccountCredentialReadResult
     data class Failed(val message: String) : AgentAccountCredentialReadResult
