@@ -8,6 +8,7 @@ import com.kite.app.action.KiteRecipeActionCoordinator
 import com.kite.app.agent.registration.KiteAgentRegistry
 import com.kite.app.agent.registration.KiteCustomAgentRegistrationStore
 import com.kite.app.agent.auth.AgentOfficialAccountManager
+import com.kite.app.agent.auth.AndroidAgentOfficialAccountVault
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.AdapterBackedAgentConfigurationApi
 import com.kite.app.agent.config.defaultAgentConfigAdapters
@@ -199,7 +200,13 @@ internal class KiteAppGraph private constructor(context: Context) {
             commandRunner = AndroidAgentOfficialAccountCommandRunner(
                 context = appContext,
                 openExternal = { url -> AndroidExternalBrowserLauncher.open(appContext, url) }
-            )
+            ),
+            accountAdapterResolver = { agentId ->
+                agentRegistry.snapshot().entry(agentId)?.registration?.let { registration ->
+                    agentConfigAdapterRegistry.officialAccountAdapterFor(registration)
+                }
+            },
+            vault = AndroidAgentOfficialAccountVault(appContext),
         )
     }
     val recipeLoader: KiteRecipeLoader by lazy { KiteRecipeLoader(appContext, diagnostics) }

@@ -105,8 +105,11 @@ import com.kite.app.agent.registration.AgentRegistryEntry
 import com.kite.app.agent.registration.AgentRegistrySnapshot
 import com.kite.app.agent.registration.AgentRuntimeStatus
 import com.kite.app.agent.registration.KiteAgentRegistry
+import com.kite.app.agent.auth.AgentOfficialAccountOperationResult
 import com.kite.app.agent.auth.AgentOfficialAccountManager
+import com.kite.app.agent.auth.AgentSavedOfficialAccount
 import com.kite.app.agent.auth.AgentOfficialAccountStatus
+import com.kite.app.agent.sdk.account.AgentAccountCapability
 import com.kite.app.agent.runtime.AgentDraftCapabilityCatalog
 import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
@@ -151,6 +154,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -3684,11 +3688,26 @@ internal class RunAgentSurfaceBinding(
         if (officialAccountObservedAgentId != targetAgentId) {
             officialAccountObservation?.cancel()
             officialAccountObservedAgentId = targetAgentId
-            var previous = officialAccountManager.states.value.filterKeys { it.agentId == targetAgentId }
+            officialAccountManager.loadSavedAccounts(targetAgentId)
+            var previous = Triple(
+                officialAccountManager.states.value.filterKeys { it.agentId == targetAgentId },
+                officialAccountManager.savedAccounts.value[targetAgentId].orEmpty(),
+                officialAccountManager.currentAccountIds.value[targetAgentId],
+            )
             officialAccountObservation = lifecycleOwner.lifecycleScope.launch {
                 lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    officialAccountManager.states.collect { allStates ->
-                        val relevant = allStates.filterKeys { it.agentId == targetAgentId }
+                    combine(
+                        officialAccountManager.states,
+                        officialAccountManager.savedAccounts,
+                        officialAccountManager.currentAccountIds,
+                    ) { allStates, allSaved, allCurrent ->
+                        Triple(
+                            allStates.filterKeys { it.agentId == targetAgentId },
+                            allSaved[targetAgentId].orEmpty(),
+                            allCurrent[targetAgentId],
+                        )
+                    }.collect { (relevantStates, relevantSaved, relevantCurrent) ->
+                        val relevant = Triple(relevantStates, relevantSaved, relevantCurrent)
                         if (relevant == previous) return@collect
                         previous = relevant
                         if (
@@ -6300,45 +6319,181 @@ internal class RunAgentSurfaceBinding(
         agentId: String,
         account: com.kite.app.agent.registration.AgentOfficialAccountSpec,
         status: AgentOfficialAccountStatus,
-    ): TextView = TextView(context).apply {
-        text = when (status) {
-            AgentOfficialAccountStatus.Checking -> "检查中"
-            AgentOfficialAccountStatus.SigningIn -> "取消"
-            AgentOfficialAccountStatus.CancellingLogin -> "取消中"
-            AgentOfficialAccountStatus.SigningOut -> "退出中"
-            AgentOfficialAccountStatus.LoggedIn -> if (account.logout != null) "退出" else "已登录"
-            AgentOfficialAccountStatus.Unknown,
-            AgentOfficialAccountStatus.Unverified,
-            AgentOfficialAccountStatus.LoggedOut,
-            AgentOfficialAccountStatus.Failed -> "登录"
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+
+        fun actionButton(
+            label: String,
+            enabled: Boolean = true,
+            onClick: () -> Unit,
+        ): TextView = TextView(context).apply {
+            text = label
+            textSize = 14f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(tokens.textPrimary)
+            setPadding(ui.dp(13), 0, ui.dp(13), 0)
+            background = ui.roundedBox(
+                agentSurface,
+                tokens.border,
+                ui.dp(18).toFloat(),
+                ui.dp(1),
+            )
+            isEnabled = enabled
+            alpha = if (enabled) 1f else 0.55f
+            isClickable = enabled
+            isFocusable = enabled
+            setOnClickListener { onClick() }
         }
-        textSize = 14f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        gravity = Gravity.CENTER
-        setTextColor(tokens.textPrimary)
-        setPadding(ui.dp(13), 0, ui.dp(13), 0)
-        background = ui.roundedBox(
-            agentSurface,
-            tokens.border,
-            ui.dp(18).toFloat(),
-            ui.dp(1),
-        )
+
         val pending = status in setOf(
             AgentOfficialAccountStatus.Checking,
             AgentOfficialAccountStatus.CancellingLogin,
             AgentOfficialAccountStatus.SigningOut,
+            AgentOfficialAccountStatus.Saving,
+            AgentOfficialAccountStatus.Switching,
+            AgentOfficialAccountStatus.Deleting,
         )
-        isEnabled = !pending && (status != AgentOfficialAccountStatus.LoggedIn || account.logout != null)
-        alpha = if (isEnabled) 1f else 0.55f
-        isClickable = isEnabled
-        isFocusable = isEnabled
-        setOnClickListener {
-            when (status) {
-                AgentOfficialAccountStatus.SigningIn -> officialAccountManager.cancelLogin(agentId, account.id)
-                AgentOfficialAccountStatus.LoggedIn -> officialAccountManager.logout(agentId, account.id)
-                else -> officialAccountManager.login(agentId, account.id)
-            }
+        val primaryEnabled = !pending && (status != AgentOfficialAccountStatus.LoggedIn || account.logout != null)
+        addView(
+            actionButton(
+                label = when (status) {
+                    AgentOfficialAccountStatus.Checking -> "检查中"
+                    AgentOfficialAccountStatus.SigningIn -> "取消"
+                    AgentOfficialAccountStatus.CancellingLogin -> "取消中"
+                    AgentOfficialAccountStatus.SigningOut -> "退出中"
+                    AgentOfficialAccountStatus.Saving -> "保存中"
+                    AgentOfficialAccountStatus.Switching -> "切换中"
+                    AgentOfficialAccountStatus.Deleting -> "删除中"
+                    AgentOfficialAccountStatus.LoggedIn -> if (account.logout != null) "退出" else "已登录"
+                    AgentOfficialAccountStatus.Unknown,
+                    AgentOfficialAccountStatus.Unverified,
+                    AgentOfficialAccountStatus.LoggedOut,
+                    AgentOfficialAccountStatus.Failed -> "登录"
+                },
+                enabled = primaryEnabled,
+            ) {
+                when (status) {
+                    AgentOfficialAccountStatus.SigningIn -> officialAccountManager.cancelLogin(agentId, account.id)
+                    AgentOfficialAccountStatus.LoggedIn -> officialAccountManager.logout(agentId, account.id)
+                    else -> officialAccountManager.login(agentId, account.id)
+                }
+            },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36)),
+        )
+
+        val capabilities = officialAccountManager.accountCapabilities(agentId)
+        val savedAccounts = officialAccountManager.savedAccounts(agentId)
+        if (status == AgentOfficialAccountStatus.LoggedIn &&
+            capabilities?.supports(AgentAccountCapability.SaveCurrent) == true
+        ) {
+            addView(
+                actionButton("保存", enabled = !pending) {
+                    officialAccountManager.saveCurrent(agentId, account.id) { result ->
+                        lifecycleOwner.lifecycleScope.launch {
+                            Toast.makeText(context, result.accountOperationMessage(), Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36)).apply {
+                    marginStart = ui.dp(6)
+                },
+            )
         }
+        if (savedAccounts.isNotEmpty() &&
+            capabilities?.supports(AgentAccountCapability.Switch) == true
+        ) {
+            addView(
+                actionButton("账号", enabled = !pending) {
+                    showSavedOfficialAccounts(agentId, account)
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36)).apply {
+                    marginStart = ui.dp(6)
+                },
+            )
+        }
+    }
+
+    private fun AgentOfficialAccountOperationResult.accountOperationMessage(): String = when (this) {
+        is AgentOfficialAccountOperationResult.Saved -> "已保存 ${account.displayName}"
+        is AgentOfficialAccountOperationResult.Switched -> "已切换到 ${account.displayName}"
+        AgentOfficialAccountOperationResult.Deleted -> "已删除账号档案"
+        is AgentOfficialAccountOperationResult.Unsupported -> message
+        is AgentOfficialAccountOperationResult.Failed -> if (restored) {
+            "$message，已回滚"
+        } else {
+            message
+        }
+    }
+
+    private fun showSavedOfficialAccounts(
+        agentId: String,
+        loginAccount: AgentOfficialAccountSpec,
+    ) {
+        val accounts = officialAccountManager.savedAccounts(agentId)
+        if (accounts.isEmpty()) {
+            Toast.makeText(context, "还没有保存的官方账号", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val currentId = officialAccountManager.currentSavedAccountId(agentId)
+        showAgentChoiceCard(
+            title = "官方账号",
+            message = "账号由 Agent 官方登录流程生成；选择一个档案后可以切换或删除。",
+            actions = accounts.map { saved ->
+                AgentChoiceAction(
+                    label = saved.displayName,
+                    selected = saved.accountId == currentId,
+                    onClick = { showSavedOfficialAccountActions(agentId, loginAccount, saved) },
+                )
+            },
+        )
+    }
+
+    private fun showSavedOfficialAccountActions(
+        agentId: String,
+        loginAccount: AgentOfficialAccountSpec,
+        saved: AgentSavedOfficialAccount,
+    ) {
+        val currentId = officialAccountManager.currentSavedAccountId(agentId)
+        val isCurrent = currentId == saved.accountId
+        showAgentDialogCard(
+            title = saved.displayName,
+            message = if (isCurrent) {
+                "这是当前 Agent 正在使用的账号。请先切换到其他账号后再删除。"
+            } else {
+                "切换会先保存当前 Agent 的最新原生凭据；验证失败时会自动回滚。"
+            },
+            actions = listOf(
+                AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
+                AgentDialogAction("切换", UiActionRole.Primary, enabled = !isCurrent) { dialog, _ ->
+                    dialog.dismiss()
+                    officialAccountManager.switchTo(agentId, loginAccount.id, saved.accountId) { result ->
+                        lifecycleOwner.lifecycleScope.launch {
+                            Toast.makeText(context, result.accountOperationMessage(), Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                AgentDialogAction("删除", UiActionRole.Danger, enabled = !isCurrent) { dialog, _ ->
+                    dialog.dismiss()
+                    showAgentDialogCard(
+                        title = "删除账号档案？",
+                        message = "只会删除 Kite 保存的加密档案，不会读取或导出 Token。",
+                        actions = listOf(
+                            AgentDialogAction("取消", UiActionRole.Secondary) { confirm, _ -> confirm.dismiss() },
+                            AgentDialogAction("删除", UiActionRole.Danger) { confirm, _ ->
+                                confirm.dismiss()
+                                officialAccountManager.deleteSaved(agentId, loginAccount.id, saved.accountId) { result ->
+                                    lifecycleOwner.lifecycleScope.launch {
+                                        Toast.makeText(context, result.accountOperationMessage(), Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                        ),
+                    )
+                },
+            ),
+        )
     }
 
     private fun AgentOfficialAccountStatus.officialAccountLabel(): String = when (this) {
@@ -6350,6 +6505,9 @@ internal class RunAgentSurfaceBinding(
         AgentOfficialAccountStatus.SigningIn -> "等待浏览器确认"
         AgentOfficialAccountStatus.CancellingLogin -> "正在结束登录"
         AgentOfficialAccountStatus.SigningOut -> "正在退出"
+        AgentOfficialAccountStatus.Saving -> "正在保存账号"
+        AgentOfficialAccountStatus.Switching -> "正在切换账号"
+        AgentOfficialAccountStatus.Deleting -> "正在删除账号"
         AgentOfficialAccountStatus.Failed -> "状态未知"
     }
 
