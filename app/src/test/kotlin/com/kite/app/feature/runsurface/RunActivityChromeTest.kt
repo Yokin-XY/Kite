@@ -51,11 +51,14 @@ class RunActivityChromeTest {
         val firstTapAt = SystemClock.uptimeMillis()
 
         assertEquals(View.VISIBLE, fixture.chrome.handleForTesting().visibility)
+        assertFalse(fixture.chrome.overviewCreatedForTesting())
         dispatchTap(fixture.chrome.handleForTesting(), firstTapAt)
         dispatchTap(fixture.chrome.handleForTesting(), firstTapAt + 100L)
 
         assertEquals(listOf("toggle-toolbar", "toggle-toolbar"), fixture.actionLog)
+        assertTrue(fixture.chrome.overviewCreatedForTesting())
         assertTrue(fixture.chrome.overviewVisibleForTesting())
+        assertNotNull(fixture.chrome.root.findByText("Agent 会话"))
     }
 
     @Test

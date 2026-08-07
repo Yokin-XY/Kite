@@ -972,14 +972,19 @@ class AgentSurfaceNavigationPolicyTest {
             ),
         )
 
+        assertEquals(Triple(false, false, false), binding.deferredNavigationViewsForTesting())
+
         binding.showSessionDrawerForTesting()
+        assertEquals(Triple(true, false, false), binding.deferredNavigationViewsForTesting())
         binding.showSessionSearchForTesting()
+        assertEquals(Triple(true, true, false), binding.deferredNavigationViewsForTesting())
 
         assertEquals("SessionSearch", binding.navigationScreenForTesting())
         assertTrue(binding.handleBack())
         assertEquals("Drawer", binding.navigationScreenForTesting())
 
         binding.showSettingsForTesting(returnToDrawer = true)
+        assertEquals(Triple(true, true, true), binding.deferredNavigationViewsForTesting())
 
         assertTrue(binding.handleBack())
         assertEquals("Drawer", binding.navigationScreenForTesting())

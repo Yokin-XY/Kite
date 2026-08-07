@@ -113,6 +113,7 @@ import com.kite.app.foundation.runtime.RuntimeAutomationActions
 import com.kite.app.foundation.runtime.RuntimeHealthStore
 import com.kite.app.foundation.runtime.RuntimeReclaimer
 import com.kite.app.application.runs.CardRunSpecialRecipes
+import com.kite.app.feature.runsurface.AgentSurfaceWarmup
 import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.runtime.TerminalSessionStore
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
@@ -674,7 +675,10 @@ open class MainActivity : AppCompatActivity() {
             AppDestination.Console -> resumeConsoleSurface()
             else -> Unit
         }
-        rootHost.post { StartupTraceStore.markReady(applicationContext) }
+        rootHost.post {
+            StartupTraceStore.markReady(applicationContext)
+            AgentSurfaceWarmup.schedule(applicationContext)
+        }
     }
 
     override fun onPause() {

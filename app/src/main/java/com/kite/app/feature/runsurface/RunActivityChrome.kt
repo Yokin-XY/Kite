@@ -31,13 +31,14 @@ internal data class RunActivityChromeActions(
 
 /** 实例外壳只拥有竖条和窗口总览；各显示面的操作栏由显示面自己管理。 */
 internal class RunActivityChrome(
-    context: Context,
+    private val context: Context,
     private val tokens: ThemeTokens,
     private val actions: RunActivityChromeActions
 ) {
     private val ui = UiKit(context, tokens)
-    private val overview: RunWindowOverviewScreen
     private val handle: View
+    private var overview: RunWindowOverviewScreen? = null
+    private var latestState: RunSurfaceUiState? = null
 
     val root: FrameLayout = FrameLayout(context).apply {
         isClickable = false
@@ -58,54 +59,65 @@ internal class RunActivityChrome(
             }
         )
 
-        overview = RunWindowOverviewScreen(
-            context = context,
-            tokens = tokens,
-            onSelectWindow = actions.onSelectWindow,
-            onRestartWindow = actions.onRestartWindow,
-            onCloseWindow = actions.onCloseWindow,
-            onOpenWeb = actions.onOpenWeb,
-            onOpenTerminal = actions.onOpenTerminal,
-            onCloseInstance = actions.onCloseInstance
-        )
-        root.addView(
-            overview.root,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
     }
 
     fun render(state: RunSurfaceUiState) {
+        latestState = state
         handle.visibility = View.VISIBLE
-        overview.render(state)
+        overview?.render(state)
     }
 
     fun setChromeVisible(visible: Boolean) {
         root.visibility = if (visible) View.VISIBLE else View.GONE
     }
 
-    fun handleBack(): Boolean = overview.handleBack()
+    fun handleBack(): Boolean = overview?.handleBack() == true
 
     fun dispose() {
-        overview.dispose()
+        overview?.dispose()
+        overview = null
+        latestState = null
         root.removeAllViews()
     }
 
-    internal fun overviewVisibleForTesting(): Boolean = overview.root.visibility == View.VISIBLE
+    internal fun overviewVisibleForTesting(): Boolean = overview?.root?.visibility == View.VISIBLE
+
+    internal fun overviewCreatedForTesting(): Boolean = overview != null
 
     internal fun handleForTesting(): View = handle
 
     internal fun showOverview() {
-        overview.show()
+        val nextOverview = overview ?: createOverview().also { created ->
+            overview = created
+            root.addView(
+                created.root,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+        latestState?.let(nextOverview::render)
+        nextOverview.show()
     }
 
     private fun showOverviewFromDoubleTap() {
         // 第一次抬手已经即时执行单击；双击成立时再切一次，恢复双击前的工具栏状态。
         actions.onToggleSurfaceToolbar()
-        overview.show()
+        showOverview()
     }
+
+    /** 窗口总览是用户显式打开的浮层，首个显示面只保留最新投影，不预建其 View 树。 */
+    private fun createOverview(): RunWindowOverviewScreen = RunWindowOverviewScreen(
+        context = context,
+        tokens = tokens,
+        onSelectWindow = actions.onSelectWindow,
+        onRestartWindow = actions.onRestartWindow,
+        onCloseWindow = actions.onCloseWindow,
+        onOpenWeb = actions.onOpenWeb,
+        onOpenTerminal = actions.onOpenTerminal,
+        onCloseInstance = actions.onCloseInstance
+    )
 
     private fun sideHandle(
         onSingleTap: () -> Unit,

@@ -180,10 +180,10 @@ internal class RunAgentSurfaceBinding(
     private val ui = UiKit(context, this.tokens)
     private val selectionPalette = AgentSelectionVisualPolicy.palette(isDark)
     private val skillChipPalette = AgentSkillChipVisualPolicy.palette(isDark)
-    private val sessionMetadataStore = AgentSessionMetadataStore(context)
+    private val sessionMetadataStore by lazy(LazyThreadSafetyMode.NONE) { AgentSessionMetadataStore(context) }
     private val draftCapabilityCacheStore = AgentDraftCapabilityCacheStore(context)
     private val modelLibraryStore = AgentModelLibraryStore(context)
-    private val projectStore = AgentProjectStore(context)
+    private val projectStore by lazy(LazyThreadSafetyMode.NONE) { AgentProjectStore(context) }
     private val agentPageBackground = this.tokens.pageBackground
     private val agentSurface = this.tokens.surface
     private val agentInputBackground = this.tokens.inputBackground
@@ -219,23 +219,33 @@ internal class RunAgentSurfaceBinding(
     )
     private val adapter = ConversationAdapter(context, tokens, lifecycleOwner.lifecycleScope)
     private val navigationHost = FrameLayout(context)
-    private val drawerList = RecyclerView(context)
-    private val drawerStatusText = TextView(context)
-    private val drawerAdapter = AgentSessionDrawerAdapter(
-        context = context,
-        tokens = this.tokens,
-        onSessionClick = ::loadDrawerSession,
-        onSessionMenu = ::showSessionMenu,
-        onProjectToggle = ::toggleDrawerProject,
-        onProjectMenu = ::showProjectMenu,
-        onAction = ::handleDrawerAction
-    )
-    private val sessionSearchInput = EditText(context)
-    private val sessionSearchList = RecyclerView(context)
-    private val sessionSearchStatusText = TextView(context)
-    private val sessionSearchAdapter = AgentSessionAdapter(context, tokens, ::loadDrawerSession)
-    private val settingsContentHost = LinearLayout(context)
-    private val persistentConfigSettingsHost = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    // 抽屉、搜索和设置不是 Agent 首个可见 surface 的组成部分；仅在用户进入相应子页时构造。
+    private val drawerListDelegate = lazy(LazyThreadSafetyMode.NONE) { RecyclerView(context) }
+    private val drawerList by drawerListDelegate
+    private val drawerStatusText by lazy(LazyThreadSafetyMode.NONE) { TextView(context) }
+    private val drawerAdapter by lazy(LazyThreadSafetyMode.NONE) {
+        AgentSessionDrawerAdapter(
+            context = context,
+            tokens = this.tokens,
+            onSessionClick = ::loadDrawerSession,
+            onSessionMenu = ::showSessionMenu,
+            onProjectToggle = ::toggleDrawerProject,
+            onProjectMenu = ::showProjectMenu,
+            onAction = ::handleDrawerAction
+        )
+    }
+    private val sessionSearchInputDelegate = lazy(LazyThreadSafetyMode.NONE) { EditText(context) }
+    private val sessionSearchInput by sessionSearchInputDelegate
+    private val sessionSearchList by lazy(LazyThreadSafetyMode.NONE) { RecyclerView(context) }
+    private val sessionSearchStatusText by lazy(LazyThreadSafetyMode.NONE) { TextView(context) }
+    private val sessionSearchAdapter by lazy(LazyThreadSafetyMode.NONE) {
+        AgentSessionAdapter(context, tokens, ::loadDrawerSession)
+    }
+    private val settingsContentHostDelegate = lazy(LazyThreadSafetyMode.NONE) { LinearLayout(context) }
+    private val settingsContentHost by settingsContentHostDelegate
+    private val persistentConfigSettingsHost by lazy(LazyThreadSafetyMode.NONE) {
+        LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    }
     private val sessionDrawerView: View by lazy(LazyThreadSafetyMode.NONE, ::buildSessionDrawer)
     private val sessionSearchPageView: View by lazy(LazyThreadSafetyMode.NONE, ::buildSessionSearchPage)
     private val settingsPageView: View by lazy(LazyThreadSafetyMode.NONE, ::buildSettingsPage)
@@ -553,6 +563,12 @@ internal class RunAgentSurfaceBinding(
     internal fun showSessionSearchForTesting() = showSessionSearch()
 
     internal fun showSettingsForTesting(returnToDrawer: Boolean) = showAgentSettings(returnToDrawer)
+
+    internal fun deferredNavigationViewsForTesting(): Triple<Boolean, Boolean, Boolean> = Triple(
+        drawerListDelegate.isInitialized(),
+        sessionSearchInputDelegate.isInitialized(),
+        settingsContentHostDelegate.isInitialized(),
+    )
 
     internal fun navigationScreenForTesting(): String = navigationScreen.name
 
