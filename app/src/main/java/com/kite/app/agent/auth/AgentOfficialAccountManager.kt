@@ -468,6 +468,16 @@ internal class AgentOfficialAccountManager(
         ) {
             return AgentOfficialAccountOperationResult.Unsupported("当前 Agent 未声明账号档案管理能力")
         }
+        val actualCurrent = when (val identity = adapter.currentIdentity(agentId)) {
+            is AgentAccountIdentityResult.Ready -> identity.identity.accountId
+            is AgentAccountIdentityResult.Unavailable,
+            is AgentAccountIdentityResult.Failed -> null
+        }
+        if (actualCurrent == targetAccountId) {
+            withContext(storageDispatcher) { vault.markCurrent(agentId, targetAccountId) }
+            updateSavedCache(agentId)
+            return AgentOfficialAccountOperationResult.Failed("当前账号不能直接删除，请先切换到其他账号")
+        }
         val existing = withContext(storageDispatcher) { vault.account(agentId, targetAccountId) }
             ?: return AgentOfficialAccountOperationResult.Failed("账号档案不存在")
         withContext(storageDispatcher) { vault.remove(existing.agentId, existing.accountId) }

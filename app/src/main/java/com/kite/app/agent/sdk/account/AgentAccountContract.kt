@@ -63,6 +63,7 @@ internal interface AgentOfficialAccountAdapter {
 
     fun accountCapabilities(): AgentAccountCapabilities
 
+    /** 只读取 Agent 本地原生状态；账号管理操作不得借此发起联网验证。 */
     suspend fun currentIdentity(agentId: String): AgentAccountIdentityResult
 
     suspend fun captureCurrent(agentId: String): AgentAccountCredentialReadResult

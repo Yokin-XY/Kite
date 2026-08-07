@@ -256,6 +256,36 @@ class AgentOfficialAccountManagerTest {
         assertEquals(listOf("first"), vault.accounts(AGENT_ID).map { it.accountId })
     }
 
+    @Test
+    fun `原生账号变化后不能依赖过期标记删除真实当前档案`() = runTest {
+        val dispatcher = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler)
+        val vault = MemoryOfficialAccountVault()
+        val adapter = FakeOfficialAccountAdapter()
+        val manager = AgentOfficialAccountManager(
+            scope = this,
+            registry = registry(),
+            commandRunner = { AgentOfficialAccountCommandResult(0, "Logged in") },
+            accountAdapterResolver = { adapter },
+            vault = vault,
+            storageDispatcher = dispatcher,
+        )
+        manager.saveCurrent(AGENT_ID, ACCOUNT_ID)
+        advanceUntilIdle()
+        adapter.useAccount("second")
+        manager.saveCurrent(AGENT_ID, ACCOUNT_ID)
+        advanceUntilIdle()
+        assertEquals("second", vault.currentAccountId(AGENT_ID))
+
+        adapter.useAccount("first", "refreshed")
+        val results = mutableListOf<AgentOfficialAccountOperationResult>()
+        manager.deleteSaved(AGENT_ID, ACCOUNT_ID, "first") { results += it }
+        advanceUntilIdle()
+
+        assertTrue(results.last() is AgentOfficialAccountOperationResult.Failed)
+        assertEquals(listOf("first", "second"), vault.accounts(AGENT_ID).map { it.accountId }.sorted())
+        assertEquals("first", vault.currentAccountId(AGENT_ID))
+    }
+
     private fun registry(): KiteAgentRegistry {
         val context = ApplicationProvider.getApplicationContext<Context>()
         return KiteAgentRegistry(
