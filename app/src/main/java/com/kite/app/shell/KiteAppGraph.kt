@@ -99,7 +99,8 @@ import kotlinx.coroutines.launch
  */
 internal class KiteAppGraph private constructor(context: Context) {
     private val appContext = context.applicationContext
-    private val processScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    internal val processJob = SupervisorJob()
+    private val processScope = CoroutineScope(processJob + Dispatchers.IO)
     @Volatile
     private var agentCatalogPreloadJob: Job? = null
 
@@ -292,6 +293,7 @@ internal class KiteAppGraph private constructor(context: Context) {
     val runNotificationCoordinator: AndroidRunNotificationCoordinator by lazy {
         AndroidRunNotificationCoordinator(
             context = appContext,
+            scope = processScope,
             recipeResolver = ::resolveRecipe,
             restartRecipeResolver = ::resolveLatestRecipe,
             completeStep = { command -> runOrchestrator.completeStep(command) },
@@ -472,6 +474,10 @@ internal class KiteAppGraph private constructor(context: Context) {
     private fun resolveLatestRecipe(recipeId: String): KiteRecipe? =
         recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
 
+    private fun belongsTo(applicationContext: Context): Boolean = appContext === applicationContext
+
+    private fun cancelProcess(): Job = processJob.also { it.cancel() }
+
     companion object {
         private const val TAG = "KiteAppGraph"
         private val INSTALL_WIZARD_ENDED_STATUSES = setOf(
@@ -485,9 +491,30 @@ internal class KiteAppGraph private constructor(context: Context) {
         @Volatile
         private var instance: KiteAppGraph? = null
 
-        fun from(context: Context): KiteAppGraph =
-            instance ?: synchronized(this) {
-                instance ?: KiteAppGraph(context).also { instance = it }
+        fun from(context: Context): KiteAppGraph {
+            val applicationContext = context.applicationContext
+            instance?.takeIf { it.belongsTo(applicationContext) }?.let { return it }
+
+            var replaced: KiteAppGraph? = null
+            val resolved = synchronized(this) {
+                instance?.takeIf { it.belongsTo(applicationContext) }
+                    ?: KiteAppGraph(applicationContext).also { created ->
+                        replaced = instance
+                        instance = created
+                    }
             }
+            replaced?.cancelProcess()
+            return resolved
+        }
+
+        fun release(context: Context): Job? {
+            val applicationContext = context.applicationContext
+            val released = synchronized(this) {
+                instance
+                    ?.takeIf { it.belongsTo(applicationContext) }
+                    ?.also { instance = null }
+            }
+            return released?.cancelProcess()
+        }
     }
 }

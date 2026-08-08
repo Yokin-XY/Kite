@@ -20,8 +20,6 @@ import com.kite.app.recipe.KiteRecipe
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStore
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -61,6 +59,7 @@ internal fun interface RunNotificationViewBinder {
 /** 每实例通知的进程级投影器。它不保存运行事实，只持有已发布 tag 和短期动作反馈。 */
 internal class AndroidRunNotificationCoordinator(
     context: Context,
+    private val scope: CoroutineScope,
     private val recipeResolver: (String) -> KiteRecipe?,
     private val restartRecipeResolver: (String) -> KiteRecipe?,
     private val completeStep: (RunStepCompletionCommand) -> RunCommandResult,
@@ -75,7 +74,6 @@ internal class AndroidRunNotificationCoordinator(
     private val appContext = context.applicationContext
     private val manager = NotificationManagerCompat.from(appContext)
     private val dismissalStore = RunNotificationDismissalStore(appContext)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val publishedInstances = linkedSetOf<String>()
     private val pendingActions = mutableMapOf<String, PendingPresentation>()
     private val _requirement = MutableStateFlow<RunNotificationRequirement?>(null)
@@ -101,34 +99,33 @@ internal class AndroidRunNotificationCoordinator(
     }
 
     fun handleCompletion(command: RunStepCompletionCommand, onFinished: () -> Unit = {}) {
-        scope.launch {
+        launchAction(onFinished) {
             var ownsPending = false
             try {
                 val resolved = resolveExact(command.instanceId, command.expectedGeneration)
-                    ?: return@launch refresh()
+                    ?: return@launchAction refresh()
                 val (recipe, state) = resolved
                 val action = RunNotificationProjector.project(recipe, state)
                     ?.expandedActions
                     ?.filterIsInstance<RunNotificationAction.CompleteStep>()
                     ?.firstOrNull { it.command == command }
-                    ?: return@launch refresh()
-                if (!beginPending(state, "正在处理当前步骤")) return@launch
+                    ?: return@launchAction refresh()
+                if (!beginPending(state, "正在处理当前步骤")) return@launchAction
                 ownsPending = true
                 publishPending(recipe, state)
                 val result = completeStep(action.command)
                 if (result is RunCommandResult.Ignored) publishIgnored(state.instanceId, result.reason)
             } finally {
                 if (ownsPending) endPending(command.instanceId)
-                onFinished()
             }
         }
     }
 
     fun handleClose(instanceId: String, generation: Long, onFinished: () -> Unit = {}) {
-        scope.launch {
+        launchAction(onFinished) {
             var ownsPending = false
             try {
-                val resolved = resolveExact(instanceId, generation) ?: return@launch refresh()
+                val resolved = resolveExact(instanceId, generation) ?: return@launchAction refresh()
                 val (recipe, state) = resolved
                 val allowed = RunNotificationProjector.project(recipe, state)
                     ?.expandedActions
@@ -137,7 +134,7 @@ internal class AndroidRunNotificationCoordinator(
                             action.instanceId == instanceId &&
                             action.expectedGeneration == generation
                 } == true
-                if (!allowed || !beginPending(state, "正在关闭")) return@launch refresh()
+                if (!allowed || !beginPending(state, "正在关闭")) return@launchAction refresh()
                 ownsPending = true
                 publishPending(recipe, state)
                 val result = closeRun(recipe, state)
@@ -148,7 +145,6 @@ internal class AndroidRunNotificationCoordinator(
                 }
             } finally {
                 if (ownsPending) endPending(instanceId)
-                onFinished()
             }
         }
     }
@@ -159,12 +155,12 @@ internal class AndroidRunNotificationCoordinator(
         generation: Long,
         onFinished: () -> Unit = {}
     ) {
-        scope.launch {
+        launchAction(onFinished) {
             var ownsPending = false
             try {
-                val resolved = resolveExact(instanceId, generation) ?: return@launch refresh()
+                val resolved = resolveExact(instanceId, generation) ?: return@launchAction refresh()
                 val (recipe, state) = resolved
-                if (recipe.id != recipeId) return@launch refresh()
+                if (recipe.id != recipeId) return@launchAction refresh()
                 val allowed = RunNotificationProjector.project(recipe, state)
                     ?.expandedActions
                     ?.any { action ->
@@ -173,8 +169,8 @@ internal class AndroidRunNotificationCoordinator(
                             action.instanceId == instanceId &&
                         action.expectedGeneration == generation
                     } == true
-                val restartRecipe = restartRecipeResolver(recipeId) ?: return@launch refresh()
-                if (!allowed || !beginPending(state, "正在启动")) return@launch refresh()
+                val restartRecipe = restartRecipeResolver(recipeId) ?: return@launchAction refresh()
+                if (!allowed || !beginPending(state, "正在启动")) return@launchAction refresh()
                 ownsPending = true
                 publishPending(recipe, state)
                 val result = restartRun(restartRecipe, state)
@@ -185,26 +181,25 @@ internal class AndroidRunNotificationCoordinator(
                 }
             } finally {
                 if (ownsPending) endPending(instanceId)
-                onFinished()
             }
         }
     }
 
     fun handleDismiss(instanceId: String, generation: Long, onFinished: () -> Unit = {}) {
-        scope.launch {
-            try {
-                val resolved = resolveExact(instanceId, generation) ?: return@launch
-                val (recipe, state) = resolved
-                val model = RunNotificationProjector.project(recipe, state) ?: return@launch
-                if (model.ongoing) return@launch
-                dismissalStore.dismiss(instanceId, generation)
-                synchronized(publishedInstances) { publishedInstances.remove(instanceId) }
-                cancel(instanceId)
-                render(CardRunStore.snapshot())
-            } finally {
-                onFinished()
-            }
+        launchAction(onFinished) {
+            val resolved = resolveExact(instanceId, generation) ?: return@launchAction
+            val (recipe, state) = resolved
+            val model = RunNotificationProjector.project(recipe, state) ?: return@launchAction
+            if (model.ongoing) return@launchAction
+            dismissalStore.dismiss(instanceId, generation)
+            synchronized(publishedInstances) { publishedInstances.remove(instanceId) }
+            cancel(instanceId)
+            render(CardRunStore.snapshot())
         }
+    }
+
+    private fun launchAction(onFinished: () -> Unit, action: suspend () -> Unit) {
+        scope.launch { action() }.invokeOnCompletion { onFinished() }
     }
 
     private fun resolveExact(instanceId: String, generation: Long): Pair<KiteRecipe, CardRunState>? {

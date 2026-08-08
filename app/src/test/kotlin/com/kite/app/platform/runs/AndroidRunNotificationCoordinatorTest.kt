@@ -13,8 +13,19 @@ import com.kite.app.run.CardRunSurface
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -25,8 +36,11 @@ import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [34])
+@OptIn(ExperimentalCoroutinesApi::class)
 class AndroidRunNotificationCoordinatorTest {
     private lateinit var application: Application
+    private lateinit var coordinatorJob: Job
+    private lateinit var coordinatorScope: CoroutineScope
 
     @Before
     fun setUp() {
@@ -37,10 +51,13 @@ class AndroidRunNotificationCoordinatorTest {
             .commit()
         CardRunStore.resetForTest()
         CardRunStore.initialize(application)
+        coordinatorJob = SupervisorJob()
+        coordinatorScope = CoroutineScope(coordinatorJob + Dispatchers.Default)
     }
 
     @After
     fun tearDown() {
+        runBlocking { coordinatorJob.cancelAndJoin() }
         CardRunStore.resetForTest()
     }
 
@@ -105,6 +122,75 @@ class AndroidRunNotificationCoordinatorTest {
         assertEquals("新名称", restartedWith?.name)
     }
 
+    @Test
+    fun `进程任务取消并完成后不再投影运行状态`() = runTest {
+        val recipe = recipe(
+            keepFinishedNotification = false,
+            steps = listOf(
+                KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL),
+                KiteRecipeStep(id = "report", type = KiteRecipe.STEP_SHELL),
+            ),
+        )
+        val waiting = waitingTerminal(recipe)
+        val processJob = SupervisorJob()
+        val processScope = CoroutineScope(processJob + StandardTestDispatcher(testScheduler))
+        val coordinator = coordinator(recipe, recipe, scope = processScope)
+
+        coordinator.start()
+        runCurrent()
+        val publishedRequirement = coordinator.requirement.value
+        assertNotNull(publishedRequirement)
+
+        processJob.cancelAndJoin()
+        CardRunStore.removeRun(waiting.instanceId, waiting.createdAt)
+        runCurrent()
+
+        assertEquals(publishedRequirement, coordinator.requirement.value)
+    }
+
+    @Test
+    fun `动作尚未调度即取消仍只结束一次异步广播`() = runTest {
+        val recipe = recipe(keepFinishedNotification = false)
+        val waiting = waitingTerminal(recipe)
+        val processJob = SupervisorJob()
+        val processScope = CoroutineScope(processJob + StandardTestDispatcher(testScheduler))
+        val finished = AtomicInteger(0)
+        val coordinator = coordinator(recipe, recipe, scope = processScope)
+
+        coordinator.handleClose(waiting.instanceId, waiting.createdAt) { finished.incrementAndGet() }
+        processJob.cancelAndJoin()
+        runCurrent()
+
+        assertEquals(1, finished.get())
+    }
+
+    @Test
+    fun `动作执行中取消仍只结束一次异步广播`() = runTest {
+        val recipe = recipe(keepFinishedNotification = false)
+        val waiting = waitingTerminal(recipe)
+        val processJob = SupervisorJob()
+        val processScope = CoroutineScope(processJob + StandardTestDispatcher(testScheduler))
+        val entered = AtomicInteger(0)
+        val finished = AtomicInteger(0)
+        val coordinator = coordinator(
+            runtimeRecipe = recipe,
+            latestRecipe = recipe,
+            closeRun = { _, _ ->
+                entered.incrementAndGet()
+                processJob.cancel()
+                RunCommandResult.Accepted(waiting.instanceId)
+            },
+            scope = processScope,
+        )
+
+        coordinator.handleClose(waiting.instanceId, waiting.createdAt) { finished.incrementAndGet() }
+        runCurrent()
+        processJob.join()
+
+        assertEquals(1, entered.get())
+        assertEquals(1, finished.get())
+    }
+
     private fun waitingTerminal(recipe: KiteRecipe): CardRunState {
         val started = CardRunStore.start(recipe, INSTANCE_ID)
         return CardRunStore.update(
@@ -127,9 +213,11 @@ class AndroidRunNotificationCoordinatorTest {
         restartRun: (KiteRecipe, CardRunState) -> RunCommandResult = { _, _ ->
             RunCommandResult.Ignored("not_used")
         },
-        closeTask: (String, Long) -> Unit = { _, _ -> }
+        closeTask: (String, Long) -> Unit = { _, _ -> },
+        scope: CoroutineScope = coordinatorScope,
     ): AndroidRunNotificationCoordinator = AndroidRunNotificationCoordinator(
         context = application,
+        scope = scope,
         recipeResolver = { recipeId -> runtimeRecipe.takeIf { it.id == recipeId } },
         restartRecipeResolver = { recipeId -> latestRecipe.takeIf { it.id == recipeId } },
         completeStep = { RunCommandResult.Ignored("not_used") },
@@ -141,7 +229,10 @@ class AndroidRunNotificationCoordinatorTest {
 
     private fun recipe(
         name: String = "通知测试",
-        keepFinishedNotification: Boolean
+        keepFinishedNotification: Boolean,
+        steps: List<KiteRecipeStep> = listOf(
+            KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL),
+        ),
     ): KiteRecipe = KiteRecipe(
         id = "notification-recipe",
         name = name,
@@ -150,9 +241,7 @@ class AndroidRunNotificationCoordinatorTest {
         defaultUrl = "",
         shortcut = false,
         launch = KiteLaunchConfig(keepFinishedNotification = keepFinishedNotification),
-        execution = KiteExecution.steps(
-            listOf(KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL))
-        )
+        execution = KiteExecution.steps(steps)
     )
 
     private companion object {

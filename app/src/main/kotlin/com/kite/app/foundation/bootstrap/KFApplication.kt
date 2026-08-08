@@ -46,13 +46,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFeatureDependenciesOwner,
     RuntimeManagementDependenciesOwner, WebWorkbenchDependenciesOwner, SettingsFeatureDependenciesOwner,
     RuntimeBootstrapDependenciesOwner, RunHistoryDependenciesOwner, ThemeEnvironmentDependenciesOwner,
     AgentRegistryDependenciesOwner, ProotViewInspectionDependenciesOwner {
 
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    internal val applicationJob = SupervisorJob()
+    private val applicationScope = CoroutineScope(applicationJob + Dispatchers.Default)
 
     override val resourceFeatureGateway: ResourceFeatureGateway
         get() = KiteAppGraph.from(this).resourceFeatureGateway
@@ -171,6 +173,16 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
     override fun onLowMemory() {
         super.onLowMemory()
         RuntimePressureResponder.onLowMemory(this)
+    }
+
+    override fun onTerminate() {
+        applicationJob.cancel()
+        val processJob = KiteAppGraph.release(this)
+        runBlocking {
+            applicationJob.join()
+            processJob?.join()
+        }
+        super.onTerminate()
     }
 
     private fun createNotificationChannels() {
