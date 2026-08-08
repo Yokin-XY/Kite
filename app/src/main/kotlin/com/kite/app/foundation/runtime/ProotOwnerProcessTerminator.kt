@@ -195,7 +195,11 @@ object ProotOwnerProcessTerminator {
         return results
     }
 
-    fun terminate(context: Context, ownerId: String): ProotOwnerTerminationResult {
+    fun terminate(
+        context: Context,
+        ownerId: String,
+        onSettledOwners: ((Collection<String>) -> Unit)? = null,
+    ): ProotOwnerTerminationResult {
         val cleanOwnerId = ownerId.trim()
         if (cleanOwnerId.isBlank()) {
             return ProotOwnerTerminationResult(
@@ -205,7 +209,7 @@ object ProotOwnerProcessTerminator {
             )
         }
 
-        return terminateAll(context, listOf(cleanOwnerId)).single()
+        return terminateAll(context, listOf(cleanOwnerId), onSettledOwners).single()
     }
 
     /**
@@ -216,6 +220,7 @@ object ProotOwnerProcessTerminator {
     fun terminateAll(
         context: Context,
         ownerIds: Collection<String>,
+        onSettledOwners: ((Collection<String>) -> Unit)? = null,
     ): List<ProotOwnerTerminationResult> {
         val cleanOwnerIds = ownerIds
             .map(String::trim)
@@ -297,8 +302,13 @@ object ProotOwnerProcessTerminator {
         val results = cleanOwnerIds.map { ownerId ->
             resolvedResults[ownerId] ?: directResults.getValue(ownerId)
         }
-        results.filter { it.settled }.forEach { result ->
-            TaskManagerStore.confirmOwnersStopped(listOf(result.ownerId))
+        val settledOwnerIds = results
+            .filter(ProotOwnerTerminationResult::settled)
+            .map(ProotOwnerTerminationResult::ownerId)
+            .distinct()
+        if (settledOwnerIds.isNotEmpty()) {
+            onSettledOwners?.invoke(settledOwnerIds)
+                ?: TaskManagerStore.confirmOwnersStopped(settledOwnerIds)
         }
         return results
     }

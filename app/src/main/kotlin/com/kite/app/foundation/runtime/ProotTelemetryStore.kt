@@ -5,6 +5,7 @@ import com.kite.app.foundation.logging.Logger
 import java.io.File
 import java.io.RandomAccessFile
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -29,9 +30,17 @@ object ProotTelemetryStore {
     private const val SYNTHETIC_PROBE_EVENT_AGE_MS = PRESSURE_WINDOW_MS + 5_000L
     private const val AUTO_REFRESH_INTERVAL_MS = 2_000L
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _snapshot = MutableStateFlow(ProotTelemetrySnapshot())
     val snapshot: StateFlow<ProotTelemetrySnapshot> = _snapshot
+
+    @Volatile
+    private var lifecycleOwner: Context? = null
+
+    @Volatile
+    private var lifecycleJob: Job? = null
+
+    @Volatile
+    private var lifecycleScope: CoroutineScope? = null
 
     @Volatile
     private var refreshJob: Job? = null
@@ -64,48 +73,141 @@ object ProotTelemetryStore {
     )
     private var activeRegistryReconciledAtMs = 0L
 
-    fun startAutoRefresh(context: Context) {
+    private data class LifecycleHandle(
+        val owner: Context,
+        val rootJob: Job,
+    )
+
+    fun start(context: Context, parentScope: CoroutineScope): Job {
         val appContext = context.applicationContext
-        synchronized(this) {
-            if (autoRefreshJob?.isActive == true) {
-                return
+        synchronized(readerLock) {
+            synchronized(this) {
+                lifecycleJob
+                    ?.takeIf { lifecycleOwner === appContext && it.isActive }
+                    ?.let { return it }
+
+                lifecycleOwner = null
+                lifecycleScope = null
+                refreshJob = null
+                autoRefreshJob = null
+                pendingRefresh = false
+                lifecycleJob?.cancel()
+                lifecycleJob = null
+
+                val rootJob = SupervisorJob(parentScope.coroutineContext[Job])
+                lifecycleOwner = appContext
+                lifecycleJob = rootJob
+                lifecycleScope = CoroutineScope(rootJob + Dispatchers.IO)
+                return rootJob
             }
-            autoRefreshJob = scope.launch {
-                while (true) {
-                    refresh(appContext)
-                    delay(AUTO_REFRESH_INTERVAL_MS)
+        }
+    }
+
+    fun release(context: Context): Job? {
+        val appContext = context.applicationContext
+        return synchronized(readerLock) reader@{
+            synchronized(this) lifecycle@{
+                if (lifecycleOwner !== appContext) return@lifecycle null
+                lifecycleOwner = null
+                lifecycleScope = null
+                refreshJob = null
+                autoRefreshJob = null
+                pendingRefresh = false
+                lifecycleJob.also { job ->
+                    lifecycleJob = null
+                    job?.cancel()
                 }
             }
         }
     }
 
-    fun refresh(context: Context) {
+    private fun currentHandle(context: Context): LifecycleHandle? {
         val appContext = context.applicationContext
+        return synchronized(this) {
+            val rootJob = lifecycleJob ?: return@synchronized null
+            if (!isCurrent(appContext, rootJob)) return@synchronized null
+            LifecycleHandle(appContext, rootJob)
+        }
+    }
+
+    private fun isCurrent(owner: Context, rootJob: Job): Boolean {
+        return lifecycleOwner === owner && lifecycleJob === rootJob && rootJob.isActive
+    }
+
+    fun startAutoRefresh(context: Context) {
+        val handle = currentHandle(context) ?: return
         synchronized(this) {
+            val scope = lifecycleScope ?: return
+            if (!isCurrent(handle.owner, handle.rootJob)) return
+            if (autoRefreshJob?.isActive == true) {
+                return
+            }
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    while (isCurrent(handle.owner, handle.rootJob)) {
+                        refresh(handle.owner)
+                        delay(AUTO_REFRESH_INTERVAL_MS)
+                    }
+                } finally {
+                    val runningJob = coroutineContext[Job]
+                    synchronized(this@ProotTelemetryStore) {
+                        if (isCurrent(handle.owner, handle.rootJob) && autoRefreshJob === runningJob) {
+                            autoRefreshJob = null
+                        }
+                    }
+                }
+            }
+            autoRefreshJob = job
+            job.start()
+        }
+    }
+
+    fun refresh(context: Context) {
+        val handle = currentHandle(context) ?: return
+        synchronized(this) {
+            val scope = lifecycleScope ?: return
+            if (!isCurrent(handle.owner, handle.rootJob)) return
             val running = refreshJob
             if (running != null && running.isActive) {
                 pendingRefresh = true
                 return
             }
-            refreshJob = scope.launch {
+            pendingRefresh = false
+            val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
                     do {
-                        clearPendingRefresh()
-                        readTelemetry(appContext)
-                    } while (consumePendingRefresh())
+                        readTelemetry(handle)
+                    } while (consumePendingOrFinish(handle))
                 } finally {
+                    val runningJob = coroutineContext[Job]
                     synchronized(this@ProotTelemetryStore) {
-                        refreshJob = null
+                        if (isCurrent(handle.owner, handle.rootJob) && refreshJob === runningJob) {
+                            refreshJob = null
+                        }
                     }
                 }
             }
+            refreshJob = job
+            job.start()
         }
     }
 
     fun refreshBlocking(context: Context): ProotTelemetrySnapshot {
-        val appContext = context.applicationContext
-        readTelemetry(appContext)
+        readTelemetry(context.applicationContext)
         return snapshot.value
+    }
+
+    private fun consumePendingOrFinish(handle: LifecycleHandle): Boolean {
+        return synchronized(this) {
+            if (!isCurrent(handle.owner, handle.rootJob)) return@synchronized false
+            if (pendingRefresh) {
+                pendingRefresh = false
+                true
+            } else {
+                refreshJob = null
+                false
+            }
+        }
     }
 
     /**
@@ -648,6 +750,15 @@ object ProotTelemetryStore {
     private fun readTelemetry(context: Context) {
         synchronized(readerLock) {
             readTelemetryLocked(context)
+        }
+    }
+
+    private fun readTelemetry(handle: LifecycleHandle) {
+        synchronized(readerLock) {
+            synchronized(this) {
+                if (!isCurrent(handle.owner, handle.rootJob)) return
+            }
+            readTelemetryLocked(handle.owner)
         }
     }
 
@@ -1829,18 +1940,6 @@ object ProotTelemetryStore {
             suffix += 1
         }
         return candidate
-    }
-
-    @Synchronized
-    private fun clearPendingRefresh() {
-        pendingRefresh = false
-    }
-
-    @Synchronized
-    private fun consumePendingRefresh(): Boolean {
-        val shouldRun = pendingRefresh
-        pendingRefresh = false
-        return shouldRun
     }
 
     private fun ProotTelemetryCounters.increment(type: ProotTelemetryEventType): ProotTelemetryCounters {

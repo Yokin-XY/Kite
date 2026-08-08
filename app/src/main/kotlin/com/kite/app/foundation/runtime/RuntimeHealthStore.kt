@@ -47,7 +47,6 @@ object RuntimeHealthStore {
     private const val PROOT_POOL_TUNING_LOG_ARCHIVE_MAX_BYTES = 4_194_304L
     private const val PROOT_POOL_TUNING_LOG_ARCHIVE_NAME = "proot-pool-tuning.old.jsonl"
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _containerMetadata = MutableStateFlow(ContainerRuntimeMetadata())
     private val _reclaimerPolicy = MutableStateFlow(RuntimeReclaimerPolicy.default())
     private val _residentPolicy = MutableStateFlow(RuntimeResidentPolicy.default())
@@ -55,6 +54,7 @@ object RuntimeHealthStore {
     private val _processUnitManifest = MutableStateFlow(RuntimeProcessUnitManifest.default())
     private val _reconciliationReason = MutableStateFlow("initial")
     private val _snapshot = MutableStateFlow(RuntimeHealthSnapshot())
+    private val lifecycleExecutionLock = Any()
     @Volatile
     private var lastRuntimePressureSurface: String = ""
     @Volatile
@@ -73,6 +73,12 @@ object RuntimeHealthStore {
     private var lastProotPoolTuningLogAtMs: Long = 0L
     @Volatile
     private var applicationContext: Context? = null
+    @Volatile
+    private var lifecycleOwner: Context? = null
+    @Volatile
+    private var lifecycleJob: Job? = null
+    @Volatile
+    private var lifecycleScope: CoroutineScope? = null
     @Volatile
     private var policyAutoRefreshJob: Job? = null
     @Volatile
@@ -132,7 +138,63 @@ object RuntimeHealthStore {
         val processUnitManifest: RuntimeProcessUnitManifest
     )
 
-    init {
+    private data class LifecycleHandle(
+        val owner: Context,
+        val rootJob: Job,
+    )
+
+    private data class RuntimePolicySignatures(
+        val reclaimer: PolicyFileSignature,
+        val resident: PolicyFileSignature,
+        val workload: PolicyFileSignature,
+        val processUnit: PolicyFileSignature,
+    )
+
+    private data class AttachedRuntimeState(
+        val metadata: ContainerRuntimeMetadata,
+        val reclaimerPolicy: RuntimeReclaimerPolicy,
+        val residentPolicy: RuntimeResidentPolicy,
+        val workloadPolicy: RuntimeWorkloadPolicy,
+        val processUnitManifest: RuntimeProcessUnitManifest,
+        val signatures: RuntimePolicySignatures?,
+    )
+
+    fun start(context: Context, parentScope: CoroutineScope): Job {
+        val appContext = context.applicationContext
+        val rootJob: Job
+        val scope: CoroutineScope
+        synchronized(lifecycleExecutionLock) {
+            synchronized(this) {
+                lifecycleJob
+                    ?.takeIf { lifecycleOwner === appContext && it.isActive }
+                    ?.let { return it }
+
+                lifecycleOwner = null
+                applicationContext = null
+                policyAutoRefreshJob = null
+                policyAutoRefreshWorkspacePath = null
+                lastReclaimerPolicySignature = null
+                lastResidentPolicySignature = null
+                lastWorkloadPolicySignature = null
+                lastProcessUnitManifestSignature = null
+                lifecycleJob?.cancel()
+                lifecycleJob = null
+                lifecycleScope = null
+
+                _containerMetadata.value = ContainerRuntimeMetadata()
+                _reclaimerPolicy.value = RuntimeReclaimerPolicy.default()
+                _residentPolicy.value = RuntimeResidentPolicy.default()
+                _workloadPolicy.value = RuntimeWorkloadPolicy.default()
+                _processUnitManifest.value = RuntimeProcessUnitManifest.default()
+
+                rootJob = SupervisorJob(parentScope.coroutineContext[Job])
+                scope = CoroutineScope(rootJob + Dispatchers.Default)
+                lifecycleOwner = appContext
+                lifecycleJob = rootJob
+                lifecycleScope = scope
+            }
+        }
+
         scope.launch {
             val metadataAndPolicyBase = combine(
                 _containerMetadata,
@@ -200,30 +262,68 @@ object RuntimeHealthStore {
                     reconciliationReason = reason
                 )
             }.collect { latest ->
-                applicationContext?.let { appContext ->
-                    RuntimeMemoryLifecycleRuleTrigger.onSnapshot(appContext, latest)
+                synchronized(lifecycleExecutionLock) execution@{
+                    if (!isCurrent(appContext, rootJob)) {
+                        return@execution
+                    }
+                    applicationContext
+                        ?.takeIf { attached -> attached === appContext }
+                        ?.let { attached ->
+                            RuntimeMemoryLifecycleRuleTrigger.onSnapshot(attached, latest)
+                        }
+                    _snapshot.value = latest
+                    publishRuntimePressureSurface(latest)
                 }
-                _snapshot.value = latest
-                publishRuntimePressureSurface(latest)
+            }
+        }
+        return rootJob
+    }
+
+    fun release(context: Context): Job? {
+        val appContext = context.applicationContext
+        return synchronized(lifecycleExecutionLock) execution@{
+            synchronized(this) lifecycle@{
+                if (lifecycleOwner !== appContext) return@lifecycle null
+                lifecycleOwner = null
+                applicationContext = null
+                policyAutoRefreshJob = null
+                policyAutoRefreshWorkspacePath = null
+                lifecycleScope = null
+                lifecycleJob.also { job ->
+                    lifecycleJob = null
+                    job?.cancel()
+                }
             }
         }
     }
 
-    fun attachContext(context: Context) {
+    private fun isCurrent(owner: Context, job: Job): Boolean {
+        return lifecycleOwner === owner && lifecycleJob === job && job.isActive
+    }
+
+    private fun currentHandle(context: Context): LifecycleHandle? {
         val appContext = context.applicationContext
-        applicationContext = appContext
-        ProotTelemetryStore.startAutoRefresh(appContext)
-        _containerMetadata.value = appContext.resolveContainerRuntimeMetadata()
-        loadRuntimePolicies(appContext)
-        startPolicyAutoRefresh(appContext)
+        return synchronized(this) {
+            val rootJob = lifecycleJob ?: return@synchronized null
+            if (!isCurrent(appContext, rootJob)) return@synchronized null
+            LifecycleHandle(appContext, rootJob)
+        }
+    }
+
+    fun attachContext(context: Context) {
+        attachContextIfCurrent(context)
     }
 
     fun refresh(context: Context, reason: String = "runtime-health-refresh") {
         val appContext = context.applicationContext
-        attachContext(appContext)
+        val handle = attachContextIfCurrent(appContext) ?: return
+        if (!isCurrent(handle.owner, handle.rootJob)) return
         ProotTelemetryStore.refresh(appContext)
+        if (!isCurrent(handle.owner, handle.rootJob)) return
         RuntimeOverviewStore.publishCurrentSnapshot(appContext)
-        markReconciliation(reason)
+        if (isCurrent(handle.owner, handle.rootJob)) {
+            markReconciliation(reason)
+        }
     }
 
     fun markReconciliation(reason: String) {
@@ -231,105 +331,133 @@ object RuntimeHealthStore {
     }
 
     fun publishCurrentSnapshot(context: Context, reason: String = "manual-publish") {
-        attachContext(context.applicationContext)
-        markReconciliation(reason)
+        val handle = attachContextIfCurrent(context.applicationContext) ?: return
+        if (isCurrent(handle.owner, handle.rootJob)) {
+            markReconciliation(reason)
+        }
     }
 
-    private fun loadRuntimePolicies(appContext: Context) {
-        _reclaimerPolicy.value = RuntimeReclaimerPolicyStore.load(appContext)
-        _residentPolicy.value = RuntimeResidentPolicyStore.load(appContext)
-        _workloadPolicy.value = RuntimeWorkloadPolicyStore.load(appContext)
-        _processUnitManifest.value = RuntimeProcessUnitManifestStore.load(appContext)
-        recordPolicySignatures(appContext)
+    private fun attachContextIfCurrent(context: Context): LifecycleHandle? {
+        val handle = currentHandle(context) ?: return null
+        val appContext = handle.owner
+        val candidate = readAttachedRuntimeState(appContext)
+        synchronized(this) {
+            if (!isCurrent(appContext, handle.rootJob)) return null
+            applicationContext = appContext
+            _containerMetadata.value = candidate.metadata
+            _reclaimerPolicy.value = candidate.reclaimerPolicy
+            _residentPolicy.value = candidate.residentPolicy
+            _workloadPolicy.value = candidate.workloadPolicy
+            _processUnitManifest.value = candidate.processUnitManifest
+            candidate.signatures?.let(::applyPolicySignatures)
+        }
+        if (!isCurrent(appContext, handle.rootJob)) return null
+        ProotTelemetryStore.startAutoRefresh(appContext)
+        if (!isCurrent(appContext, handle.rootJob)) return null
+        startPolicyAutoRefresh(appContext, handle.rootJob)
+        return handle.takeIf { isCurrent(it.owner, it.rootJob) }
     }
 
-    private fun startPolicyAutoRefresh(appContext: Context) {
-        val workspacePath = WorkSurfaceRuntimeBridge.getSavedContainer(appContext)
-            ?.workspacePath
-            ?.takeIf { it.isNotBlank() }
-        if (policyAutoRefreshJob?.isActive == true && policyAutoRefreshWorkspacePath == workspacePath) {
-            return
-        }
-        policyAutoRefreshJob?.cancel()
-        policyAutoRefreshJob = null
-        policyAutoRefreshWorkspacePath = workspacePath
-        if (workspacePath == null) {
-            lastReclaimerPolicySignature = null
-            lastResidentPolicySignature = null
-            lastWorkloadPolicySignature = null
-            lastProcessUnitManifestSignature = null
-            policyHotReloadLastChanged = "workspace_missing"
-            return
-        }
-        val workspaceDir = File(workspacePath)
-        recordPolicySignatures(workspaceDir)
-        policyAutoRefreshJob = scope.launch {
-            while (isActive) {
-                delay(POLICY_AUTO_REFRESH_INTERVAL_MS)
-                reloadRuntimePoliciesIfChanged(appContext, workspaceDir)
+    private fun readAttachedRuntimeState(appContext: Context): AttachedRuntimeState {
+        val metadata = appContext.resolveContainerRuntimeMetadata()
+        val workspaceDir = metadata.workspacePath
+            ?.takeIf(String::isNotBlank)
+            ?.let(::File)
+        return AttachedRuntimeState(
+            metadata = metadata,
+            reclaimerPolicy = RuntimeReclaimerPolicyStore.load(appContext),
+            residentPolicy = RuntimeResidentPolicyStore.load(appContext),
+            workloadPolicy = RuntimeWorkloadPolicyStore.load(appContext),
+            processUnitManifest = RuntimeProcessUnitManifestStore.load(appContext),
+            signatures = workspaceDir?.readPolicySignatures(),
+        )
+    }
+
+    private fun startPolicyAutoRefresh(appContext: Context, rootJob: Job) {
+        synchronized(this) {
+            val scope = lifecycleScope ?: return
+            if (!isCurrent(appContext, rootJob)) return
+
+            val workspacePath = _containerMetadata.value.workspacePath?.takeIf(String::isNotBlank)
+            if (policyAutoRefreshJob?.isActive == true && policyAutoRefreshWorkspacePath == workspacePath) {
+                return
+            }
+            policyAutoRefreshJob?.cancel()
+            policyAutoRefreshJob = null
+            policyAutoRefreshWorkspacePath = workspacePath
+            if (workspacePath == null) {
+                lastReclaimerPolicySignature = null
+                lastResidentPolicySignature = null
+                lastWorkloadPolicySignature = null
+                lastProcessUnitManifestSignature = null
+                policyHotReloadLastChanged = "workspace_missing"
+                return
+            }
+            val workspaceDir = File(workspacePath)
+            policyAutoRefreshJob = scope.launch {
+                while (isActive && isCurrent(appContext, rootJob)) {
+                    delay(POLICY_AUTO_REFRESH_INTERVAL_MS)
+                    if (isCurrent(appContext, rootJob)) {
+                        reloadRuntimePoliciesIfChanged(appContext, workspaceDir, rootJob)
+                    }
+                }
             }
         }
     }
 
-    private fun reloadRuntimePoliciesIfChanged(appContext: Context, workspaceDir: File) {
-        val reclaimerFile = WorkspaceBuildSupport.runtimeReclaimerPolicyFile(workspaceDir)
-        val residentFile = WorkspaceBuildSupport.runtimeResidentPolicyFile(workspaceDir)
-        val workloadFile = WorkspaceBuildSupport.runtimeWorkloadPolicyFile(workspaceDir)
-        val processUnitFile = WorkspaceBuildSupport.runtimeProcessManifestFile(workspaceDir)
-        val reclaimerSignature = reclaimerFile.toPolicySignature()
-        val residentSignature = residentFile.toPolicySignature()
-        val workloadSignature = workloadFile.toPolicySignature()
-        val processUnitSignature = processUnitFile.toPolicySignature()
-        val reclaimerChanged = reclaimerSignature != lastReclaimerPolicySignature
-        val residentChanged = residentSignature != lastResidentPolicySignature
-        val workloadChanged = workloadSignature != lastWorkloadPolicySignature
-        val processUnitChanged = processUnitSignature != lastProcessUnitManifestSignature
+    private fun reloadRuntimePoliciesIfChanged(
+        appContext: Context,
+        workspaceDir: File,
+        rootJob: Job,
+    ) {
+        if (!isCurrent(appContext, rootJob)) return
+        val signatures = workspaceDir.readPolicySignatures()
+        val reclaimerChanged = signatures.reclaimer != lastReclaimerPolicySignature
+        val residentChanged = signatures.resident != lastResidentPolicySignature
+        val workloadChanged = signatures.workload != lastWorkloadPolicySignature
+        val processUnitChanged = signatures.processUnit != lastProcessUnitManifestSignature
         if (!reclaimerChanged && !residentChanged && !workloadChanged && !processUnitChanged) {
             return
         }
-        if (reclaimerChanged) {
-            _reclaimerPolicy.value = RuntimeReclaimerPolicyStore.load(appContext)
-        }
-        if (residentChanged) {
-            _residentPolicy.value = RuntimeResidentPolicyStore.load(appContext)
-        }
-        if (workloadChanged) {
-            _workloadPolicy.value = RuntimeWorkloadPolicyStore.load(appContext)
-        }
-        if (processUnitChanged) {
-            _processUnitManifest.value = RuntimeProcessUnitManifestStore.load(appContext)
-        }
-        recordPolicySignatures(workspaceDir)
+        val reclaimerPolicy = if (reclaimerChanged) RuntimeReclaimerPolicyStore.load(appContext) else null
+        val residentPolicy = if (residentChanged) RuntimeResidentPolicyStore.load(appContext) else null
+        val workloadPolicy = if (workloadChanged) RuntimeWorkloadPolicyStore.load(appContext) else null
+        val processUnitManifest = if (processUnitChanged) RuntimeProcessUnitManifestStore.load(appContext) else null
         val changed = buildList {
             if (reclaimerChanged) add("reclaimer")
             if (residentChanged) add("resident")
             if (workloadChanged) add("workload")
             if (processUnitChanged) add("process_unit")
         }.joinToString("+")
-        policyHotReloadGeneration += 1L
-        policyHotReloadLastReloadAt = System.currentTimeMillis()
-        policyHotReloadLastChanged = changed.ifBlank { "none" }
+        synchronized(this) {
+            if (!isCurrent(appContext, rootJob)) return
+            reclaimerPolicy?.let { _reclaimerPolicy.value = it }
+            residentPolicy?.let { _residentPolicy.value = it }
+            workloadPolicy?.let { _workloadPolicy.value = it }
+            processUnitManifest?.let { _processUnitManifest.value = it }
+            applyPolicySignatures(signatures)
+            policyHotReloadGeneration += 1L
+            policyHotReloadLastReloadAt = System.currentTimeMillis()
+            policyHotReloadLastChanged = changed.ifBlank { "none" }
+            _reconciliationReason.value = "runtime-policy-hot-reload:$changed"
+        }
         Logger.i(LOG_TAG, "runtime policy hot-reloaded: $changed")
-        markReconciliation("runtime-policy-hot-reload:$changed")
     }
 
-    private fun recordPolicySignatures(appContext: Context) {
-        val workspacePath = WorkSurfaceRuntimeBridge.getSavedContainer(appContext)
-            ?.workspacePath
-            ?.takeIf { it.isNotBlank() }
-            ?: return
-        recordPolicySignatures(File(workspacePath))
+    private fun File.readPolicySignatures(): RuntimePolicySignatures {
+        return RuntimePolicySignatures(
+            reclaimer = WorkspaceBuildSupport.runtimeReclaimerPolicyFile(this).toPolicySignature(),
+            resident = WorkspaceBuildSupport.runtimeResidentPolicyFile(this).toPolicySignature(),
+            workload = WorkspaceBuildSupport.runtimeWorkloadPolicyFile(this).toPolicySignature(),
+            processUnit = WorkspaceBuildSupport.runtimeProcessManifestFile(this).toPolicySignature(),
+        )
     }
 
-    private fun recordPolicySignatures(workspaceDir: File) {
-        lastReclaimerPolicySignature = WorkspaceBuildSupport.runtimeReclaimerPolicyFile(workspaceDir)
-            .toPolicySignature()
-        lastResidentPolicySignature = WorkspaceBuildSupport.runtimeResidentPolicyFile(workspaceDir)
-            .toPolicySignature()
-        lastWorkloadPolicySignature = WorkspaceBuildSupport.runtimeWorkloadPolicyFile(workspaceDir)
-            .toPolicySignature()
-        lastProcessUnitManifestSignature = WorkspaceBuildSupport.runtimeProcessManifestFile(workspaceDir)
-            .toPolicySignature()
+    private fun applyPolicySignatures(signatures: RuntimePolicySignatures) {
+        lastReclaimerPolicySignature = signatures.reclaimer
+        lastResidentPolicySignature = signatures.resident
+        lastWorkloadPolicySignature = signatures.workload
+        lastProcessUnitManifestSignature = signatures.processUnit
     }
 
     private fun File.toPolicySignature(): PolicyFileSignature {

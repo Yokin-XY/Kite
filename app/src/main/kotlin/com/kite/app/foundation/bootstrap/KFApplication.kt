@@ -26,7 +26,10 @@ import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
 import com.kite.app.foundation.runtime.AndroidDefaultNetworkAlignment
 import com.kite.app.foundation.runtime.HostSelfAdbBridgeWorker
+import com.kite.app.foundation.runtime.ProotTelemetryStore
+import com.kite.app.foundation.runtime.RuntimeHealthStore
 import com.kite.app.foundation.runtime.RuntimeLifecycleSignalStore
+import com.kite.app.foundation.runtime.RuntimeOverviewStore
 import com.kite.app.foundation.runtime.RuntimePressureResponder
 import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.run.CardRunStore
@@ -153,6 +156,10 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
             createNotificationChannels()
         }
         StartupTraceStore.runApplicationStage(this, "application.run_notifications") {
+            RuntimeOverviewStore.start(this, applicationScope)
+            ProotTelemetryStore.start(this, applicationScope)
+            RuntimeHealthStore.start(this, applicationScope)
+            TaskManagerStore.start(this, applicationScope)
             CardRunStore.initialize(this)
             applicationScope.launch(start = CoroutineStart.UNDISPATCHED) {
                 TaskManagerStore.confirmedStoppedOwnerEvents.collect(CardRunStore::confirmRuntimeOwnersStopped)
@@ -176,9 +183,17 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
     }
 
     override fun onTerminate() {
+        val taskManagerJob = TaskManagerStore.release(this)
+        val runtimeHealthJob = RuntimeHealthStore.release(this)
+        val prootTelemetryJob = ProotTelemetryStore.release(this)
+        val runtimeOverviewJob = RuntimeOverviewStore.release(this)
         applicationJob.cancel()
         val processJob = KiteAppGraph.release(this)
         runBlocking {
+            taskManagerJob?.join()
+            runtimeHealthJob?.join()
+            prootTelemetryJob?.join()
+            runtimeOverviewJob?.join()
             applicationJob.join()
             processJob?.join()
         }

@@ -9,6 +9,7 @@ import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.contracts.SpaceRecord
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,11 +36,37 @@ data class RuntimeOverviewSnapshot(
 
 object RuntimeOverviewStore {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _snapshot = MutableStateFlow(RuntimeOverviewSnapshot())
     val snapshot: StateFlow<RuntimeOverviewSnapshot> = _snapshot
 
-    init {
+    @Volatile
+    private var lifecycleOwner: Context? = null
+    @Volatile
+    private var lifecycleJob: Job? = null
+
+    fun start(context: Context, parentScope: CoroutineScope): Job {
+        val appContext = context.applicationContext
+        lifecycleJob
+            ?.takeIf { lifecycleOwner === appContext && it.isActive }
+            ?.let { return it }
+
+        val rootJob: Job
+        val scope: CoroutineScope
+        synchronized(this) {
+            lifecycleJob
+                ?.takeIf { lifecycleOwner === appContext && it.isActive }
+                ?.let { return it }
+
+            lifecycleOwner = null
+            lifecycleJob?.cancel()
+            lifecycleJob = null
+
+            rootJob = SupervisorJob(parentScope.coroutineContext[Job])
+            scope = CoroutineScope(rootJob + Dispatchers.Default)
+            lifecycleOwner = appContext
+            lifecycleJob = rootJob
+        }
+
         scope.launch {
             combine(
                 KFWorkspaceManager.currentSpaceState,
@@ -48,13 +75,36 @@ object RuntimeOverviewStore {
             ) { space, terminals, runtimes ->
                 buildSnapshot(space, terminals, runtimes)
             }.collect { latest ->
-                _snapshot.value = latest
+                if (isCurrent(appContext, rootJob)) {
+                    _snapshot.value = latest
+                }
+            }
+        }
+        return rootJob
+    }
+
+    fun release(context: Context): Job? {
+        val appContext = context.applicationContext
+        return synchronized(this) {
+            if (lifecycleOwner !== appContext) return@synchronized null
+            lifecycleOwner = null
+            lifecycleJob.also { job ->
+                lifecycleJob = null
+                job?.cancel()
             }
         }
     }
 
+    private fun isCurrent(owner: Context, job: Job): Boolean {
+        return lifecycleOwner === owner && lifecycleJob === job && job.isActive
+    }
+
     fun refresh(context: Context) {
-        RuntimeFrameCoordinator.refreshRuntimeOverview(context.applicationContext)
+        val appContext = context.applicationContext
+        val rootJob = currentJob(appContext) ?: return
+        if (isCurrent(appContext, rootJob)) {
+            RuntimeFrameCoordinator.refreshRuntimeOverview(appContext)
+        }
     }
 
     internal fun publishCurrentSnapshot(
@@ -62,17 +112,29 @@ object RuntimeOverviewStore {
         space: SpaceRecord? = null
     ) {
         val appContext = context.applicationContext
+        val rootJob = currentJob(appContext) ?: return
         val currentSpace = space
             ?: KFWorkspaceManager.getCurrentSpace(appContext)
             ?: KFWorkspaceManager.listSpaces(appContext).firstOrNull()
+        if (!isCurrent(appContext, rootJob)) return
         currentSpace?.id?.let { spaceId ->
             BackgroundRuntimeRegistry.ensureProotCapacityWorkerHeadroom(appContext, spaceId)
         }
-        _snapshot.value = buildSnapshot(
+        if (!isCurrent(appContext, rootJob)) return
+        val latest = buildSnapshot(
             currentSpace,
             TerminalRuntimeRegistry.snapshot(),
             BackgroundRuntimeRegistry.snapshot(currentSpace?.id)
         )
+        if (isCurrent(appContext, rootJob)) {
+            _snapshot.value = latest
+        }
+    }
+
+    private fun currentJob(owner: Context): Job? {
+        return synchronized(this) {
+            lifecycleJob?.takeIf { job -> isCurrent(owner, job) }
+        }
     }
 
     private fun buildSnapshot(

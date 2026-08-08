@@ -130,14 +130,24 @@ object TaskManagerStore {
     private const val EMPTY_PROCESS_GRACE_MS = 1_500L
     private const val CONFIRMED_STOP_SUPPRESSION_MS = 10_000L
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val actionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _snapshot = MutableStateFlow(TaskManagerSnapshot())
     val snapshot: StateFlow<TaskManagerSnapshot> = _snapshot
     private val _confirmedStoppedOwnerEvents = MutableSharedFlow<Set<String>>(extraBufferCapacity = 16)
     val confirmedStoppedOwnerEvents: SharedFlow<Set<String>> = _confirmedStoppedOwnerEvents
     private val snapshotGrace = TaskManagerSnapshotGrace(EMPTY_PROCESS_GRACE_MS)
     private val confirmedStoppedOwners = linkedMapOf<String, Long>()
+
+    @Volatile
+    private var lifecycleOwner: Context? = null
+
+    @Volatile
+    private var lifecycleJob: Job? = null
+
+    @Volatile
+    private var lifecycleScope: CoroutineScope? = null
+
+    @Volatile
+    private var actionScope: CoroutineScope? = null
 
     @Volatile
     private var latestRawSnapshot = TaskManagerSnapshot()
@@ -157,25 +167,97 @@ object TaskManagerStore {
     @Volatile
     private var lastRefreshAtMs = 0L
 
-    init {
+    fun start(context: Context, parentScope: CoroutineScope): Job {
+        val appContext = context.applicationContext
+        lifecycleJob
+            ?.takeIf { lifecycleOwner === appContext && it.isActive }
+            ?.let { return it }
+
+        val rootJob: Job
+        val scope: CoroutineScope
+        synchronized(this) {
+            lifecycleJob
+                ?.takeIf { lifecycleOwner === appContext && it.isActive }
+                ?.let { return it }
+
+            lifecycleOwner = null
+            lifecycleScope = null
+            actionScope = null
+            refreshJob = null
+            emptyExpiryJob = null
+            pendingRefresh = false
+            lastRefreshAtMs = 0L
+            lifecycleJob?.cancel()
+            lifecycleJob = null
+
+            rootJob = SupervisorJob(parentScope.coroutineContext[Job])
+            scope = CoroutineScope(rootJob + Dispatchers.Default)
+            lifecycleOwner = appContext
+            lifecycleJob = rootJob
+            lifecycleScope = scope
+            actionScope = CoroutineScope(rootJob + Dispatchers.IO)
+        }
+
         scope.launch {
             RuntimeHealthStore.snapshot.collect { healthSnapshot ->
+                if (!isCurrent(appContext, rootJob)) {
+                    return@collect
+                }
                 val items = buildTaskItems(healthSnapshot)
-                publishSnapshot(TaskManagerSnapshot(
-                    spaceId = healthSnapshot.spaceId,
-                    processes = items,
-                    refreshedAt = maxOf(
-                        healthSnapshot.reconciledAt,
-                        healthSnapshot.prootTelemetry.refreshedAtMs
-                    )
-                ))
+                publishSnapshot(
+                    next = TaskManagerSnapshot(
+                        spaceId = healthSnapshot.spaceId,
+                        processes = items,
+                        refreshedAt = maxOf(
+                            healthSnapshot.reconciledAt,
+                            healthSnapshot.prootTelemetry.refreshedAtMs
+                        )
+                    ),
+                    owner = appContext,
+                    rootJob = rootJob,
+                )
             }
+        }
+        return rootJob
+    }
+
+    fun release(context: Context): Job? {
+        val appContext = context.applicationContext
+        return synchronized(this) {
+            if (lifecycleOwner !== appContext) return@synchronized null
+            lifecycleOwner = null
+            lifecycleScope = null
+            actionScope = null
+            refreshJob = null
+            emptyExpiryJob = null
+            pendingRefresh = false
+            lifecycleJob.also { job ->
+                lifecycleJob = null
+                job?.cancel()
+            }
+        }
+    }
+
+    private fun isCurrent(owner: Context, job: Job): Boolean {
+        return lifecycleOwner === owner && lifecycleJob === job && job.isActive
+    }
+
+    private fun activeActionScope(context: Context): Pair<CoroutineScope, Job>? {
+        val appContext = context.applicationContext
+        return synchronized(this) {
+            val rootJob = lifecycleJob ?: return@synchronized null
+            val scope = actionScope ?: return@synchronized null
+            if (!isCurrent(appContext, rootJob)) return@synchronized null
+            scope to rootJob
         }
     }
 
     fun refresh(context: Context, force: Boolean = false) {
         val appContext = context.applicationContext
         synchronized(this) {
+            val rootJob = lifecycleJob ?: return
+            val activeActionScope = actionScope ?: return
+            if (!isCurrent(appContext, rootJob)) return
             val running = refreshJob
             if (running != null && running.isActive) {
                 pendingRefresh = true
@@ -190,12 +272,12 @@ object TaskManagerStore {
             } else {
                 (lastRefreshAtMs + UI_REFRESH_MIN_INTERVAL_MS - now).coerceAtLeast(0L)
             }
-            refreshJob = actionScope.launch {
+            refreshJob = activeActionScope.launch {
                 try {
                     if (delayMs > 0L) {
                         delay(delayMs)
                     }
-                    do {
+                    while (isCurrent(appContext, rootJob)) {
                         clearPendingRefresh()
                         lastRefreshAtMs = System.currentTimeMillis()
                         RuntimeHealthStore.attachContext(appContext)
@@ -218,15 +300,18 @@ object TaskManagerStore {
                             context = appContext,
                             reason = "task-manager-refresh"
                         )
+                        if (!isCurrent(appContext, rootJob)) break
                         if (consumePendingRefresh()) {
                             delay(UI_REFRESH_MIN_INTERVAL_MS)
                         } else {
                             break
                         }
-                    } while (true)
+                    }
                 } finally {
                     synchronized(this@TaskManagerStore) {
-                        refreshJob = null
+                        if (isCurrent(appContext, rootJob)) {
+                            refreshJob = null
+                        }
                     }
                 }
             }
@@ -245,9 +330,19 @@ object TaskManagerStore {
         val ownerId = item?.let(TaskManagerProcessStopTargetResolver::ownerId)
         val appContext = context.applicationContext
         if (ownerId != null) {
+            val (actionScope, rootJob) = activeActionScope(appContext) ?: return
             actionScope.launch {
-                ProotOwnerProcessTerminator.terminate(appContext, ownerId)
-                refresh(appContext, force = true)
+                if (!isCurrent(appContext, rootJob)) return@launch
+                ProotOwnerProcessTerminator.terminate(
+                    context = appContext,
+                    ownerId = ownerId,
+                    onSettledOwners = { settledOwnerIds ->
+                        confirmOwnersStopped(settledOwnerIds, appContext, rootJob)
+                    },
+                )
+                if (isCurrent(appContext, rootJob)) {
+                    refresh(appContext, force = true)
+                }
             }
             return
         }
@@ -260,9 +355,13 @@ object TaskManagerStore {
             )
         }
         if (processTarget != null && processTarget.ref.hasStrongIdentity) {
+            val (actionScope, rootJob) = activeActionScope(appContext) ?: return
             actionScope.launch {
+                if (!isCurrent(appContext, rootJob)) return@launch
                 ProotDirectProcessTerminator.terminate(appContext, processTarget)
-                refresh(appContext, force = true)
+                if (isCurrent(appContext, rootJob)) {
+                    refresh(appContext, force = true)
+                }
             }
         } else {
             endProcess(appContext, pid)
@@ -273,9 +372,13 @@ object TaskManagerStore {
         val scopeId = workloadScopeId.trim().takeIf(String::isNotBlank) ?: return false
         if (_snapshot.value.processes.none { it.workloadScopeId == scopeId }) return false
         val appContext = context.applicationContext
+        val (actionScope, rootJob) = activeActionScope(appContext) ?: return false
         actionScope.launch {
+            if (!isCurrent(appContext, rootJob)) return@launch
             ProotWorkloadScopeTerminator.terminate(appContext, scopeId)
-            refresh(appContext, force = true)
+            if (isCurrent(appContext, rootJob)) {
+                refresh(appContext, force = true)
+            }
         }
         return true
     }
@@ -297,8 +400,24 @@ object TaskManagerStore {
     }
 
     /** 终止层已经直接探测确认 owner 退出时，立即撤掉对应的旧进程投影。 */
-    @Synchronized
     internal fun confirmOwnersStopped(ownerIds: Collection<String>) {
+        synchronized(this) {
+            confirmOwnersStoppedLocked(ownerIds)
+        }
+    }
+
+    internal fun confirmOwnersStopped(
+        ownerIds: Collection<String>,
+        owner: Context,
+        rootJob: Job,
+    ) {
+        synchronized(this) {
+            if (!isCurrent(owner, rootJob)) return
+            confirmOwnersStoppedLocked(ownerIds)
+        }
+    }
+
+    private fun confirmOwnersStoppedLocked(ownerIds: Collection<String>) {
         val normalized = ownerIds.map(String::trim).filter(String::isNotEmpty).toSet()
         if (normalized.isEmpty()) return
 
@@ -330,7 +449,12 @@ object TaskManagerStore {
     }
 
     @Synchronized
-    private fun publishSnapshot(next: TaskManagerSnapshot) {
+    private fun publishSnapshot(
+        next: TaskManagerSnapshot,
+        owner: Context,
+        rootJob: Job,
+    ) {
+        if (!isCurrent(owner, rootJob)) return
         val now = System.currentTimeMillis()
         confirmedStoppedOwners.entries.removeAll { (_, expiresAt) -> expiresAt <= now }
         val filtered = next.withoutRuntimeOwners(confirmedStoppedOwners.keys)
@@ -338,28 +462,40 @@ object TaskManagerStore {
         rawSnapshotVersion += 1L
         val decision = snapshotGrace.accept(filtered)
         _snapshot.value = decision.snapshot
-        scheduleEmptyExpiry(decision.emptyExpiryDelayMs, rawSnapshotVersion)
+        scheduleEmptyExpiry(decision.emptyExpiryDelayMs, rawSnapshotVersion, owner, rootJob)
     }
 
     @Synchronized
-    private fun scheduleEmptyExpiry(delayMs: Long?, expectedVersion: Long) {
+    private fun scheduleEmptyExpiry(
+        delayMs: Long?,
+        expectedVersion: Long,
+        owner: Context? = lifecycleOwner,
+        rootJob: Job? = lifecycleJob,
+    ) {
         emptyExpiryJob?.cancel()
         emptyExpiryJob = null
         if (delayMs == null) return
+        val activeOwner = owner ?: return
+        val activeRootJob = rootJob ?: return
+        val scope = lifecycleScope ?: return
+        if (!isCurrent(activeOwner, activeRootJob)) return
         emptyExpiryJob = scope.launch {
             delay(delayMs)
-            expireEmptySnapshot(expectedVersion)
+            if (isCurrent(activeOwner, activeRootJob)) {
+                expireEmptySnapshot(expectedVersion, activeOwner, activeRootJob)
+            }
         }
     }
 
     @Synchronized
-    private fun expireEmptySnapshot(expectedVersion: Long) {
+    private fun expireEmptySnapshot(expectedVersion: Long, owner: Context, rootJob: Job) {
+        if (!isCurrent(owner, rootJob)) return
         if (rawSnapshotVersion != expectedVersion || latestRawSnapshot.processes.isNotEmpty()) return
         emptyExpiryJob = null
         val decision = snapshotGrace.accept(latestRawSnapshot)
         _snapshot.value = decision.snapshot
         decision.emptyExpiryDelayMs?.let { delayMs ->
-            scheduleEmptyExpiry(delayMs, expectedVersion)
+            scheduleEmptyExpiry(delayMs, expectedVersion, owner, rootJob)
         }
     }
 
