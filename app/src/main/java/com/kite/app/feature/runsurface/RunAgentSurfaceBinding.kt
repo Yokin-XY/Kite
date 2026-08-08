@@ -677,8 +677,7 @@ internal class RunAgentSurfaceBinding(
             )
         }
         if (mimeType.startsWith("text/") && capabilities.embeddedResources) {
-            val text = resolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                ?: error("无法读取文本文件")
+            val text = AgentMediaPolicy.readInlineText(size) { resolver.openInputStream(uri) }
             return PendingAttachment(
                 name = name,
                 content = AgentContent.EmbeddedText(text, uri.toString(), mimeType)

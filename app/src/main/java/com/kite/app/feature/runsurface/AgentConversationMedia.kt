@@ -32,6 +32,40 @@ internal object AgentMediaPolicy {
     const val MAX_TEXT_BYTES = 2 * 1024 * 1024
     const val MAX_THUMBNAIL_EDGE = 1080
 
+    fun readInlineText(
+        declaredSizeBytes: Long?,
+        openInput: () -> java.io.InputStream?
+    ): String {
+        val knownSizeBytes = declaredSizeBytes?.takeIf { it >= 0L }
+        require(knownSizeBytes == null || knownSizeBytes <= MAX_TEXT_BYTES) {
+            "文本文件超过 2 MB"
+        }
+
+        val bytes = openInput()?.use { input ->
+            val limit = MAX_TEXT_BYTES + 1
+            val output = ByteArrayOutputStream(minOf(limit, DEFAULT_BUFFER_SIZE))
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var remaining = limit
+            while (remaining > 0) {
+                val read = input.read(buffer, 0, minOf(buffer.size, remaining))
+                if (read < 0) break
+                if (read == 0) {
+                    val next = input.read()
+                    if (next < 0) break
+                    output.write(next)
+                    remaining--
+                    continue
+                }
+                output.write(buffer, 0, read)
+                remaining -= read
+            }
+            output.toByteArray()
+        } ?: error("无法读取文本文件")
+
+        require(bytes.size <= MAX_TEXT_BYTES) { "文本文件超过 2 MB" }
+        return String(bytes, Charsets.UTF_8)
+    }
+
     fun estimatedDecodedBytes(value: String): Long {
         val payload = value.substringAfter("base64,", value)
         var useful = 0L
