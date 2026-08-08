@@ -232,6 +232,43 @@ class AgentProviderCatalogStoreTest {
     }
 
     @Test
+    fun `多Store更新不同字段时基于最新持久化快照合并`() {
+        val otherStore = AgentProviderCatalogStore(context, vault)
+        store.replaceMappedControls("opencode", listOf(permissionControl("ask")))
+        assertEquals("ask", otherStore.snapshot("opencode").permissionValue())
+
+        assertTrue(store.selectControl(
+            "opencode",
+            AGENT_SESSION_PERMISSION_CONFIG_ID,
+            AgentConfigValue.Select("allow"),
+        ))
+        otherStore.replaceWorkModes(
+            "opencode",
+            modes = listOf(AgentMode("build", "执行")),
+            currentModeId = "build",
+        )
+
+        val restored = AgentProviderCatalogStore(context, vault).snapshot("opencode")
+        assertEquals("allow", restored.permissionValue())
+        assertEquals("build", restored.selectedWorkModeId)
+    }
+
+    @Test
+    fun `多Store缓存会在其他实例写入后刷新`() {
+        val otherStore = AgentProviderCatalogStore(context, vault)
+        store.replaceMappedControls("opencode", listOf(permissionControl("ask")))
+        assertEquals("ask", otherStore.snapshot("opencode").permissionValue())
+
+        assertTrue(store.selectControl(
+            "opencode",
+            AGENT_SESSION_PERMISSION_CONFIG_ID,
+            AgentConfigValue.Select("allow"),
+        ))
+
+        assertEquals("allow", otherStore.snapshot("opencode").permissionValue())
+    }
+
+    @Test
     fun `局部能力更新不会删除另一类固定控件且原生导入只需完成一次`() {
         store.replaceMappedControls(
             "opencode",
@@ -311,6 +348,21 @@ class AgentProviderCatalogStoreTest {
         source = AgentModelSource.UserConfigured,
         policy = AgentProviderCatalogPolicy.UserManaged,
     )
+
+    private fun permissionControl(current: String) = AgentConfigOption.Select(
+        id = AGENT_SESSION_PERMISSION_CONFIG_ID,
+        name = "权限",
+        category = AgentConfigCategory.Permission,
+        currentValue = current,
+        choices = listOf(
+            AgentConfigChoice("deny", "受限", permission = AgentPermissionLevel.Restricted),
+            AgentConfigChoice("ask", "审批", permission = AgentPermissionLevel.Approval),
+            AgentConfigChoice("allow", "完全", permission = AgentPermissionLevel.Full),
+        ),
+    )
+
+    private fun AgentProviderCatalogSnapshot.permissionValue(): String? =
+        (controls.single { it.id == AGENT_SESSION_PERMISSION_CONFIG_ID } as AgentConfigOption.Select).currentValue
 
     private class MemoryCredentialVault : AgentProviderCredentialVault {
         private val values = mutableMapOf<String, String>()

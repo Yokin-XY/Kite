@@ -108,6 +108,8 @@ class AgentProviderCatalogStore private constructor(
         Context.MODE_PRIVATE,
     )
     private val snapshotCache = mutableMapOf<String, AgentProviderCatalogSnapshot>()
+    private var snapshotCachePayload: String? = null
+    private var snapshotCachePayloadKnown = false
 
     internal fun cachedSnapshot(agentId: String): AgentProviderCatalogSnapshot? = synchronized(LOCK) {
         snapshotCache[agentId]
@@ -115,8 +117,9 @@ class AgentProviderCatalogStore private constructor(
 
     fun snapshot(agentId: String): AgentProviderCatalogSnapshot = synchronized(LOCK) {
         if (agentId.isBlank()) return@synchronized AgentProviderCatalogSnapshot()
+        val agents = readAgents()
         snapshotCache.getOrPut(agentId) {
-            readAgents().optJSONObject(agentId)?.toSnapshot(agentId) ?: AgentProviderCatalogSnapshot()
+            agents.optJSONObject(agentId)?.toSnapshot(agentId) ?: AgentProviderCatalogSnapshot()
         }
     }
 
@@ -374,6 +377,8 @@ class AgentProviderCatalogStore private constructor(
         preferences.edit().clear().commit()
         credentialVault.clear()
         snapshotCache.clear()
+        snapshotCachePayload = null
+        snapshotCachePayloadKnown = false
     }
 
     private fun <T> update(
@@ -397,17 +402,25 @@ class AgentProviderCatalogStore private constructor(
         result
     }
 
-    private fun readAgents(): JSONObject = runCatching {
-        val payload = JSONObject(preferences.getString(KEY_PAYLOAD, null) ?: "{}")
-        if (payload.optInt(KEY_VERSION, VERSION) != VERSION) JSONObject()
-        else payload.optJSONObject(KEY_AGENTS) ?: JSONObject()
-    }.getOrElse { JSONObject() }
+    private fun readAgents(): JSONObject {
+        val persistedPayload = preferences.getString(KEY_PAYLOAD, null)
+        if (!snapshotCachePayloadKnown || snapshotCachePayload != persistedPayload) {
+            snapshotCache.clear()
+            snapshotCachePayload = persistedPayload
+            snapshotCachePayloadKnown = true
+        }
+        return runCatching {
+            val payload = JSONObject(persistedPayload ?: "{}")
+            if (payload.optInt(KEY_VERSION, VERSION) != VERSION) JSONObject()
+            else payload.optJSONObject(KEY_AGENTS) ?: JSONObject()
+        }.getOrElse { JSONObject() }
+    }
 
     private fun writeAgents(agents: JSONObject) {
-        preferences.edit().putString(
-            KEY_PAYLOAD,
-            JSONObject().put(KEY_VERSION, VERSION).put(KEY_AGENTS, agents).toString(),
-        ).apply()
+        val payload = JSONObject().put(KEY_VERSION, VERSION).put(KEY_AGENTS, agents).toString()
+        preferences.edit().putString(KEY_PAYLOAD, payload).apply()
+        snapshotCachePayload = payload
+        snapshotCachePayloadKnown = true
     }
 
     private fun JSONObject.toSnapshot(agentId: String): AgentProviderCatalogSnapshot {
