@@ -1,5 +1,6 @@
 package com.kite.app.resources
 
+import android.app.Application
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
@@ -12,7 +13,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(application = Application::class, sdk = [34])
 class KiteResourceEnvironmentMigrationTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
@@ -55,7 +56,6 @@ class KiteResourceEnvironmentMigrationTest {
 
         assertEquals("1.2.3", registry.entry(RESOURCE_ID, "default")?.version)
         assertNull(registry.entry(RESOURCE_ID, "profile-2"))
-        context.deleteDatabase(REGISTRY_DATABASE)
     }
 
     @Test
@@ -94,7 +94,6 @@ class KiteResourceEnvironmentMigrationTest {
 
         assertEquals("{\"id\":\"$RESOURCE_ID\"}", snapshots.manifestJson(RESOURCE_ID, "default"))
         assertNull(snapshots.manifestJson(RESOURCE_ID, "profile-2"))
-        context.deleteDatabase(SNAPSHOT_DATABASE)
     }
 
     private fun openDatabase(name: String): SQLiteDatabase {
