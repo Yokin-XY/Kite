@@ -13,6 +13,7 @@ $payload = $payloadJson | ConvertFrom-Json
 $repositoryRoot = [IO.Path]::GetFullPath([string]$payload.repositoryRoot)
 $settingsFile = Join-Path $repositoryRoot 'settings.gradle'
 $wrapper = Join-Path $repositoryRoot 'gradlew.bat'
+$argumentContract = Join-Path $PSScriptRoot 'kite-gradle-argument-contract.ps1'
 $gradleArguments = @($payload.gradleArguments | ForEach-Object { [string]$_ })
 $lockTimeoutSeconds = [int]$payload.lockTimeoutSeconds
 $probeHoldSeconds = [int]$payload.probeHoldSeconds
@@ -24,6 +25,11 @@ if (!(Test-Path -LiteralPath $settingsFile) -or
 if (!(Test-Path -LiteralPath $wrapper)) {
     throw "Gradle Wrapper 不存在：$wrapper"
 }
+if (!(Test-Path -LiteralPath $argumentContract)) {
+    throw "Kite Gradle 参数合同不存在：$argumentContract"
+}
+. $argumentContract
+$resolvedGradleArguments = Resolve-KiteGradleArguments -GradleArguments $gradleArguments
 if ($lockTimeoutSeconds -lt 1 -or $lockTimeoutSeconds -gt 7200) {
     throw "非法构建锁超时：$lockTimeoutSeconds"
 }
@@ -58,15 +64,7 @@ try {
         Start-Sleep -Seconds $probeHoldSeconds
         $exitCode = 0
     } else {
-        $arguments = [Collections.Generic.List[string]]::new()
-        $gradleArguments | ForEach-Object { $arguments.Add($_) }
-        if (!$arguments.Contains('--no-daemon')) {
-            $arguments.Add('--no-daemon')
-        }
-        if (!$arguments.Contains('--console=plain')) {
-            $arguments.Add('--console=plain')
-        }
-        & $wrapper @arguments
+        & $wrapper @resolvedGradleArguments
         $exitCode = $LASTEXITCODE
     }
 } finally {

@@ -46,6 +46,14 @@ Git worktree 已天然隔离仓库 `.gradle`、模块 `build/`、APK 和测试�
 .\scripts\invoke-kite-gradle.ps1 -GradleArguments ':app:assembleDebug'
 ```
 
-包装器使用 `Local\KiteGradleBuildV1` Windows 命名 mutex。锁由独立工作进程持有，获取锁后才启动 Gradle；即使外层测试脚本或调用器被中断，工作进程仍会等实际 Gradle 结束再释放锁，下一条构建不会趁隙写入同一测试目录。工作进程自身异常终止时，遗弃锁由系统回收。包装器自动附加 `--no-daemon --console=plain`，不运行 `gradlew --stop`，不删除或复制其他 worktree 的缓存。
+包装器使用 `Local\KiteGradleBuildV1` Windows 命名 mutex。锁由独立工作进程持有，获取锁后才启动 Gradle；即使外层测试脚本或调用器被中断，工作进程仍会等实际 Gradle 结束再释放锁，下一条构建不会趁隙写入同一测试目录。工作进程自身异常终止时，遗弃锁由系统回收。
 
-该锁只协调使用包装器的本机 Kite 任务。CI 位于独立环境，继续运行原始全量命令。ADB 安装和真机操作不由 Gradle 锁代替，仍必须显式指定 serial；不同手机可以在构建结束后并行验收。
+本地构建默认使用 `--no-daemon --max-workers=2 --console=plain`。包装器会补齐缺省参数，并拒绝启用 daemon 或把 worker 提高到 2 以上；调用方仍可把单次构建进一步收窄为 1 个 worker。直接调用 `gradlew` 时，根目录 `gradle.properties` 仍默认使用 `org.gradle.daemon=false` 和 `org.gradle.workers.max=2`，避免绕过包装器后留下数小时的 Gradle 常驻进程并占满本机并行槽。参数合同可独立验证：
+
+```powershell
+pwsh -File scripts/test-kite-gradle-contract.ps1
+```
+
+这些限制不运行 `gradlew --stop`，不执行 `clean`，也不删除或复制任何工作树、项目或用户级构建缓存。
+
+该锁只协调使用包装器的本机 Kite 任务。CI 位于独立环境，不参与本机 mutex，但仍继承项目级 daemon/worker 上限并继续执行原有测试、Lint 等完整任务。ADB 安装和真机操作不由 Gradle 锁代替，仍必须显式指定 serial；不同手机可以在构建结束后并行验收。
