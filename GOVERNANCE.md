@@ -8,7 +8,8 @@
 
 Kite 采用公开协作、事前说明、最小权限和职责分离的治理方式：
 
-- 新工作先通过 Issue 公开消费场景、预期效果、实现机制、范围、风险和验证方式。开 Issue 是事前说明，不是申请维护者批准。
+- 面向社区的可复现 Bug、已收敛需求、外部贡献、实质性产品行为和敏感改动先通过 Issue 公开消费场景、预期效果、实现机制、范围、风险和验证方式。开 Issue 是事前说明，不是申请维护者批准。
+- 维护者内部实验、临时性能诊断、构建测量和不改变产品行为的低风险小修使用本地任务记录；不为内部过程自动创建公开 Issue。
 - 贡献者可以自行认领并在个人 Fork 中实现；实现机制发生实质变化时，先更新原 Issue。
 - Pull Request 是正式准入和代码审查入口。自动检查通过不代表项目必须合并。
 - 社区身份依据持续职责、协作质量和安全意识确认，不按代码行数、提交次数或单次贡献自动升级。
@@ -29,7 +30,7 @@ Kite 采用公开协作、事前说明、最小权限和职责分离的治理方
 3. **公开方案**：准备实现的人说明预期效果、实现机制、范围、风险和验证计划。
 4. **自行实现**：不需要等待事前批准，在个人 Fork 和独立分支中实现。
 5. **保持同步**：方案发生实质变化时，先更新 Issue；一个 Pull Request 只处理一个行为边界。
-6. **正式审查**：Pull Request 关联 Issue，并接受方向、架构、来源、安全、代码和验证审查。
+6. **正式审查**：需要公开 Issue 的 Pull Request 必须关联原 Issue；无需公开 Issue 的维护者低风险小修填写 `N/A` 并说明原因。所有 Pull Request 均接受方向、架构、来源、安全、代码和验证审查。
 7. **合并与发布**：只有满足主线保护规则并由具备职责的维护者确认后才能合并；合并不等于立即发布。
 
 ### 任务分类与状态
@@ -40,6 +41,8 @@ Issue 使用少量、稳定的分类，避免靠标题猜测状态：
 - 状态：`status: proposal`（方案说明中）、`status: ready`（可以认领）、`status: claimed`（已认领）、`status: blocked`（存在明确阻塞）、`status: review`（已有 Pull Request 正在审查）。
 - 风险：`risk: sensitive` 用于认证、凭据、网络、资源、脚本、容器、Android 权限、构建和发布等附加安全审查范围。
 - 模块：只在任务数量确实需要时增加 `area:` 标签，不为单个 Issue 创建一次性分类。
+
+AI 子任务、自动化轮次、临时探针、维护者构建测量和一次性排查默认留在本地任务账本；只有形成社区可以理解、认领并独立验收的边界后，才发布为公开 Issue。
 
 任务协调者可以整理分类、推荐负责人、跟踪认领和提醒长期无进展的任务，但不能单方面承诺功能进入主线、决定架构边界、批准代码、合并或发布。个人仓库阶段，任务协调者通过 Issue 评论提出分类和分配建议，由仓库所有者执行需要权限的操作。
 
@@ -87,7 +90,8 @@ Kite 当前位于 GitHub 个人账号仓库。个人仓库只有所有者和 Col
 
 Kite uses public collaboration, pre-implementation disclosure, least privilege, and separation of duties:
 
-- New work starts with an Issue that states the use case, expected outcome, implementation mechanism, scope, risk, and verification plan. Opening an Issue is disclosure, not a request for prior maintainer approval.
+- Community-facing reproducible bugs, scoped requirements, external contributions, material product-behavior changes, and sensitive changes start with an Issue that states the use case, expected outcome, implementation mechanism, scope, risk, and verification plan. Opening an Issue is disclosure, not a request for prior maintainer approval.
+- Maintainer-only experiments, temporary performance diagnostics, build measurements, and low-risk fixes that do not change product behavior stay in local task tracking; internal process does not automatically become a public Issue.
 - Contributors may claim work and implement it in their own forks. Material mechanism changes must be reflected in the original Issue first.
 - Pull Requests are the formal admission and code-review gate. Passing automated checks does not require the project to merge a contribution.
 - Community roles are based on sustained responsibility, collaboration quality, and security awareness—not lines of code, commit counts, or one contribution.
@@ -108,7 +112,7 @@ Kite uses public collaboration, pre-implementation disclosure, least privilege, 
 3. **Disclose the approach**: implementers state the expected outcome, mechanism, scope, risk, and verification plan.
 4. **Implement independently**: no prior approval is required; work in a personal fork and dedicated branch.
 5. **Keep the proposal current**: update the Issue before material mechanism changes; keep one behavior boundary per Pull Request.
-6. **Formal review**: link the Pull Request to its Issue and complete direction, architecture, provenance, security, code, and verification review.
+6. **Formal review**: Pull Requests for work that requires a public Issue must link it; low-risk maintainer fixes that do not require one use `N/A` and explain why. Every Pull Request completes direction, architecture, provenance, security, code, and verification review.
 7. **Merge and release**: changes merge only after branch protections and responsible maintainer review are satisfied; merge does not imply immediate release.
 
 ### Task classification and status
@@ -119,6 +123,8 @@ Issues use a small, stable taxonomy so status does not have to be inferred from 
 - Status: `status: proposal` (approach being described), `status: ready` (claimable), `status: claimed` (claimed), `status: blocked` (a concrete blocker exists), and `status: review` (a linked Pull Request is under review).
 - Risk: `risk: sensitive` marks authentication, credentials, network, resources, scripts, containers, Android permissions, build, and release work that needs additional security review.
 - Area: add `area:` labels only when task volume requires them; do not create one-off labels for a single Issue.
+
+AI subtasks, automation rounds, temporary probes, maintainer build measurements, and one-off diagnostics stay in local task tracking by default. Publish them as Issues only after they become boundaries that the community can understand, claim, and verify independently.
 
 Task Coordinators may organize labels, recommend assignees, track claims, and follow up on inactive tasks. They cannot promise that a feature will enter the mainline, decide architecture boundaries alone, approve code, merge, or release. While Kite remains a personal repository, Task Coordinators propose classification and assignment in Issue comments, and the repository owner performs actions that require repository permissions.
 

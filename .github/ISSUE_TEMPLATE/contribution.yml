@@ -68,6 +68,8 @@ body:
         - label: 网络、认证、凭据、文件访问或 Android 权限 / Network, authentication, credentials, file access, or Android permissions
         - label: GitHub Actions、构建、签名、发布或自动更新 / Actions, builds, signing, releases, or updates
         - label: 不涉及以上高风险范围 / None of the high-risk areas above
+    validations:
+      required: true
 
   - type: textarea
     id: verification

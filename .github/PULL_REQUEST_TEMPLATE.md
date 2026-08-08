@@ -5,8 +5,10 @@ Describe the problem, real entry point, and user-visible result. Keep one explai
 
 关联 Issue / Linked Issue:
 
-- [ ] 关联 Issue 已在实现前说明消费场景、预期效果和实现机制 / The linked Issue disclosed the use case, outcome, and mechanism before implementation
-- [ ] 当前实现与 Issue 中公开的机制一致；如有实质变化，已先更新 Issue 并说明原因 / The implementation matches the disclosed mechanism, or the Issue explains material changes
+> 外部贡献、实质性产品行为或敏感改动必须关联 Issue。无需公开 Issue 的维护者低风险小修填写 `N/A` 并说明原因。 / External contributions, material product behavior, and sensitive changes require an Issue. Use `N/A` with a reason only for low-risk maintainer fixes that do not require one.
+
+- [ ] 需要关联 Issue 时，原 Issue 已在实现前说明消费场景、预期效果和实现机制；否则已填写 `N/A` 并说明原因 / When an Issue is required, it disclosed the use case, outcome, and mechanism before implementation; otherwise `N/A` includes the reason
+- [ ] 当前实现与已公开机制一致；如有实质变化，已先更新 Issue 并说明原因 / The implementation matches the disclosed mechanism, or the Issue explains material changes
 
 实现机制摘要 / Mechanism summary:
 
