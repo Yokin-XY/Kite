@@ -1,3 +1,5 @@
+
+
 # Kite
 
 [![CI](https://github.com/Yokin-XY/Kite/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/Yokin-XY/Kite/actions/workflows/ci.yml)
@@ -36,6 +38,7 @@ Latest Release 是已经锁定的正式产物；`main` 是下一版本的开发�
 | 状态拥有者与生命周期 | [状态与生命周期](docs/architecture/state-and-lifecycle.md) |
 | Recipe、资源清单和 Bridge 协议 | [参考文档](docs/README.md#协议参考) |
 | 参与开发和提交要求 | [参与开发](CONTRIBUTING.md) |
+| AI Agent 工作规范 | [AGENTS.md](AGENTS.md) |
 
 详细内容由对应文档维护，根 README 只提供长期稳定的项目介绍和入口。
 
