@@ -124,6 +124,8 @@ class KiteResourceInstallPlanCompilerTest {
         assertTrue(script.contains("git-commit-mismatch"))
         assertTrue(script.contains(commit))
         assertTrue(script.contains("for repository in"))
+        assertTrue(script.contains("if wait \"${'$'}task_pid\"; then"))
+        assertFalse(script.contains("set +e\n  wait \"${'$'}task_pid\""))
         val mismatchBlock = script.substringAfter("reason=git-commit-mismatch")
         assertTrue(mismatchBlock.substringBefore("KITE_RESOURCE_FAILURE stage=acquire").contains("break"))
         assertFalse(mismatchBlock.substringBefore("KITE_RESOURCE_FAILURE stage=acquire").contains("return 65"))

@@ -25,12 +25,8 @@
     "category": "AI",
     "accent": "teal",
     "sizeLabel": "网络包",
-    "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。Nous Portal 官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Hermes 自己管理。",
+    "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 固定官方版本和提交，只安装核心运行依赖与 ACP，不自动安装桌面、浏览器、TTS、ffmpeg 或其他可选能力；代码、venv 和数据目录都固定在这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。Nous Portal 官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Hermes 自己管理。",
     "recommendations": [
-      {
-        "resourceId": "kite.python",
-        "label": "运行时"
-      },
       {
         "resourceId": "kite.uv",
         "label": "依赖管理"
@@ -38,10 +34,6 @@
       {
         "resourceId": "kite.git",
         "label": "源码工具"
-      },
-      {
-        "resourceId": "kite.curl",
-        "label": "下载工具"
       }
     ],
     "tags": [
@@ -59,23 +51,16 @@
     ],
     "base": [
       "kite.git",
-      "kite.curl",
-      "kite.python",
-      "kite.nodejs",
       "kite.uv"
     ],
     "defaults": [],
     "extensions": []
   },
   "source": {
-    "type": "official_script",
-    "url": "https://hermes-agent.nousresearch.com/install.sh",
+    "type": "git",
+    "url": "https://github.com/NousResearch/hermes-agent.git",
     "upstream": "https://github.com/NousResearch/hermes-agent",
-    "args": [
-      "--skip-setup",
-      "--skip-browser",
-      "--non-interactive"
-    ]
+    "mirror": "https://gitcode.com/GitHub_Trending/he/hermes-agent.git"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.hermes.core",
@@ -143,42 +128,27 @@
             "retryDelaySeconds": 0
           },
           {
-            "id": "run-hermes-installer",
+            "id": "write-hermes-core-acp-installer",
+            "type": "shell",
+            "cmd": "mkdir -p \"$install_root/home\" \"$install_root/user-home\" \"/workspace/.kf/cache/resources/kite.hermes.core/uv\"\ncat > \"$install_root/kite-install-core-acp.sh\" <<'KITE_HERMES_INSTALL'\n#!/usr/bin/env bash\nset -e\n: \"${KITE_HERMES_INSTALL_ROOT:?KITE_HERMES_INSTALL_ROOT is required}\"\nrepo_dir=\"$KITE_HERMES_INSTALL_ROOT/hermes-agent\"\ncommand -v uv >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=uv-missing'; exit 127; }\nagent_python=\"\"\nfor candidate in /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11; do\n  if [ -x \"$candidate\" ]; then\n    agent_python=\"$candidate\"\n    break\n  fi\ndone\n[ -n \"$agent_python\" ] || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=compatible-system-python-missing'; exit 127; }\nagent_python_version=\"$(\"$agent_python\" -c 'import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")')\"\ncase \"$agent_python_version\" in\n  3.11|3.12|3.13) ;;\n  *) echo \"KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=unsupported-version version=$agent_python_version\"; exit 65 ;;\nesac\necho \"KITE_RESOURCE_STEP prepare hermes-python-$agent_python_version source=system\"\necho \"KITE_RESOURCE_STEP install hermes-core-acp python=$agent_python\"\necho 'KITE_RESOURCE_STEP acquire hermes-python-packages source=aliyun'\nif timeout 600 env UV_DEFAULT_INDEX=\"https://mirrors.aliyun.com/pypi/simple/\" UV_PROJECT_ENVIRONMENT=\"$repo_dir/venv\" UV_PYTHON=\"$agent_python\" uv sync --project \"$repo_dir\" --locked --no-default-groups --extra acp; then\n  echo 'KITE_RESOURCE_STEP acquire-complete hermes-python-packages source=aliyun'\nelse\n  mirror_status=$?\n  echo \"KITE_RESOURCE_RETRY stage=acquire step=hermes-python-packages source=aliyun exit=$mirror_status\"\n  rm -rf \"$repo_dir/venv\"\n  echo 'KITE_RESOURCE_STEP acquire hermes-python-packages source=pypi'\n  env UV_DEFAULT_INDEX=\"https://pypi.org/simple\" UV_PROJECT_ENVIRONMENT=\"$repo_dir/venv\" UV_PYTHON=\"$agent_python\" uv sync --project \"$repo_dir\" --locked --no-default-groups --extra acp\n  echo 'KITE_RESOURCE_STEP acquire-complete hermes-python-packages source=pypi'\nfi\n[ -x \"$repo_dir/venv/bin/hermes\" ] || { echo 'KITE_RESOURCE_FAILURE stage=install step=hermes-core-acp reason=entrypoint-missing'; exit 127; }\nprintf '%s\\n' 'core+acp' > \"$KITE_HERMES_INSTALL_ROOT/install-profile\"\necho 'KITE_RESOURCE_STEP install-complete hermes-core-acp'\nKITE_HERMES_INSTALL\nchmod +x \"$install_root/kite-install-core-acp.sh\""
+          },
+          {
+            "id": "install-hermes-core-acp",
             "type": "script",
             "interpreter": "bash",
-            "path": "$install_root/hermes-agent/scripts/install.sh",
-            "args": [
-              "--dir",
-              "$install_root/hermes-agent",
-              "--hermes-home",
-              "$install_root/home",
-              "--branch",
-              "v2026.8.27",
-              "--commit",
-              "5fc308a70719a83cccdbba4c0e39c23f5a8239d5",
-              "--skip-setup",
-              "--skip-browser",
-              "--non-interactive"
-            ],
+            "path": "$install_root/kite-install-core-acp.sh",
             "env": {
+              "HOME": "$install_root/user-home",
               "HERMES_HOME": "$install_root/home",
-              "HERMES_INSTALL_DIR": "$install_root/hermes-agent",
-              "UV_CACHE_DIR": "$install_root/uv-cache",
-              "UV_LINK_MODE": "copy",
-              "UV_NO_CONFIG": "1",
-              "UV_PYTHON_BIN_DIR": "$install_root/uv-bin",
-              "UV_PYTHON_INSTALL_DIR": "$install_root/uv-python"
+              "KITE_HERMES_INSTALL_ROOT": "$install_root",
+              "UV_CACHE_DIR": "/workspace/.kf/cache/resources/kite.hermes.core/uv",
+              "UV_LINK_MODE": "copy"
             }
           },
           {
             "id": "write-hermes-launcher",
             "type": "shell",
-            "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif ! \"$agent_python\" -m pip --version >/dev/null 2>&1; then\n  \"$agent_python\" -m ensurepip --upgrade || python3 -m pip --python \"$agent_python\" install --upgrade pip\nfi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\""
-          },
-          {
-            "id": "install-hermes-acp-extra",
-            "type": "shell",
-            "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\n\"$agent_python\" -m pip install -e \"$install_root/hermes-agent[acp]\""
+            "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif [ ! -x \"$install_root/hermes-agent/venv/bin/hermes\" ]; then echo 'Hermes Agent entrypoint missing'; exit 127; fi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\""
           }
         ],
         "managedCommands": [

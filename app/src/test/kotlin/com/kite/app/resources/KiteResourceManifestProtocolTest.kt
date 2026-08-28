@@ -479,7 +479,13 @@ class KiteResourceManifestProtocolTest {
             File(resourceRoot(), "kite.hermes.core/manifest.json").readText()
         )
         assertEquals(listOf("home"), hermes.management.preservePaths)
-        assertTrue(hermes.installActions.single().installSteps.any { it.id == "install-hermes-acp-extra" })
+        assertEquals(listOf("kite.git", "kite.uv"), hermes.baseRequirements)
+        val minimalInstall = hermes.installActions.single().installSteps.single {
+            it.id == "install-hermes-core-acp"
+        }
+        assertEquals("script", minimalInstall.type)
+        assertEquals("${'$'}install_root/kite-install-core-acp.sh", minimalInstall.path)
+        assertTrue(hermes.installActions.single().installSteps.none { it.id == "run-hermes-installer" })
         assertTrue(hermes.installActions.single().verifications.any { it.cmd.contains("hermes acp --help") })
     }
 

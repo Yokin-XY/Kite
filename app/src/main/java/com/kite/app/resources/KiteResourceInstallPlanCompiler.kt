@@ -207,13 +207,11 @@ object KiteResourceInstallPlanCompiler {
               echo "KITE_RESOURCE_HEARTBEAT stage=${'$'}stage step=${'$'}step_id elapsed=${'$'}elapsed"
             fi
           done
-          set +e
-          wait "${'$'}task_pid"
-          task_status=${'$'}?
-          set -e
-          if [ "${'$'}task_status" -eq 0 ]; then
+          if wait "${'$'}task_pid"; then
             echo "KITE_RESOURCE_STEP ${'$'}stage-complete ${'$'}step_id"
             return 0
+          else
+            task_status=${'$'}?
           fi
           echo "KITE_RESOURCE_FAILURE stage=${'$'}stage step=${'$'}step_id exit=${'$'}task_status"
           return "${'$'}task_status"
