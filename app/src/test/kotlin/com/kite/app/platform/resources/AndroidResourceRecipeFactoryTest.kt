@@ -178,6 +178,8 @@ class AndroidResourceRecipeFactoryTest {
         assertTrue(shell.contains("UV_DEFAULT_INDEX=\"https://pypi.org/simple\""))
         assertTrue(shell.contains("timeout 600 env UV_DEFAULT_INDEX="))
         assertTrue(shell.contains("KITE_RESOURCE_RETRY stage=acquire step=hermes-python-packages"))
+        assertTrue(shell.contains("export HERMES_DISABLE_LAZY_INSTALLS=1"))
+        assertTrue(shell.indexOf("1:-") < shell.indexOf("export HERMES_DISABLE_LAZY_INSTALLS=1"))
         assertFalse(shell.contains("uv python install"))
         assertFalse(shell.contains("UV_NO_CONFIG"))
         assertFalse(shell.contains("ensurepip"))

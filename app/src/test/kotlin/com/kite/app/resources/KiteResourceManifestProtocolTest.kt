@@ -485,6 +485,15 @@ class KiteResourceManifestProtocolTest {
         }
         assertEquals("script", minimalInstall.type)
         assertEquals("${'$'}install_root/kite-install-core-acp.sh", minimalInstall.path)
+        val launcher = hermes.installActions.single().installSteps.single {
+            it.id == "write-hermes-launcher"
+        }.cmd
+        assertTrue(launcher.contains("if [ \"\\${'$'}{1:-}\" = \"acp\" ]; then"))
+        assertTrue(launcher.contains("export HERMES_DISABLE_LAZY_INSTALLS=1"))
+        assertTrue(
+            launcher.indexOf("if [ \"\\${'$'}{1:-}\" = \"acp\" ]; then") <
+                launcher.indexOf("export HERMES_DISABLE_LAZY_INSTALLS=1")
+        )
         assertTrue(hermes.installActions.single().installSteps.none { it.id == "run-hermes-installer" })
         assertTrue(hermes.installActions.single().verifications.any { it.cmd.contains("hermes acp --help") })
     }
