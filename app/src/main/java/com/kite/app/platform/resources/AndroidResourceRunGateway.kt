@@ -115,6 +115,12 @@ internal class AndroidResourceRunGateway(
                             runInstanceId = instanceId,
                             guestInstallRoot = manifest.installRoot,
                             preservePaths = manifest.management.preservePaths,
+                            operation = request.operation,
+                            targetVersion = request.targetVersion.orEmpty(),
+                            previousVersion = installStore
+                                .registryEntry(request.resourceId, request.environmentId)
+                                ?.version
+                                .orEmpty(),
                         ).getOrThrow()
                     }
                     Unit
@@ -129,6 +135,24 @@ internal class AndroidResourceRunGateway(
         } else {
             Result.success(Unit)
         }
+
+    override fun markMutationInstalling(
+        request: ResourceRunLaunchRequest,
+        instanceId: String,
+    ): Result<Unit> = if (request.operation in TRANSACTION_OPERATIONS) {
+        candidateCoordinator.markInstalling(request.resourceId, instanceId)
+    } else {
+        Result.success(Unit)
+    }
+
+    override fun markMutationVerified(
+        request: ResourceRunLaunchRequest,
+        instanceId: String,
+    ): Result<Unit> = if (request.operation in TRANSACTION_OPERATIONS) {
+        candidateCoordinator.markVerified(request.resourceId, instanceId)
+    } else {
+        Result.success(Unit)
+    }
 
     override fun finalizeMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
         if (request.operation in TRANSACTION_OPERATIONS) {

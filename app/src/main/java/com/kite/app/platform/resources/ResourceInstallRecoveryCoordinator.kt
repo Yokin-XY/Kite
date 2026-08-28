@@ -18,6 +18,7 @@ internal class ResourceInstallRecoveryCoordinator(
     context: Context,
     private val installStore: KiteResourceInstallStore,
     private val manifestLoader: KiteResourceManifestLoader,
+    private val candidateCoordinator: ResourceInstallCandidateCoordinator,
     private val transactionRecovery: ResourceInstallTransactionRecovery = ResourceInstallTransactionRecovery(),
 ) {
     private val appContext = context.applicationContext
@@ -33,8 +34,14 @@ internal class ResourceInstallRecoveryCoordinator(
             .filter(String::isNotBlank)
             .distinct()
             .sorted()
-        val results = resourceIds.map { resourceId ->
-            transactionRecovery.recover(File(workspacePath), resourceId).also { result ->
+        val workspace = File(workspacePath)
+        val candidateResults = candidateCoordinator.recoverInterrupted(workspace)
+        val candidateResourceIds = candidateResults.mapTo(hashSetOf()) { it.resourceId }
+        val results = candidateResults + resourceIds
+            .filterNot(candidateResourceIds::contains)
+            .map { resourceId -> transactionRecovery.recover(workspace, resourceId) }
+        results.forEach { result ->
+                val resourceId = result.resourceId
                 val entry = installStore.registryEntry(resourceId)
                 when (result.disposition) {
                     ResourceInstallRecoveryDisposition.RESTORED -> {
@@ -104,7 +111,6 @@ internal class ResourceInstallRecoveryCoordinator(
                     ResourceInstallRecoveryDisposition.NO_ACTION,
                     ResourceInstallRecoveryDisposition.ACTIVE -> Unit
                 }
-            }
         }
         return ResourceInstallRecoverySummary(
             examined = results.count { it.disposition != ResourceInstallRecoveryDisposition.NO_ACTION },

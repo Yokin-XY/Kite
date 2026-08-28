@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "revision": 13,
+  "revision": 16,
   "taskKey": "install-reliability-closure",
   "objective": "Complete the general resource installation reliability contract: content-addressed immutable artifacts, capacity-aware candidate installation, durable phase recovery, and repair.",
   "status": "active",
@@ -15,19 +15,19 @@
   ],
   "nextAction": "select_next_task",
   "lastValidation": {
-    "taskId": "T102",
-    "name": "final capacity-aware candidate build and cold start",
+    "taskId": "T103",
+    "name": "interrupted root activation restores the durable prior state",
     "status": "passed",
-    "summary": "The final focused candidate test passed after path-safety hardening; assembleDebug succeeded; the exact final APK installed on Meizu 18 and cold-started MainActivity with process 3910 alive and no AndroidRuntime or ActivityManager error.",
+    "summary": "The focused recovery test injected process death after candidate root activation but before commit completion; a fresh coordinator restored the prior install root and command, removed owned pending residue, and reported RESTORED. assembleDebug succeeded; Meizu 18 cold start reached MainActivity with process 4590 alive and no AndroidRuntime or ActivityManager error.",
     "evidenceRefs": [
-      "test:ResourceInstallCandidateCoordinatorTest",
+      "test:ResourceInstallCandidateCoordinatorTest:interrupted-root-activation",
       "build:app:assembleDebug",
-      "device:181QGEYH222B9:pid=3910:no-crash"
+      "device:181QGEYH222B9:pid=4590:no-crash"
     ],
-    "at": "2026-08-28T11:54:59Z"
+    "at": "2026-08-28T12:03:53Z"
   },
   "lastBatch": null,
-  "ledgerCursor": 13,
+  "ledgerCursor": 16,
   "legacyRefs": [
     {
       "path": "D:\\xm\\Kite-agent-conversation\\docs\\autonomous-task\\install-reliability\\state.json",
@@ -36,5 +36,5 @@
       "sha256": "2db8d23eef5b8ee149a46b4944e9a4b6fc8b95e816ea3ffe820449bfbebdf8ae"
     }
   ],
-  "updatedAt": "2026-08-28T11:55:07Z"
+  "updatedAt": "2026-08-28T12:04:02Z"
 }

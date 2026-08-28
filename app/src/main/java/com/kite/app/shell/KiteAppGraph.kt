@@ -156,6 +156,7 @@ internal class KiteAppGraph private constructor(context: Context) {
             context = appContext,
             installStore = resourceInstallStore,
             manifestLoader = resourceManifestLoader,
+            candidateCoordinator = resourceInstallCandidateCoordinator,
         )
     }
     val customAgentRegistrationStore: KiteCustomAgentRegistrationStore by lazy {

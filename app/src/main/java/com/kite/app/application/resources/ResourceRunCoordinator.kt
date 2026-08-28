@@ -53,6 +53,10 @@ internal interface ResourceRunGateway {
     )
     fun commitMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
         Result.success(Unit)
+    fun markMutationInstalling(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        Result.success(Unit)
+    fun markMutationVerified(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        Result.success(Unit)
     fun finalizeMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
         Result.success(Unit)
     fun rollbackMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
@@ -140,6 +144,15 @@ internal class ResourceRunCoordinator(
                 serialExecutor.execute {
                     result.onSuccess {
                         val current = activeRuns[state.instanceId] ?: return@onSuccess
+                        val installing = gateway.markMutationInstalling(current.request, state.instanceId)
+                        if (installing.isFailure) {
+                            settlePreparationFailure(
+                                current,
+                                state.instanceId,
+                                "资源安装状态落盘失败：${installing.exceptionOrNull()?.message ?: "未知错误"}",
+                            )
+                            return@onSuccess
+                        }
                         val startResult = runOrchestrator.start(
                             RunStartRequest(
                                 recipe = current.request.recipe,
@@ -258,6 +271,16 @@ internal class ResourceRunCoordinator(
 
     private fun settleSuccess(active: ActiveRun, state: CardRunState) {
         val request = active.request
+        val verified = gateway.markMutationVerified(request, state.instanceId)
+        if (verified.isFailure) {
+            settleFailure(
+                active,
+                state.instanceId,
+                "${operationLabel(request.operation)}验证状态落盘失败：" +
+                    (verified.exceptionOrNull()?.message ?: "未知错误"),
+            )
+            return
+        }
         val commit = gateway.commitMutation(request, state.instanceId)
         if (commit.isFailure) {
             settleFailure(

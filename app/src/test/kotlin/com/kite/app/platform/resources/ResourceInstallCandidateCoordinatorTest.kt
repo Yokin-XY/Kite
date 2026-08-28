@@ -1,6 +1,7 @@
 package com.kite.app.platform.resources
 
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.resources.ResourceInstallRecoveryDisposition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -66,6 +67,8 @@ class ResourceInstallCandidateCoordinatorTest {
         val firstCandidateBin = File(firstEnvironment.filesystemBindings.last().sourcePath)
         File(firstCandidateBin, "hermes").writeText("new-hermes-command")
 
+        coordinator.markInstalling(first, "run-hermes").getOrThrow()
+        coordinator.markVerified(first, "run-hermes").getOrThrow()
         coordinator.commit(first, "run-hermes").getOrThrow()
 
         assertEquals("new-hermes", File(softwareRoot, "$first/version.txt").readText())
@@ -77,6 +80,53 @@ class ResourceInstallCandidateCoordinatorTest {
         coordinator.rollback(second, "run-git").getOrThrow()
         assertEquals("old-git", File(softwareRoot, "$second/version.txt").readText())
         assertFalse(secondCandidate.exists())
+    }
+
+    @Test
+    fun `正式根切换后进程中断会在下次启动恢复旧版本`() {
+        val workspace = temporaryFolder.newFolder("recovery-workspace")
+        val softwareRoot = File(workspace, ".kf/software").apply { mkdirs() }
+        val binRoot = File(workspace, ".kf/bin").apply { mkdirs() }
+        val resourceId = "kite.hermes.core"
+        seedInstall(softwareRoot, binRoot, resourceId, "hermes", "old-hermes")
+        val interrupted = ResourceInstallCandidateCoordinator { checkpoint ->
+            if (checkpoint == ResourceInstallCandidateCoordinator.CHECKPOINT_ROOT_ACTIVATED) {
+                throw SimulatedProcessDeath()
+            }
+        }
+        interrupted.begin(
+            workspaceDirectory = workspace,
+            resourceId = resourceId,
+            runInstanceId = "run-interrupted",
+            guestInstallRoot = KiteResourceInstallRecipes.softwarePath(resourceId),
+            preservePaths = emptyList(),
+            operation = KiteResourceInstallRecipes.OP_UPDATE,
+            targetVersion = "2.0.0",
+            previousVersion = "1.0.0",
+        ).getOrThrow()
+        val environment = interrupted.environmentForRun("run-interrupted")
+        val candidateRoot = File(environment.filesystemBindings.first().sourcePath)
+        val candidateBin = File(environment.filesystemBindings.last().sourcePath)
+        File(candidateRoot, "version.txt").writeText("new-hermes")
+        File(candidateRoot, ".kite-managed-commands").writeText(
+            "hermes\t${KiteResourceInstallRecipes.softwarePath(resourceId)}/bin/hermes\n"
+        )
+        File(candidateBin, "hermes").writeText("new-hermes-command")
+        interrupted.markInstalling(resourceId, "run-interrupted").getOrThrow()
+        interrupted.markVerified(resourceId, "run-interrupted").getOrThrow()
+
+        val commit = interrupted.commit(resourceId, "run-interrupted")
+        assertTrue(commit.exceptionOrNull() is SimulatedProcessDeath)
+        assertEquals("new-hermes", File(softwareRoot, "$resourceId/version.txt").readText())
+
+        val recovery = ResourceInstallCandidateCoordinator()
+            .recoverInterrupted(workspace)
+            .single()
+
+        assertEquals(ResourceInstallRecoveryDisposition.RESTORED, recovery.disposition)
+        assertEquals("old-hermes", File(softwareRoot, "$resourceId/version.txt").readText())
+        assertEquals("old-hermes-command", File(binRoot, "hermes").readText())
+        assertFalse(File(softwareRoot, ".kite-pending").exists())
     }
 
     private fun seedInstall(
@@ -93,4 +143,6 @@ class ResourceInstallCandidateCoordinatorTest {
         )
         File(binRoot, command).writeText("old-$command-command")
     }
+
+    private class SimulatedProcessDeath : Error("simulated_process_death")
 }

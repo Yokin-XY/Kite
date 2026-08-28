@@ -3,7 +3,10 @@ package com.kite.app.platform.resources
 import com.kite.app.application.runs.RunExecutionEnvironment
 import com.kite.app.application.runs.RunExecutionFilesystemBinding
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.resources.ResourceInstallRecoveryDisposition
+import com.kite.app.resources.ResourceInstallTransactionRecoveryResult
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -11,6 +14,7 @@ import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -20,8 +24,19 @@ import java.util.concurrent.ConcurrentHashMap
  * 原子切换正式安装根，并按资源命令账本合并公共命令。不同资源的候选目录互不共享，
  * 是否能够并发仍由上层 writeScopes 决定。
  */
-internal class ResourceInstallCandidateCoordinator {
-    private enum class Phase { PREPARED, ROOT_COMMITTED }
+internal class ResourceInstallCandidateCoordinator(
+    private val phaseCheckpoint: (String) -> Unit = {},
+) {
+    private enum class Phase {
+        PREPARING,
+        PREPARED,
+        INSTALLING,
+        VERIFIED,
+        COMMITTING,
+        COMMITTED,
+        ROLLING_BACK,
+        ROLLED_BACK,
+    }
 
     private data class CandidateRecord(
         val resourceId: String,
@@ -34,9 +49,15 @@ internal class ResourceInstallCandidateCoordinator {
         val backupRoot: File,
         val commandBackupRoot: File,
         val preservePaths: List<String>,
-        @Volatile var phase: Phase = Phase.PREPARED,
+        val operation: String,
+        val targetVersion: String,
+        val previousVersion: String,
+        @Volatile var phase: Phase = Phase.PREPARING,
         @Volatile var commandNames: Set<String> = emptySet(),
-    )
+    ) {
+        val stateFile: File
+            get() = File(pendingRoot, STATE_FILE_NAME)
+    }
 
     private val records = ConcurrentHashMap<String, CandidateRecord>()
 
@@ -46,7 +67,12 @@ internal class ResourceInstallCandidateCoordinator {
         runInstanceId: String,
         guestInstallRoot: String,
         preservePaths: List<String>,
-    ): Result<Unit> = runCatching {
+        operation: String = KiteResourceInstallRecipes.OP_INSTALL,
+        targetVersion: String = "",
+        previousVersion: String = "",
+    ): Result<Unit> {
+        var record: CandidateRecord? = null
+        return runCatching {
         val safeResourceId = requireSafeId(resourceId, "resourceId")
         val safeRunId = requireSafeId(runInstanceId, "runInstanceId")
         val expectedGuestRoot = KiteResourceInstallRecipes.softwarePath(safeResourceId)
@@ -87,10 +113,7 @@ internal class ResourceInstallCandidateCoordinator {
         require(formalBin.mkdirs() || formalBin.isDirectory) {
             "resource_candidate_formal_bin_unavailable"
         }
-        if (formalRoot.exists()) copyTree(formalRoot.toPath(), candidateRoot.toPath())
-        copyTree(formalBin.toPath(), candidateBin.toPath())
-
-        val record = CandidateRecord(
+        record = CandidateRecord(
             resourceId = safeResourceId,
             runInstanceId = runInstanceId,
             formalRoot = formalRoot,
@@ -101,9 +124,23 @@ internal class ResourceInstallCandidateCoordinator {
             backupRoot = backupRoot,
             commandBackupRoot = commandBackupRoot,
             preservePaths = preservePaths.map(::requireSafeRelativePath).distinct(),
+            operation = requireOperation(operation),
+            targetVersion = requireSafeStateValue(targetVersion, "targetVersion"),
+            previousVersion = requireSafeStateValue(previousVersion, "previousVersion"),
         )
-        check(records.putIfAbsent(runInstanceId, record) == null) {
+        val activeRecord = checkNotNull(record)
+        check(records.putIfAbsent(runInstanceId, activeRecord) == null) {
             "resource_candidate_run_already_prepared"
+        }
+        writeRecord(activeRecord)
+        if (formalRoot.exists()) copyTree(formalRoot.toPath(), candidateRoot.toPath())
+        copyTree(formalBin.toPath(), candidateBin.toPath())
+        updatePhase(activeRecord, Phase.PREPARED)
+        }.onFailure {
+            record?.let { failed ->
+                records.remove(runInstanceId, failed)
+                runCatching { deleteOwnedPending(failed) }
+            }
         }
     }
 
@@ -126,14 +163,31 @@ internal class ResourceInstallCandidateCoordinator {
         )
     }
 
+    fun markInstalling(resourceId: String, runInstanceId: String): Result<Unit> = runCatching {
+        val record = requireRecord(resourceId, runInstanceId)
+        require(record.phase == Phase.PREPARED || record.phase == Phase.INSTALLING) {
+            "resource_candidate_install_phase_invalid:${record.phase}"
+        }
+        updatePhase(record, Phase.INSTALLING)
+    }
+
+    fun markVerified(resourceId: String, runInstanceId: String): Result<Unit> = runCatching {
+        val record = requireRecord(resourceId, runInstanceId)
+        require(record.phase == Phase.INSTALLING || record.phase == Phase.VERIFIED) {
+            "resource_candidate_verify_phase_invalid:${record.phase}"
+        }
+        updatePhase(record, Phase.VERIFIED)
+    }
+
     fun commit(resourceId: String, runInstanceId: String): Result<Unit> = runCatching {
         val record = requireRecord(resourceId, runInstanceId)
-        require(record.phase == Phase.PREPARED) { "resource_candidate_not_prepared" }
+        require(record.phase == Phase.VERIFIED) { "resource_candidate_not_verified" }
         val oldLedger = readCommandLedger(File(record.formalRoot, COMMAND_LEDGER))
         val newLedger = readCommandLedger(File(record.candidateRoot, COMMAND_LEDGER))
         val commandNames = (oldLedger.keys + newLedger.keys).toSortedSet()
         record.commandNames = commandNames
         snapshotCommands(record, commandNames)
+        updatePhase(record, Phase.COMMITTING)
 
         var previousMoved = false
         var candidateMoved = false
@@ -144,19 +198,21 @@ internal class ResourceInstallCandidateCoordinator {
             }
             atomicMove(record.candidateRoot.toPath(), record.formalRoot.toPath())
             candidateMoved = true
+            phaseCheckpoint(CHECKPOINT_ROOT_ACTIVATED)
             applyCommands(record, oldLedger, newLedger)
-            record.phase = Phase.ROOT_COMMITTED
-        } catch (error: Throwable) {
+            updatePhase(record, Phase.COMMITTED)
+        } catch (error: Exception) {
             restoreAfterFailedCommit(record, previousMoved, candidateMoved)
                 .exceptionOrNull()
                 ?.let(error::addSuppressed)
+            if (error.suppressed.isEmpty()) updatePhase(record, Phase.VERIFIED)
             throw error
         }
     }
 
     fun finalize(resourceId: String, runInstanceId: String): Result<Unit> = runCatching {
         val record = requireRecord(resourceId, runInstanceId)
-        require(record.phase == Phase.ROOT_COMMITTED) { "resource_candidate_not_committed" }
+        require(record.phase == Phase.COMMITTED) { "resource_candidate_not_committed" }
         clearRetainedPaths(record)
         deleteOwnedPending(record)
         records.remove(runInstanceId, record)
@@ -168,9 +224,11 @@ internal class ResourceInstallCandidateCoordinator {
             return Result.failure(IllegalStateException("resource_candidate_owner_mismatch"))
         }
         return runCatching {
-            if (record.phase == Phase.ROOT_COMMITTED) {
+            updatePhase(record, Phase.ROLLING_BACK)
+            if (record.backupRoot.exists() || !record.candidateRoot.exists()) {
                 restoreCommitted(record).getOrThrow()
             }
+            updatePhase(record, Phase.ROLLED_BACK)
             deleteOwnedPending(record)
             records.remove(runInstanceId, record)
         }
@@ -244,7 +302,6 @@ internal class ResourceInstallCandidateCoordinator {
             atomicMove(record.backupRoot.toPath(), record.formalRoot.toPath())
         }
         restoreCommands(record)
-        record.phase = Phase.PREPARED
     }
 
     private fun restoreCommands(record: CandidateRecord) {
@@ -278,6 +335,213 @@ internal class ResourceInstallCandidateCoordinator {
         if (runRoot?.isDirectory == true && runRoot.list().isNullOrEmpty()) {
             Files.deleteIfExists(runRoot.toPath())
         }
+        val pendingRoot = runRoot?.parentFile
+        if (pendingRoot?.isDirectory == true && pendingRoot.list().isNullOrEmpty()) {
+            Files.deleteIfExists(pendingRoot.toPath())
+        }
+    }
+
+    fun recoverInterrupted(workspaceDirectory: File): List<ResourceInstallTransactionRecoveryResult> {
+        val workspace = workspaceDirectory.absoluteFile.normalize()
+        val pendingRoot = File(workspace, ".kf/software/.kite-pending").absoluteFile.normalize()
+        if (!pendingRoot.isDirectory) return emptyList()
+        return pendingRoot.listFiles().orEmpty()
+            .filter(File::isDirectory)
+            .sortedBy(File::getName)
+            .flatMap { runRoot ->
+                runRoot.listFiles().orEmpty()
+                    .filter(File::isDirectory)
+                    .sortedBy(File::getName)
+            }
+            .filter { candidateRoot -> File(candidateRoot, STATE_FILE_NAME).isFile }
+            .map { candidateRoot -> recoverCandidate(workspace, candidateRoot) }
+    }
+
+    private fun recoverCandidate(
+        workspace: File,
+        pendingRoot: File,
+    ): ResourceInstallTransactionRecoveryResult {
+        val fallbackResourceId = KiteResourceInstallRecipes.safeId(pendingRoot.name)
+        return runCatching {
+            val record = readRecord(workspace, pendingRoot)
+            if (records.containsKey(record.runInstanceId)) {
+                return@runCatching recoveryResult(
+                    record,
+                    ResourceInstallRecoveryDisposition.ACTIVE,
+                    "资源安装仍在当前进程中运行，未接管候选事务",
+                )
+            }
+            when (record.phase) {
+                Phase.COMMITTED -> {
+                    require(record.formalRoot.isDirectory) {
+                        "resource_candidate_committed_root_missing"
+                    }
+                    clearRetainedPaths(record)
+                    deleteOwnedPending(record)
+                    recoveryResult(
+                        record,
+                        ResourceInstallRecoveryDisposition.COMMITTED,
+                        "上次资源安装已提交，已补齐登记并清理候选残留",
+                    )
+                }
+                Phase.COMMITTING,
+                Phase.ROLLING_BACK -> {
+                    restoreInterrupted(record)
+                    val restored = record.formalRoot.isDirectory
+                    deleteOwnedPending(record)
+                    recoveryResult(
+                        record,
+                        if (restored) {
+                            ResourceInstallRecoveryDisposition.RESTORED
+                        } else {
+                            ResourceInstallRecoveryDisposition.FAILED
+                        },
+                        if (restored) {
+                            "上次资源安装在提交边界中断，已恢复更新前版本"
+                        } else {
+                            "上次资源安装在提交边界中断，候选已撤销但没有旧版本"
+                        },
+                    )
+                }
+                Phase.PREPARING,
+                Phase.PREPARED,
+                Phase.INSTALLING,
+                Phase.VERIFIED,
+                Phase.ROLLED_BACK -> {
+                    val previousRootStillUsable = record.formalRoot.isDirectory
+                    deleteOwnedPending(record)
+                    recoveryResult(
+                        record,
+                        if (previousRootStillUsable) {
+                            ResourceInstallRecoveryDisposition.RESTORED
+                        } else {
+                            ResourceInstallRecoveryDisposition.FAILED
+                        },
+                        if (previousRootStillUsable) {
+                            "上次资源安装在正式切换前中断，原版本保持可用"
+                        } else {
+                            "上次资源安装在正式切换前中断，已清理未完成候选"
+                        },
+                    )
+                }
+            }
+        }.getOrElse { error ->
+            ResourceInstallTransactionRecoveryResult(
+                resourceId = fallbackResourceId,
+                disposition = ResourceInstallRecoveryDisposition.FAILED,
+                message = "资源候选事务自动恢复失败：${error.message ?: error.javaClass.simpleName}",
+            )
+        }
+    }
+
+    private fun restoreInterrupted(record: CandidateRecord) {
+        val candidateWasActivated = !record.candidateRoot.exists()
+        if (record.backupRoot.exists()) {
+            if (record.formalRoot.exists()) deleteTree(record.formalRoot.toPath())
+            atomicMove(record.backupRoot.toPath(), record.formalRoot.toPath())
+        } else if (candidateWasActivated && record.formalRoot.exists()) {
+            deleteTree(record.formalRoot.toPath())
+        }
+        restoreCommands(record)
+    }
+
+    private fun recoveryResult(
+        record: CandidateRecord,
+        disposition: ResourceInstallRecoveryDisposition,
+        message: String,
+    ) = ResourceInstallTransactionRecoveryResult(
+        resourceId = record.resourceId,
+        disposition = disposition,
+        operation = record.operation,
+        targetVersion = record.targetVersion,
+        message = message,
+    )
+
+    private fun updatePhase(record: CandidateRecord, phase: Phase) {
+        record.phase = phase
+        writeRecord(record)
+    }
+
+    private fun writeRecord(record: CandidateRecord) {
+        val properties = Properties().apply {
+            setProperty(STATE_SCHEMA_KEY, STATE_SCHEMA)
+            setProperty(STATE_PHASE_KEY, record.phase.name)
+            setProperty(STATE_RESOURCE_ID_KEY, record.resourceId)
+            setProperty(STATE_RUN_ID_KEY, record.runInstanceId)
+            setProperty(STATE_OPERATION_KEY, record.operation)
+            setProperty(STATE_TARGET_VERSION_KEY, record.targetVersion)
+            setProperty(STATE_PREVIOUS_VERSION_KEY, record.previousVersion)
+            setProperty(STATE_PRESERVE_PATHS_KEY, record.preservePaths.joinToString("\t"))
+            setProperty(STATE_COMMAND_NAMES_KEY, record.commandNames.joinToString("\t"))
+        }
+        val stateFile = record.stateFile
+        stateFile.parentFile?.mkdirs()
+        val temp = File(stateFile.parentFile, ".${stateFile.name}.tmp-${System.nanoTime()}")
+        FileOutputStream(temp).use { output ->
+            properties.store(output, null)
+            output.fd.sync()
+        }
+        try {
+            Files.move(
+                temp.toPath(),
+                stateFile.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(temp.toPath(), stateFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    private fun readRecord(workspace: File, pendingRoot: File): CandidateRecord {
+        val properties = Properties().apply {
+            File(pendingRoot, STATE_FILE_NAME).inputStream().use { input -> load(input) }
+        }
+        require(properties.getProperty(STATE_SCHEMA_KEY) == STATE_SCHEMA) {
+            "resource_candidate_state_schema_unsupported"
+        }
+        val resourceId = requireSafeId(properties.getProperty(STATE_RESOURCE_ID_KEY).orEmpty(), "resourceId")
+        val runInstanceId = properties.getProperty(STATE_RUN_ID_KEY).orEmpty()
+        val safeRunId = requireSafeId(runInstanceId, "runInstanceId")
+        val softwareRoot = File(workspace, ".kf/software").absoluteFile.normalize()
+        val expectedPending = File(softwareRoot, ".kite-pending/$safeRunId/$resourceId")
+            .absoluteFile
+            .normalize()
+        require(pendingRoot.absoluteFile.normalize() == expectedPending) {
+            "resource_candidate_state_owner_mismatch"
+        }
+        val preservePaths = properties.getProperty(STATE_PRESERVE_PATHS_KEY).orEmpty()
+            .split('\t')
+            .filter(String::isNotBlank)
+            .map(::requireSafeRelativePath)
+        val commandNames = properties.getProperty(STATE_COMMAND_NAMES_KEY).orEmpty()
+            .split('\t')
+            .filter(String::isNotBlank)
+            .map(::requireSafeCommandName)
+            .toSortedSet()
+        return CandidateRecord(
+            resourceId = resourceId,
+            runInstanceId = runInstanceId,
+            formalRoot = File(softwareRoot, resourceId),
+            formalBin = File(workspace, ".kf/bin"),
+            pendingRoot = expectedPending,
+            candidateRoot = File(expectedPending, "install"),
+            candidateBin = File(expectedPending, "bin"),
+            backupRoot = File(expectedPending, "previous-install"),
+            commandBackupRoot = File(expectedPending, "previous-commands"),
+            preservePaths = preservePaths,
+            operation = requireOperation(properties.getProperty(STATE_OPERATION_KEY).orEmpty()),
+            targetVersion = requireSafeStateValue(
+                properties.getProperty(STATE_TARGET_VERSION_KEY).orEmpty(),
+                "targetVersion",
+            ),
+            previousVersion = requireSafeStateValue(
+                properties.getProperty(STATE_PREVIOUS_VERSION_KEY).orEmpty(),
+                "previousVersion",
+            ),
+            phase = Phase.valueOf(properties.getProperty(STATE_PHASE_KEY).orEmpty()),
+            commandNames = commandNames,
+        )
     }
 
     private fun readCommandLedger(file: File): Map<String, String> {
@@ -382,9 +646,38 @@ internal class ResourceInstallCandidateCoordinator {
         return safe
     }
 
+    private fun requireOperation(value: String): String {
+        require(value in TRANSACTION_OPERATIONS) { "resource_candidate_operation_unsupported:$value" }
+        return value
+    }
+
+    private fun requireSafeStateValue(value: String, field: String): String {
+        val safe = value.trim()
+        require(STATE_VALUE.matches(safe)) { "resource_candidate_${field}_unsafe" }
+        return safe
+    }
+
     companion object {
         const val CANDIDATE_ENV = "KITE_RESOURCE_CANDIDATE"
+        internal const val CHECKPOINT_ROOT_ACTIVATED = "root_activated"
         private const val COMMAND_LEDGER = ".kite-managed-commands"
         private const val RETAINED_SUFFIX = ".kite-retained"
+        private const val STATE_FILE_NAME = "transaction.properties"
+        private const val STATE_SCHEMA_KEY = "schema"
+        private const val STATE_PHASE_KEY = "phase"
+        private const val STATE_RESOURCE_ID_KEY = "resourceId"
+        private const val STATE_RUN_ID_KEY = "runInstanceId"
+        private const val STATE_OPERATION_KEY = "operation"
+        private const val STATE_TARGET_VERSION_KEY = "targetVersion"
+        private const val STATE_PREVIOUS_VERSION_KEY = "previousVersion"
+        private const val STATE_PRESERVE_PATHS_KEY = "preservePaths"
+        private const val STATE_COMMAND_NAMES_KEY = "commandNames"
+        private const val STATE_SCHEMA = "kite_resource_candidate_transaction_v1"
+        private val STATE_VALUE = Regex("[A-Za-z0-9._:+-]{0,128}")
+        private val TRANSACTION_OPERATIONS = setOf(
+            KiteResourceInstallRecipes.OP_INSTALL,
+            KiteResourceInstallRecipes.OP_UPDATE,
+            KiteResourceInstallRecipes.OP_REINSTALL,
+        )
     }
 }
