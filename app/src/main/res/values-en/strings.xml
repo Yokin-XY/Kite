@@ -301,6 +301,9 @@
     <string name="startup_report_no_issues_title">No recorded problems found</string>
     <string name="startup_report_no_issues_summary">Successful checks are not listed here. The generated report still contains the complete state.</string>
     <string name="startup_report_reason_missing">No specific failure reason was recorded</string>
+    <string name="startup_report_retry_item">Retry this item</string>
+    <string name="startup_report_retrying">Preparing retry…</string>
+    <string name="startup_report_retry_failed">Could not retry: %1$s</string>
     <string name="startup_report_recorded_at">Recorded: %1$s</string>
     <string name="startup_report_load_failed">Unable to read report</string>
     <string name="startup_report_itself">First-run report</string>

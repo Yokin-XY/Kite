@@ -26,6 +26,7 @@ internal data class StartupReportCheck(
     val reason: String = "",
     val updatedAt: Long = 0L,
     val kind: StartupReportCheckKind,
+    val retryResourceId: String = "",
 )
 
 internal data class StartupReportLogFile(
@@ -59,4 +60,12 @@ internal object StartupReportProjector {
                 (exactRootfsFailure && check.kind == StartupReportCheckKind.Bootstrap)
         }
     }
+
+    fun retryTarget(check: StartupReportCheck): String? =
+        check.retryResourceId
+            .takeIf(String::isNotBlank)
+            ?.takeIf {
+                check.status == StartupReportCheckStatus.Failed &&
+                    check.kind == StartupReportCheckKind.Resource
+            }
 }

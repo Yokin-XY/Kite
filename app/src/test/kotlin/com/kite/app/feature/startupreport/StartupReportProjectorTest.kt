@@ -34,6 +34,31 @@ class StartupReportProjectorTest {
     }
 
     @Test
+    fun `只有当前仍失败的具体组件提供定向重试`() {
+        val currentFailure = check(
+            "git",
+            StartupReportCheckStatus.Failed,
+            StartupReportCheckKind.Resource,
+            retryResourceId = "kite.git",
+        )
+        val historicalFailure = check(
+            "curl",
+            StartupReportCheckStatus.Failed,
+            StartupReportCheckKind.Resource,
+        )
+        val aggregateFailure = check(
+            "toolchain",
+            StartupReportCheckStatus.Failed,
+            StartupReportCheckKind.Toolchain,
+            retryResourceId = "kite.toolchain",
+        )
+
+        assertEquals("kite.git", StartupReportProjector.retryTarget(currentFailure))
+        assertEquals(null, StartupReportProjector.retryTarget(historicalFailure))
+        assertEquals(null, StartupReportProjector.retryTarget(aggregateFailure))
+    }
+
+    @Test
     fun `生成内容保留完整日志而不是报告层截断`() {
         val log = File.createTempFile("startup-report", ".log")
         val marker = "log-tail-marker"
@@ -67,6 +92,7 @@ class StartupReportProjectorTest {
         status: StartupReportCheckStatus,
         kind: StartupReportCheckKind,
         reason: String = "",
+        retryResourceId: String = "",
     ) = StartupReportCheck(
         id = id,
         title = id,
@@ -74,5 +100,6 @@ class StartupReportProjectorTest {
         status = status,
         reason = reason,
         kind = kind,
+        retryResourceId = retryResourceId,
     )
 }

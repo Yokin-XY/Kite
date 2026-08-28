@@ -4,6 +4,7 @@ import android.content.Context
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.resources.ResourceActionEffect
 import com.kite.app.application.resources.ResourceActionGateway
+import com.kite.app.application.resources.FailedResourceRecoveryPolicy
 import com.kite.app.application.resources.ResourceDependencyGuard
 import com.kite.app.application.resources.ResourceInstallPreparationFlights
 import com.kite.app.application.resources.ResourceInstallPreparationToken
@@ -407,9 +408,13 @@ internal class AndroidResourceActionGateway(
         if (installStore.isFailed(target.id, environmentId) &&
             failedOperation != KiteResourceInstallStore.OP_UNINSTALL
         ) {
+            val continuation = FailedResourceRecoveryPolicy.continuation(
+                target.id,
+                installStore.planSnapshot(environmentId),
+            )
             return uninstall(
                 target = target,
-                continuation = ResourceRunContinuation.ResumeInstallWizard,
+                continuation = continuation,
                 environmentId = environmentId,
                 parentInstanceId = parentInstanceId,
             )

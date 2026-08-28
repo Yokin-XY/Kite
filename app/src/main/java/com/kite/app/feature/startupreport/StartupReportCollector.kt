@@ -131,6 +131,7 @@ internal object StartupReportCollector {
                     },
                     updatedAt = recordedFailure?.occurredAtMs ?: entry?.updatedAt ?: 0L,
                     kind = StartupReportCheckKind.Resource,
+                    retryResourceId = descriptor.resourceId.takeIf { failedNow }.orEmpty(),
                 ))
             }
         }

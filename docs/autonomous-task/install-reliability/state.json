@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "revision": 23,
+  "revision": 29,
   "taskKey": "install-reliability",
   "objective": "Build a general reliable software installation pipeline covering shared artifact publication, conflict-aware scheduling, transactional recovery, and failed-item retry.",
-  "status": "active",
+  "status": "completed",
   "activeTasks": [],
   "ready": [],
   "blocked": [],
@@ -15,17 +15,18 @@
   ],
   "nextAction": "select_next_task",
   "lastValidation": {
-    "taskId": "T003",
-    "name": "debug cold-start crash evidence",
+    "taskId": "T004",
+    "name": "failed item exposes only its valid retry route",
     "status": "passed",
-    "summary": "Debug APK installed on MEIZU 18, cold start reached MainActivity, process 30742 remained alive, and AndroidRuntime/ActivityManager emitted no error.",
+    "summary": "Only a currently failed concrete resource projects a retry target; standalone failures reinstall only themselves while queued failures resume from their original plan position.",
     "evidenceRefs": [
-      "adb:181QGEYH222B9:2026-08-28"
+      "test:StartupReportProjectorTest",
+      "test:FailedResourceRecoveryPolicyTest"
     ],
-    "at": "2026-08-28T10:50:21Z"
+    "at": "2026-08-28T10:59:00Z"
   },
   "lastBatch": null,
-  "ledgerCursor": 23,
+  "ledgerCursor": 29,
   "legacyRefs": [],
-  "updatedAt": "2026-08-28T10:50:21Z"
+  "updatedAt": "2026-08-28T10:59:00Z"
 }

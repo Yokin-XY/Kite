@@ -9,7 +9,11 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.kite.app.CardRunIntents
 import com.kite.app.R
+import com.kite.app.application.resources.ResourceActionEffect
+import com.kite.app.shell.KiteAppGraph
+import com.kite.app.shell.RunNotificationPermissionFragment
 import com.kite.app.ui.UiActionRole
 import com.kite.app.ui.UiKit
 import com.kite.app.ui.UiTextRole
@@ -27,12 +31,18 @@ class StartupReportActivity : AppCompatActivity() {
     private lateinit var reportStatus: TextView
     private lateinit var generateAction: TextView
     private var report: StartupReportBundle? = null
+    private var initialResumeHandled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ui = UiKit(this, kiteThemeEnvironment())
         setContentView(buildContent())
         loadReport()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (initialResumeHandled) loadReport() else initialResumeHandled = true
     }
 
     private fun buildContent(): View = LinearLayout(this).apply {
@@ -164,6 +174,93 @@ class StartupReportActivity : AppCompatActivity() {
                 DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.MEDIUM).format(Date(issue.updatedAt)),
             )).apply { setPadding(0, ui.dp(8), 0, 0) })
         }
+        StartupReportProjector.retryTarget(issue)?.let { resourceId ->
+            addView(TextView(this@StartupReportActivity).apply {
+                text = getString(R.string.startup_report_retry_item)
+                ui.applyActionRole(this, UiActionRole.Primary)
+                setOnClickListener { retryResourceIssue(resourceId, this) }
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ui.dp(46),
+            ).apply { setMargins(0, ui.dp(12), 0, 0) })
+        }
+    }
+
+    private fun retryResourceIssue(resourceId: String, action: TextView) {
+        action.isEnabled = false
+        action.alpha = 0.55f
+        action.text = getString(R.string.startup_report_retrying)
+        lifecycleScope.launch {
+            runCatching {
+                KiteAppGraph.from(applicationContext).resourceActionWorkflowCoordinator
+                    .recoverFailedInstall(resourceId, parentInstanceId = null)
+            }.onSuccess { effects ->
+                applyRetryEffects(resourceId, action, effects)
+            }.onFailure { error ->
+                resetRetryAction(action)
+                Toast.makeText(
+                    this@StartupReportActivity,
+                    getString(
+                        R.string.startup_report_retry_failed,
+                        error.message ?: error.javaClass.simpleName,
+                    ),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
+
+    private fun applyRetryEffects(
+        resourceId: String,
+        action: TextView,
+        effects: List<ResourceActionEffect>,
+    ) {
+        effects.forEach { effect ->
+            when (effect) {
+                is ResourceActionEffect.OpenRun -> startActivity(
+                    CardRunIntents.launchIntent(
+                        context = this,
+                        recipeId = effect.recipeId,
+                        instanceId = effect.instanceId,
+                        launchSource = CardRunIntents.SOURCE_RESOURCE_INSTALL,
+                        autoStart = effect.autoStart,
+                        generation = effect.generation,
+                    )
+                )
+                is ResourceActionEffect.OpenInstallWizard -> startActivity(
+                    CardRunIntents.resourceInstallWizardIntent(
+                        context = this,
+                        recipeId = effect.recipeId,
+                        instanceId = effect.instanceId,
+                        targetResourceId = effect.targetResourceId,
+                        planResourceIds = effect.planResourceIds,
+                        generation = effect.generation,
+                    )
+                )
+                is ResourceActionEffect.Message -> Toast.makeText(
+                    this,
+                    effect.text,
+                    Toast.LENGTH_SHORT,
+                ).show()
+                ResourceActionEffect.RequireNotifications ->
+                    RunNotificationPermissionFragment.request(
+                        fragmentManager = supportFragmentManager,
+                        title = getString(R.string.startup_report_retry_item),
+                        key = "startup-report-retry:$resourceId",
+                        retry = { retryResourceIssue(resourceId, action) },
+                        onCancelled = { resetRetryAction(action) },
+                    )
+            }
+        }
+        if (effects.none { it == ResourceActionEffect.RequireNotifications }) {
+            resetRetryAction(action)
+        }
+    }
+
+    private fun resetRetryAction(action: TextView) {
+        action.isEnabled = true
+        action.alpha = 1f
+        action.text = getString(R.string.startup_report_retry_item)
     }
 
     private fun emptyIssuesCard(): View = LinearLayout(this).apply {

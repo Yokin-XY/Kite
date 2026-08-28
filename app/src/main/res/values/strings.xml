@@ -300,6 +300,9 @@
     <string name="startup_report_no_issues_title">没有发现已记录的异常</string>
     <string name="startup_report_no_issues_summary">这里不会逐项展示正常结果；完整状态仍会写入生成的报告。</string>
     <string name="startup_report_reason_missing">没有记录具体失败原因</string>
+    <string name="startup_report_retry_item">重试此项</string>
+    <string name="startup_report_retrying">正在准备重试…</string>
+    <string name="startup_report_retry_failed">无法重试：%1$s</string>
     <string name="startup_report_recorded_at">记录时间：%1$s</string>
     <string name="startup_report_load_failed">报告读取失败</string>
     <string name="startup_report_itself">首次运行报告</string>
