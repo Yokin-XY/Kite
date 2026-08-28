@@ -7,6 +7,8 @@ import com.kite.app.application.resources.ResourceFeatureRunSnapshot
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.resources.KiteResourceHomeLayout
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.resources.KiteResourceInstallContract
+import com.kite.app.resources.KiteResourceInstallContractResolution
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
@@ -55,6 +57,7 @@ internal class AndroidResourceFeatureGateway(
         withContext(Dispatchers.IO) {
             if (forceRefresh) manifestLoader.invalidate()
             val manifests = orderedVisibleManifests()
+            reconcileInstalledContracts(manifests)
             val nodeInstalled = manifests.any { it.providesNodeRuntime() } &&
                 runCatching(nodeRuntimeInstalled).getOrDefault(false)
             manifests.map { manifest ->
@@ -118,6 +121,59 @@ internal class AndroidResourceFeatureGateway(
         return (homeOrder + manifests.map(KiteResourceManifest::id))
             .distinct()
             .mapNotNull(byId::get)
+    }
+
+    private fun reconcileInstalledContracts(manifests: List<KiteResourceManifest>) {
+        val environmentId = installStore.currentEnvironmentId()
+        manifests.asSequence()
+            .filter { manifest -> manifest.management.userLifecycleEnabled }
+            .mapNotNull { manifest ->
+                val entry = installStore.registryEntry(manifest.id, environmentId)
+                    ?.takeIf { it.installed && !it.busy }
+                    ?: return@mapNotNull null
+                Triple(
+                    manifest,
+                    entry,
+                    KiteResourceInstallContract.resolve(
+                        currentManifest = manifest.rawJson,
+                        installedManifestJson = installStore.installedSnapshotManifestJson(
+                            manifest.id,
+                            environmentId,
+                        ),
+                    ),
+                )
+            }
+            .forEach { (manifest, entry, resolution) ->
+                when (resolution) {
+                    KiteResourceInstallContractResolution.Current -> Unit
+                    is KiteResourceInstallContractResolution.UpdateAvailable -> {
+                        val alreadyCurrent =
+                            entry.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE &&
+                                entry.latestVersion == resolution.currentVersion &&
+                                entry.operation == KiteResourceInstallRecipes.OP_UPDATE
+                        if (!alreadyCurrent) {
+                            installStore.markDefinitionUpdateAvailable(
+                                resourceId = manifest.id,
+                                installedVersion = resolution.installedVersion,
+                                latestVersion = resolution.currentVersion,
+                                environmentId = environmentId,
+                            )
+                        }
+                    }
+                    KiteResourceInstallContractResolution.RepairRequired -> {
+                        val alreadyRequired =
+                            entry.operation == KiteResourceInstallRecipes.OP_REPAIR &&
+                                entry.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_FAILED
+                        if (!alreadyRequired) {
+                            installStore.markRepairRequired(
+                                resourceIds = setOf(manifest.id),
+                                explanation = "资源定义已变化，需要修复安装",
+                                environmentId = environmentId,
+                            )
+                        }
+                    }
+                }
+            }
     }
 
     private fun reconcileTerminatedMaintenanceRuns() {

@@ -360,6 +360,25 @@ class KiteResourceInstallStore(
         )
     }
 
+    fun markDefinitionUpdateAvailable(
+        resourceId: String,
+        installedVersion: String,
+        latestVersion: String,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        markVersionCheck(
+            resourceId = resourceId,
+            updateStatus = UPDATE_STATUS_AVAILABLE,
+            installedVersion = installedVersion,
+            latestVersion = latestVersion,
+            summary = "资源定义有可用更新",
+            operation = KiteResourceInstallRecipes.OP_UPDATE,
+            registryStatus = STATUS_INSTALLED,
+            reason = "markDefinitionUpdateAvailable",
+            environmentId = environmentId,
+        )
+    }
+
     fun markRepairRequired(
         resourceIds: Collection<String>,
         explanation: String,

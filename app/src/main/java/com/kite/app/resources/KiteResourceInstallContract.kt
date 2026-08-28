@@ -3,6 +3,17 @@ package com.kite.app.resources
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal sealed interface KiteResourceInstallContractResolution {
+    data object Current : KiteResourceInstallContractResolution
+
+    data class UpdateAvailable(
+        val installedVersion: String,
+        val currentVersion: String,
+    ) : KiteResourceInstallContractResolution
+
+    data object RepairRequired : KiteResourceInstallContractResolution
+}
+
 /**
  * 资源安装结果所依赖的稳定合同。
  *
@@ -10,10 +21,42 @@ import org.json.JSONObject
  * 旧安装必须重新收敛，不能只比较上游版本号。
  */
 internal object KiteResourceInstallContract {
+    fun resolve(
+        currentManifest: JSONObject,
+        installedManifestJson: String?,
+    ): KiteResourceInstallContractResolution {
+        if (installedManifestJson.isNullOrBlank()) {
+            return KiteResourceInstallContractResolution.RepairRequired
+        }
+        val installedManifest = runCatching { JSONObject(installedManifestJson) }.getOrNull()
+            ?: return KiteResourceInstallContractResolution.RepairRequired
+        if (canonicalContract(currentManifest) == canonicalContract(installedManifest)) {
+            return KiteResourceInstallContractResolution.Current
+        }
+        val installedVersion = installedManifest.baseVersion()
+        val currentVersion = currentManifest.baseVersion()
+        val hasExplicitUpdate = currentManifest.optJSONObject("actions")
+            ?.optJSONArray("update")
+            ?.length()
+            ?.let { it > 0 } == true
+        return if (
+            hasExplicitUpdate &&
+            installedVersion.isNotBlank() &&
+            currentVersion.isNotBlank() &&
+            installedVersion != currentVersion
+        ) {
+            KiteResourceInstallContractResolution.UpdateAvailable(
+                installedVersion = installedVersion,
+                currentVersion = currentVersion,
+            )
+        } else {
+            KiteResourceInstallContractResolution.RepairRequired
+        }
+    }
+
     fun hasDrift(currentManifest: JSONObject, installedManifestJson: String?): Boolean {
-        if (installedManifestJson.isNullOrBlank()) return true
-        val installedManifest = runCatching { JSONObject(installedManifestJson) }.getOrNull() ?: return true
-        return canonicalContract(currentManifest) != canonicalContract(installedManifest)
+        return resolve(currentManifest, installedManifestJson) !=
+            KiteResourceInstallContractResolution.Current
     }
 
     internal fun canonicalContract(manifest: JSONObject): String =
@@ -40,6 +83,9 @@ internal object KiteResourceInstallContract {
     private fun JSONObject.copyIfPresent(source: JSONObject, key: String) {
         if (source.has(key)) put(key, source.opt(key))
     }
+
+    private fun JSONObject.baseVersion(): String =
+        optJSONObject("base")?.optString("version").orEmpty().trim()
 
     private fun canonicalJson(value: Any?): String = when (value) {
         null, JSONObject.NULL -> "null"

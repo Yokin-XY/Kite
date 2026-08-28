@@ -19,6 +19,7 @@ object KiteResourceUiProjector {
         failedOperation: String,
         currentOperation: String = "",
         idleStateLabel: String,
+        updateAvailable: Boolean = false,
         openRunStatus: CardRunStatus? = null,
         extraBusy: Boolean = false,
         installPlanInProgress: Boolean = false,
@@ -33,6 +34,7 @@ object KiteResourceUiProjector {
             uninstalling -> "卸载中" to "卸载中"
             failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "卸载失败" to "重新获取"
             failed -> "获取失败" to "重新获取"
+            installed && updateAvailable -> "可更新" to "更新"
             installed -> openRunLabels(openRunStatus) ?: ("已获取" to "打开")
             else -> idleStateLabel to "获取"
         }

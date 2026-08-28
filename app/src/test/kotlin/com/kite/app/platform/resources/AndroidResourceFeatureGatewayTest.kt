@@ -12,6 +12,8 @@ import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
 import com.kite.app.run.CardRunSurface
+import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -113,6 +115,40 @@ class AndroidResourceFeatureGatewayTest {
     }
 
     @Test
+    fun `目录合同升级在点击打开前投影为可更新`() = runBlocking {
+        val store = KiteResourceInstallStore(context)
+        val loader = KiteResourceManifestLoader(context)
+        val current = requireNotNull(loader.requestManifest(HERMES_RESOURCE_ID))
+        val oldVersion = "v2026.8.27"
+        val installed = JSONObject(current.rawJson.toString()).apply {
+            getJSONObject("base").put("version", oldVersion)
+            getJSONObject("actions").remove("update")
+        }
+        store.clear(HERMES_RESOURCE_ID)
+        store.markInstalled(HERMES_RESOURCE_ID, oldVersion, "old-run", "done")
+        store.saveInstalledSnapshot(
+            resourceId = HERMES_RESOURCE_ID,
+            name = current.name,
+            iconJson = "{}",
+            version = oldVersion,
+            manifestJson = installed.toString(),
+        )
+        val gateway = AndroidResourceFeatureGateway.create(
+            loader,
+            store,
+            nodeRuntimeInstalled = { false },
+        )
+
+        gateway.loadCatalog(forceRefresh = false)
+
+        val reconciled = store.registryEntry(HERMES_RESOURCE_ID)
+        assertEquals(KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE, reconciled?.updateStatus)
+        assertEquals(current.version, reconciled?.latestVersion)
+        assertEquals(KiteResourceInstallRecipes.OP_UPDATE, reconciled?.operation)
+        store.clear(HERMES_RESOURCE_ID)
+    }
+
+    @Test
     fun `安装进度优先绑定资源登记指向的向导子实例`() {
         val store = KiteResourceInstallStore(context)
         val resourceId = "test.resource.progress.${System.nanoTime()}"
@@ -162,5 +198,9 @@ class AndroidResourceFeatureGatewayTest {
         assertEquals("资源仍在下载", snapshot?.progressText)
         assertEquals("Updating files:  42%", snapshot?.reportText)
         store.clear(resourceId)
+    }
+
+    private companion object {
+        const val HERMES_RESOURCE_ID = "kite.hermes.core"
     }
 }

@@ -496,6 +496,14 @@ class KiteResourceManifestProtocolTest {
         )
         assertTrue(hermes.installActions.single().installSteps.none { it.id == "run-hermes-installer" })
         assertTrue(hermes.installActions.single().verifications.any { it.cmd.contains("hermes acp --help") })
+        assertEquals("v2026.8.27.2", hermes.version)
+        assertEquals(1, hermes.updateActions.size)
+        assertTrue(hermes.management.versionProbe?.command.orEmpty().contains(".kite-version"))
+        assertTrue(hermes.management.latestVersionProbe?.command.orEmpty().contains("v2026.8.27.2"))
+        val lightweightUpdate = hermes.updateActions.single()
+        assertFalse(lightweightUpdate.cleanInstallRoot)
+        assertTrue(lightweightUpdate.installSteps.single().cmd.contains("HERMES_DISABLE_LAZY_INSTALLS=1"))
+        assertTrue(lightweightUpdate.installSteps.none { it.type == "git" || it.type == "script" })
     }
 
     @Test

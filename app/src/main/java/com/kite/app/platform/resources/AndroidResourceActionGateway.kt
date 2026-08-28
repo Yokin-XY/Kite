@@ -40,6 +40,7 @@ import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallContract
+import com.kite.app.resources.KiteResourceInstallContractResolution
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceManagementMode
@@ -91,11 +92,15 @@ internal class AndroidResourceActionGateway(
 
     private data class OpenInstallPreflight(
         val repairResourceIds: Set<String>,
+        val updateResourceIds: Set<String>,
         val missingResourceIds: Set<String>,
         val unresolvedRequirements: Set<String>,
     ) {
         val requiresRepair: Boolean
             get() = repairResourceIds.isNotEmpty()
+
+        val requiresUpdate: Boolean
+            get() = updateResourceIds.isNotEmpty()
 
         val requiresInstall: Boolean
             get() = missingResourceIds.isNotEmpty() || unresolvedRequirements.isNotEmpty()
@@ -208,6 +213,13 @@ internal class AndroidResourceActionGateway(
                 manifestLoader.requestManifest(resourceId)?.name?.ifBlank { resourceId } ?: resourceId
             }
             return message("检测到需要修复的安装：$repairNames。原有版本仍保留，请先点击“修复”")
+        }
+        if (preflight.requiresUpdate) {
+            RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.RESOURCE_PREFLIGHT_INVALIDATED)
+            val updateNames = preflight.updateResourceIds.joinToString("、") { resourceId ->
+                manifestLoader.requestManifest(resourceId)?.name?.ifBlank { resourceId } ?: resourceId
+            }
+            return message("检测到可用更新：$updateNames。请先点击“更新”")
         }
         if (preflight.requiresInstall) {
             RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.RESOURCE_PREFLIGHT_INVALIDATED)
@@ -1115,19 +1127,33 @@ internal class AndroidResourceActionGateway(
             installedResourceIds = installedResourceIds,
             relationTargetsFor = manifestLoader::requestRelationTargets,
         )
-        val changedContracts = closure.manifests.asSequence()
+        val contractResolutions = closure.manifests.asSequence()
             .filter { manifest -> manifest.id in installedResourceIds }
             .filter { manifest -> manifest.management.userLifecycleEnabled }
-            .filter { manifest ->
-                KiteResourceInstallContract.hasDrift(
+            .map { manifest ->
+                manifest to KiteResourceInstallContract.resolve(
                     currentManifest = manifest.rawJson,
                     installedManifestJson = installStore.installedSnapshotManifestJson(manifest.id, environmentId),
                 )
             }
-            .mapTo(linkedSetOf(), KiteResourceManifest::id)
-        if (changedContracts.isNotEmpty()) {
+            .toList()
+        val updateContracts = contractResolutions.mapNotNullTo(linkedSetOf()) { (manifest, resolution) ->
+            (resolution as? KiteResourceInstallContractResolution.UpdateAvailable)?.let { update ->
+                installStore.markDefinitionUpdateAvailable(
+                    resourceId = manifest.id,
+                    installedVersion = update.installedVersion,
+                    latestVersion = update.currentVersion,
+                    environmentId = environmentId,
+                )
+                manifest.id
+            }
+        }
+        val repairContracts = contractResolutions.mapNotNullTo(linkedSetOf()) { (manifest, resolution) ->
+            manifest.id.takeIf { resolution == KiteResourceInstallContractResolution.RepairRequired }
+        }
+        if (repairContracts.isNotEmpty()) {
             installStore.markRepairRequired(
-                resourceIds = changedContracts,
+                resourceIds = repairContracts,
                 explanation = "资源定义已变化，需要修复安装",
                 environmentId = environmentId,
             )
@@ -1136,8 +1162,10 @@ internal class AndroidResourceActionGateway(
             manifests = closure.manifests,
             environmentId = environmentId,
         )
+        val repairResourceIds = repairContracts + missingCommands
         return OpenInstallPreflight(
-            repairResourceIds = changedContracts + missingCommands,
+            repairResourceIds = repairResourceIds,
+            updateResourceIds = updateContracts - repairResourceIds,
             missingResourceIds = closure.missingInstalledResourceIds,
             unresolvedRequirements = closure.unresolvedRequirements,
         )

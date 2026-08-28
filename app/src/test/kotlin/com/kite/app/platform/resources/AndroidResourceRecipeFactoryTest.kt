@@ -192,6 +192,24 @@ class AndroidResourceRecipeFactoryTest {
     }
 
     @Test
+    fun `Hermes 合同升级只重写启动器而不重复安装运行时`() {
+        val recipe = factory.recipe(
+            "kite.hermes.core",
+            KiteResourceInstallRecipes.OP_UPDATE,
+            "v2026.8.27.2",
+        )
+        val shell = recipe?.steps.orEmpty().single { it.type == KiteRecipe.STEP_SHELL }.cmd.orEmpty()
+
+        assertTrue(shell.contains("update-hermes-launcher"))
+        assertTrue(shell.contains("HERMES_DISABLE_LAZY_INSTALLS=1"))
+        assertTrue(shell.contains("v2026.8.27.2"))
+        assertTrue(shell.contains("hermes acp --help"))
+        assertFalse(shell.contains("git clone"))
+        assertFalse(shell.contains("uv sync"))
+        assertFalse(shell.contains("kite-install-core-acp.sh"))
+    }
+
+    @Test
     fun `没有尺寸上限的资源下载保持 PRoot 而不猜测原生安全边界`() {
         val resourceId = "demo.unbounded-download"
         val source = object : KiteResourceDefinitionSource {

@@ -4,7 +4,7 @@
   "base": {
     "name": "Hermes",
     "description": "Hermes Agent 本体与 CLI",
-    "version": "v2026.8.27.1",
+    "version": "v2026.8.27.2",
     "icon": {
       "type": "asset",
       "value": "resources/kite.hermes.core/icon.png",
@@ -14,6 +14,14 @@
   "management": {
     "mode": "managed_extension",
     "managedCommands": ["hermes"],
+    "versionProbe": {
+      "command": "cat /workspace/.kf/software/kite.hermes.core/.kite-version",
+      "pattern": "(v?[0-9]+(?:\\.[0-9]+)+)"
+    },
+    "latestVersionProbe": {
+      "command": "printf '%s\\n' 'v2026.8.27.2'",
+      "pattern": "(v?[0-9]+(?:\\.[0-9]+)+)"
+    },
     "preservePaths": ["home"]
   },
   "display": {
@@ -148,7 +156,7 @@
           {
             "id": "write-hermes-launcher",
             "type": "shell",
-            "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif [ ! -x \"$install_root/hermes-agent/venv/bin/hermes\" ]; then echo 'Hermes Agent entrypoint missing'; exit 127; fi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\""
+            "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif [ ! -x \"$install_root/hermes-agent/venv/bin/hermes\" ]; then echo 'Hermes Agent entrypoint missing'; exit 127; fi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s\\n' 'v2026.8.27.2' > \"$install_root/.kite-version\""
           }
         ],
         "managedCommands": [
@@ -170,6 +178,49 @@
           }
         ],
         "timeoutMs": 1800000
+      }
+    ],
+    "update": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "update-hermes-launcher",
+            "type": "shell",
+            "cmd": "test -x \"$install_root/hermes-agent/venv/bin/hermes\" || { echo 'Hermes Agent entrypoint missing'; exit 127; }\ntest \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\" || { echo 'Hermes source revision mismatch'; exit 65; }\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s\\n' 'v2026.8.27.2' > \"$install_root/.kite-version\""
+          }
+        ],
+        "managedCommands": [
+          "hermes"
+        ],
+        "writeScopes": [
+          "/workspace/.kf/software/kite.hermes.core",
+          "/workspace/.kf/bin/hermes"
+        ],
+        "cleanInstallRoot": false,
+        "verify": [
+          {
+            "id": "hermes-source-commit",
+            "cmd": "test \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\""
+          },
+          {
+            "id": "hermes-launcher-offline-acp",
+            "cmd": "grep -q 'HERMES_DISABLE_LAZY_INSTALLS=1' \"$install_root/bin/hermes\""
+          },
+          {
+            "id": "hermes-command",
+            "cmd": "hermes --help >/dev/null"
+          },
+          {
+            "id": "hermes-acp-command",
+            "cmd": "hermes acp --help >/dev/null"
+          },
+          {
+            "id": "hermes-kite-version",
+            "cmd": "test \"$(cat \"$install_root/.kite-version\")\" = \"v2026.8.27.2\""
+          }
+        ],
+        "timeoutMs": 120000
       }
     ],
     "open": {

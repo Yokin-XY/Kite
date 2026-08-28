@@ -124,6 +124,7 @@ internal class ResourceFeatureController(
             failedOperation = facts.failedOperation,
             currentOperation = facts.currentOperation,
             idleStateLabel = facts.idleStateLabel,
+            updateAvailable = registryEntry?.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE,
             openRunStatus = openRunStatus,
             extraBusy = facts.extraBusy
         )
