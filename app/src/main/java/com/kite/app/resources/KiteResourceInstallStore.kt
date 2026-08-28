@@ -360,6 +360,26 @@ class KiteResourceInstallStore(
         )
     }
 
+    fun markRepairRequired(
+        resourceIds: Collection<String>,
+        explanation: String,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        resourceIds.asSequence()
+            .map(KiteResourceInstallRecipes::safeId)
+            .filter(String::isNotBlank)
+            .distinct()
+            .filter { resourceId -> registry.entry(resourceId, environmentId)?.installed == true }
+            .forEach { resourceId ->
+                markMaintenanceFailed(
+                    resourceId = resourceId,
+                    operation = OP_REPAIR,
+                    explanation = explanation,
+                    environmentId = environmentId,
+                )
+            }
+    }
+
     private fun reconcileInterruptedPlan(environmentId: String) {
         val plan = registry.planSnapshot(environmentId)
         if (plan.targetResourceId.isBlank()) return
@@ -684,6 +704,7 @@ class KiteResourceInstallStore(
         const val STATUS_UNINSTALLING = KiteResourceRegistry.STATUS_UNINSTALLING
         const val OP_INSTALL = KiteResourceRegistry.OP_INSTALL
         const val OP_UNINSTALL = KiteResourceRegistry.OP_UNINSTALL
+        const val OP_REPAIR = KiteResourceInstallRecipes.OP_REPAIR
         const val UPDATE_STATUS_CHECKING = "checking"
         const val UPDATE_STATUS_AVAILABLE = "available"
         const val UPDATE_STATUS_CURRENT = "current"

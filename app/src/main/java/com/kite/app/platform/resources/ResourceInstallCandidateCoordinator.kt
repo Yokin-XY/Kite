@@ -678,6 +678,7 @@ internal class ResourceInstallCandidateCoordinator(
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
             KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR,
         )
     }
 }

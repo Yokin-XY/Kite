@@ -24,7 +24,8 @@ internal class AndroidResourceRecipeFactory(
         val actions = when (operation) {
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
-            KiteResourceInstallRecipes.OP_REINSTALL -> sourcePlan.installActions
+            KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR -> sourcePlan.installActions
             KiteResourceInstallRecipes.OP_UNINSTALL -> sourcePlan.uninstallActions
             else -> return null
         }
@@ -56,7 +57,8 @@ internal class AndroidResourceRecipeFactory(
         val actions = when (operation) {
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
-            KiteResourceInstallRecipes.OP_REINSTALL -> sourcePlan.installActions
+            KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR -> sourcePlan.installActions
             KiteResourceInstallRecipes.OP_UNINSTALL -> sourcePlan.uninstallActions
             else -> emptyList()
         }
@@ -82,7 +84,8 @@ internal class AndroidResourceRecipeFactory(
         val actions = when (operation) {
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
-            KiteResourceInstallRecipes.OP_REINSTALL -> sourcePlan.installActions
+            KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR -> sourcePlan.installActions
             else -> emptyList()
         }
         val stepBytes = actions.asSequence()
@@ -181,7 +184,8 @@ internal class AndroidResourceRecipeFactory(
     ): String = when (operation) {
         KiteResourceInstallRecipes.OP_INSTALL,
         KiteResourceInstallRecipes.OP_UPDATE,
-        KiteResourceInstallRecipes.OP_REINSTALL -> {
+        KiteResourceInstallRecipes.OP_REINSTALL,
+        KiteResourceInstallRecipes.OP_REPAIR -> {
             val bundled = if (manifest.sourceType == "bundled") {
                 KiteResourceInstallPlanCompiler.bundledCommand(action)
                     ?.let { localBundledCommand(manifest.id, it, cleanInstallRoot = false) }
@@ -202,7 +206,8 @@ internal class AndroidResourceRecipeFactory(
                 preservePaths = manifest.management.preservePaths,
                 recordOwnership = operation != KiteResourceInstallRecipes.OP_UPDATE,
                 protectExistingInstall = operation == KiteResourceInstallRecipes.OP_UPDATE ||
-                    operation == KiteResourceInstallRecipes.OP_REINSTALL,
+                    operation == KiteResourceInstallRecipes.OP_REINSTALL ||
+                    operation == KiteResourceInstallRecipes.OP_REPAIR,
                 operation = operation,
             )
         }
@@ -238,6 +243,7 @@ internal class AndroidResourceRecipeFactory(
         KiteResourceInstallRecipes.OP_UNINSTALL -> "卸载"
         KiteResourceInstallRecipes.OP_UPDATE -> "更新"
         KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装"
+        KiteResourceInstallRecipes.OP_REPAIR -> "修复"
         else -> "获取"
     }
 

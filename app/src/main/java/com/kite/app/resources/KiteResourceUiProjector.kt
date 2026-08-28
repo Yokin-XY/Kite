@@ -28,6 +28,7 @@ object KiteResourceUiProjector {
             preparing -> "准备中" to "准备中"
             installing && currentOperation == KiteResourceInstallRecipes.OP_UPDATE -> "更新中" to "更新中"
             installing && currentOperation == KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装中" to "重新安装中"
+            installing && currentOperation == KiteResourceInstallRecipes.OP_REPAIR -> "修复中" to "修复中"
             installing -> "获取中" to "获取中"
             uninstalling -> "卸载中" to "卸载中"
             failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "卸载失败" to "重新获取"

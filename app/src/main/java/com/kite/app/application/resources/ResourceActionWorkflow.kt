@@ -52,6 +52,7 @@ internal interface ResourceActionGateway {
     suspend fun checkUpdates(resourceIds: List<String>): List<ResourceActionEffect>
     suspend fun update(resourceId: String): List<ResourceActionEffect>
     suspend fun reinstall(resourceId: String): List<ResourceActionEffect>
+    suspend fun repair(resourceId: String): List<ResourceActionEffect>
     suspend fun cancelInstall(resourceId: String): List<ResourceActionEffect>
     suspend fun cancelFailedInstall(resourceId: String): List<ResourceActionEffect>
     suspend fun recoverFailedInstall(resourceId: String, parentInstanceId: String?): List<ResourceActionEffect>
@@ -84,6 +85,7 @@ internal class ResourceActionWorkflowCoordinator(
             KiteResourceActionIntent.CheckUpdate -> gateway.checkUpdate(request.resourceId)
             KiteResourceActionIntent.Update -> gateway.update(request.resourceId)
             KiteResourceActionIntent.Reinstall -> gateway.reinstall(request.resourceId)
+            KiteResourceActionIntent.Repair -> gateway.repair(request.resourceId)
             KiteResourceActionIntent.CancelInstall -> gateway.cancelInstall(request.resourceId)
             KiteResourceActionIntent.CancelFailedInstall -> gateway.cancelFailedInstall(request.resourceId)
             KiteResourceActionIntent.BusyStatus -> listOf(ResourceActionEffect.Message("资源正在卸载"))

@@ -189,7 +189,8 @@ internal class AndroidResourceRunGateway(
         when (operation) {
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
-            KiteResourceInstallRecipes.OP_REINSTALL ->
+            KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR ->
                 installStore.markInstalling(resourceId, operation = operation, environmentId = environmentId)
             KiteResourceInstallRecipes.OP_UNINSTALL -> installStore.markUninstalling(resourceId, environmentId = environmentId)
         }
@@ -273,7 +274,8 @@ internal class AndroidResourceRunGateway(
     ) {
         if (operation in setOf(
                 KiteResourceInstallRecipes.OP_UPDATE,
-                KiteResourceInstallRecipes.OP_REINSTALL
+                KiteResourceInstallRecipes.OP_REINSTALL,
+                KiteResourceInstallRecipes.OP_REPAIR,
             ) &&
             installStore.registryEntry(resourceId, environmentId)?.version?.isNotBlank() == true
         ) {
@@ -339,6 +341,7 @@ internal class AndroidResourceRunGateway(
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
             KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR,
         )
     }
 }

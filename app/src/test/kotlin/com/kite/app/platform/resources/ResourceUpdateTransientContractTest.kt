@@ -2,13 +2,9 @@ package com.kite.app.platform.resources
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
-import com.kite.app.action.KiteResourceActionIntent
-import com.kite.app.application.resources.ResourceActionGateway
-import com.kite.app.feature.resources.ResourceMaintenanceUiState
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
-import com.kite.app.resources.KiteResourceSourceCapabilities
 import com.kite.app.resources.KiteResourceSourcePlanFactory
 import java.io.File
 import org.junit.Assert.assertFalse
@@ -63,14 +59,6 @@ class ResourceUpdateTransientContractTest {
             val script = recipe?.steps.orEmpty().joinToString("\n") { it.cmd.orEmpty() }
             assertFalse("首次获取误入更新事务: ${manifest.id}", script.contains("transactional_clean=\"1\""))
         }
-    }
-
-    @Test
-    fun `正式资源合同不再暴露修复能力`() {
-        assertFalse(KiteResourceActionIntent.entries.any { it.name == "Repair" })
-        assertFalse(ResourceActionGateway::class.java.declaredMethods.any { it.name == "repair" })
-        assertFalse(KiteResourceSourceCapabilities::class.java.declaredFields.any { it.name == "repair" })
-        assertFalse(ResourceMaintenanceUiState::class.java.declaredFields.any { it.name == "repairEnabled" })
     }
 
     @Test

@@ -255,6 +255,7 @@ internal class ResourceInstallTransactionRecovery(
         private val RECOVERABLE_OPERATIONS = setOf(
             KiteResourceInstallRecipes.OP_UPDATE,
             KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR,
         )
 
         private fun readProcessStartTime(pid: Int): String? {

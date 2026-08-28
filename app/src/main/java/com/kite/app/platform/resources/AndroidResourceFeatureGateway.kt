@@ -153,7 +153,8 @@ internal class AndroidResourceFeatureGateway(
     companion object {
         private val MAINTENANCE_OPERATIONS = setOf(
             KiteResourceInstallRecipes.OP_UPDATE,
-            KiteResourceInstallRecipes.OP_REINSTALL
+            KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR,
         )
         private val TERMINATED_FAILURE_STATUSES = setOf(
             CardRunStatus.Failed,

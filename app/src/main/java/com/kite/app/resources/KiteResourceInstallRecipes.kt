@@ -27,6 +27,7 @@ object KiteResourceInstallRecipes {
     const val OP_INSTALL = "install"
     const val OP_UPDATE = "update"
     const val OP_REINSTALL = "reinstall"
+    const val OP_REPAIR = "repair"
     const val OP_UNINSTALL = "uninstall"
     const val OP_OPEN = "open"
     private const val TOOL_ENV_BIN_COMMANDS =

@@ -293,7 +293,8 @@ internal class ResourceRunCoordinator(
         when (request.operation) {
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
-            KiteResourceInstallRecipes.OP_REINSTALL -> {
+            KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR -> {
                 gateway.markInstalled(
                     request.resourceId,
                     request.targetVersion,
@@ -428,6 +429,7 @@ internal class ResourceRunCoordinator(
         KiteResourceInstallRecipes.OP_UNINSTALL -> "卸载"
         KiteResourceInstallRecipes.OP_UPDATE -> "更新"
         KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装"
+        KiteResourceInstallRecipes.OP_REPAIR -> "修复"
         else -> "获取"
     }
 
@@ -436,6 +438,7 @@ internal class ResourceRunCoordinator(
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
             KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR,
             KiteResourceInstallRecipes.OP_UNINSTALL
         )
         private val TERMINAL_STATUSES = setOf(

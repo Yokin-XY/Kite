@@ -9,6 +9,7 @@ internal enum class KiteResourceActionIntent {
     CheckUpdate,
     Update,
     Reinstall,
+    Repair,
     CancelInstall,
     CancelFailedInstall,
     BusyStatus,
@@ -39,6 +40,7 @@ internal object KiteResourceActionCoordinator {
             in installLabels -> KiteResourceActionIntent.Install
             "处理中", "获取中" -> KiteResourceActionIntent.ReopenInstall
             "打开", "运行中" -> KiteResourceActionIntent.Open
+            "修复" -> KiteResourceActionIntent.Repair
             "继续停止" -> KiteResourceActionIntent.Stop
             "卸载", "继续卸载" -> KiteResourceActionIntent.Uninstall
             "卸载中" -> KiteResourceActionIntent.BusyStatus
