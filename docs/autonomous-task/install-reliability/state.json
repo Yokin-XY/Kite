@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 2,
+  "revision": 11,
+  "taskKey": "install-reliability",
+  "objective": "Build a general reliable software installation pipeline covering shared artifact publication, conflict-aware scheduling, transactional recovery, and failed-item retry.",
+  "status": "active",
+  "activeTasks": [
+    {
+      "id": "T002",
+      "title": "Conflict-aware write scheduling",
+      "status": "in_progress",
+      "objective": "Schedule resource work by declared write scopes and reject duplicate resource mutation.",
+      "dependsOn": [
+        "T001"
+      ],
+      "acceptance": [
+        "Independent resources can run concurrently while conflicting writes never overlap.",
+        "Debug cold start shows no crash evidence."
+      ],
+      "invariants": [
+        "Preserve safe concurrency."
+      ],
+      "nextAction": "Define the resource writeScopes contract and enforce it in the scheduler.",
+      "owner": "root"
+    }
+  ],
+  "ready": [],
+  "blocked": [],
+  "phaseGates": [],
+  "boundaries": [
+    "Local code, focused tests, and local phase commits only. Do not push or release.",
+    "Validation is limited to crash evidence and one concrete result of the active change. No full suites or unrelated regression runs.",
+    "Do not hide faults by disabling concurrency or adding software/device special cases."
+  ],
+  "nextAction": "Implement T002 conflict-aware write scheduling and duplicate mutation protection.",
+  "lastValidation": {
+    "taskId": "T001",
+    "name": "debug cold-start crash evidence",
+    "status": "passed",
+    "summary": "Debug APK installed on MEIZU 18, cold start reached MainActivity, process 27435 remained alive, and AndroidRuntime/ActivityManager emitted no error.",
+    "evidenceRefs": [
+      "adb:181QGEYH222B9:2026-08-28T18:18+08:00"
+    ],
+    "at": "2026-08-28T10:19:27Z"
+  },
+  "lastBatch": null,
+  "ledgerCursor": 11,
+  "legacyRefs": [],
+  "updatedAt": "2026-08-28T10:19:28Z"
+}
