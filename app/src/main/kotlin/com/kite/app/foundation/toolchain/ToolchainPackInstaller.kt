@@ -507,6 +507,22 @@ object ToolchainPackInstaller {
         val dependencies: Set<String>,
     )
 
+    /** 首次运行报告读取的稳定组件目录；安装结果仍以资源登记表为事实源。 */
+    internal data class BootstrapResourceDescriptor(
+        val resourceId: String,
+        val label: String,
+        val version: String,
+    )
+
+    internal fun bootstrapResourceDescriptors(): List<BootstrapResourceDescriptor> =
+        BOOTSTRAP_RESOURCES.map { resource ->
+            BootstrapResourceDescriptor(
+                resourceId = resource.resourceId,
+                label = resource.label,
+                version = resource.version,
+            )
+        }
+
     internal fun bootstrapResourceSchedulingContracts(): List<BootstrapResourceSchedulingContract> =
         BOOTSTRAP_RESOURCES.map { resource ->
             BootstrapResourceSchedulingContract(
@@ -947,6 +963,7 @@ object ToolchainPackInstaller {
 
     internal fun bootstrapSummaryLine(output: String): String? =
         output.lineSequence().lastOrNull { it.startsWith("FAIL\t") || it.startsWith("FAIL ") }
+            ?: output.lineSequence().lastOrNull { it.startsWith("KITE_RESOURCE_TRANSACTION_FAILED") }
             ?: output.lineSequence().lastOrNull { it.startsWith("SUMMARY ") }
 
     private fun ToolchainCommandResult.toLogBlock(label: String = PACK_ID): String {

@@ -1,5 +1,6 @@
 package com.kite.app.feature.settings
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -12,6 +13,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.application.settings.SettingsFeatureDependenciesOwner
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapDependenciesOwner
 import com.kite.app.R
+import com.kite.app.feature.startupreport.StartupReportActivity
 import com.kite.app.ui.terminal.TerminalUiPreferences
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -89,6 +91,9 @@ internal class SettingsCategoryFragment : Fragment() {
         },
         onOpenAllFilesSettings = { send(SettingsFeatureRequest.OpenAllFilesSettings) },
         onOpenProcesses = { send(SettingsFeatureRequest.OpenProcesses) },
+        onOpenStartupReport = {
+            startActivity(Intent(requireContext(), StartupReportActivity::class.java))
+        },
         onOpenLogs = { send(SettingsFeatureRequest.OpenLogs) },
         onOpenDropZone = { dispatch(SettingsFeatureAction.OpenDropZone) },
         onOpenAboutPage = { page -> send(SettingsFeatureRequest.OpenAboutPage(page)) },

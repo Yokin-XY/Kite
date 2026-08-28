@@ -30,6 +30,12 @@ object StartupTraceStore {
         val deviceSummary: String
     )
 
+    data class SetupFailure(
+        val checkId: String,
+        val reason: String,
+        val occurredAtMs: Long,
+    )
+
     fun prepareProcess(context: Context) {
         val appContext = context.applicationContext
         discardLegacyIncompleteFailure(appContext)
@@ -128,6 +134,30 @@ object StartupTraceStore {
         recordFailure(context, "guard_failed", stage, error)
     }
 
+    /** 保存首次空间准备中某个真实检查项的失败，后续重启或修复不会抹掉首次失败线索。 */
+    fun recordSetupFailure(context: Context, checkId: String, reason: String) {
+        val safeId = checkId.trim().replace(Regex("[^A-Za-z0-9._-]"), "_")
+        if (safeId.isBlank()) return
+        val prefix = "setup_failure_$safeId"
+        prefs(context).edit()
+            .putString("${prefix}_reason", sanitize(reason, MAX_STACK_CHARS))
+            .putLong("${prefix}_at_ms", System.currentTimeMillis())
+            .commit()
+    }
+
+    fun readSetupFailure(context: Context, checkId: String): SetupFailure? {
+        val safeId = checkId.trim().replace(Regex("[^A-Za-z0-9._-]"), "_")
+        if (safeId.isBlank()) return null
+        val prefix = "setup_failure_$safeId"
+        val prefs = prefs(context)
+        if (!prefs.contains("${prefix}_at_ms")) return null
+        return SetupFailure(
+            checkId = checkId,
+            reason = prefs.getString("${prefix}_reason", "").orEmpty(),
+            occurredAtMs = prefs.getLong("${prefix}_at_ms", 0L),
+        )
+    }
+
     fun reportText(context: Context): String {
         val failure = readFailure(context) ?: return "Kite 没有待处理的启动失败记录。"
         return buildString {
@@ -149,6 +179,42 @@ object StartupTraceStore {
                 appendLine()
                 appendLine("异常堆栈:")
                 appendLine(failure.stackTrace)
+            }
+        }.trim()
+    }
+
+    /**
+     * 生成文件时使用的完整启动阶段记录。它不会显示在页面中，也不会改变失败待处理状态。
+     */
+    fun traceReportText(context: Context): String {
+        val prefs = prefs(context)
+        val failure = readFailure(context)
+        return buildString {
+            appendLine("当前启动尝试")
+            appendLine("状态: ${prefs.getString("current_status", "unknown").orEmpty()}")
+            appendLine("尝试 ID: ${prefs.getString("current_attempt_id", "").orEmpty()}")
+            appendLine("开始时间: ${prefs.getLong("current_started_at_ms", 0L)}")
+            appendLine("最后阶段: ${prefs.getString("current_stage", "unknown").orEmpty()}")
+            appendLine("阶段时间: ${prefs.getLong("current_stage_at_ms", 0L)}")
+            appendLine("设备: ${deviceSummary()}")
+            appendLine("阶段流水:")
+            appendLine(prefs.getString("current_timeline", "").orEmpty().ifBlank { "无" })
+
+            val interruptedStage = prefs.getString("last_incomplete_stage", "").orEmpty()
+            if (interruptedStage.isNotBlank()) {
+                appendLine()
+                appendLine("上一次中断的启动尝试")
+                appendLine("尝试 ID: ${prefs.getString("last_incomplete_attempt_id", "").orEmpty()}")
+                appendLine("最后阶段: $interruptedStage")
+                appendLine("记录时间: ${prefs.getLong("last_incomplete_at_ms", 0L)}")
+                appendLine("阶段流水:")
+                appendLine(prefs.getString("last_incomplete_timeline", "").orEmpty().ifBlank { "无" })
+            }
+
+            if (failure != null) {
+                appendLine()
+                appendLine("待处理启动失败")
+                appendLine(reportText(context))
             }
         }.trim()
     }

@@ -132,6 +132,11 @@
             android:exported="false"
             android:label="@string/activity_log_title" />
 
+        <activity
+            android:name="com.kite.app.feature.startupreport.StartupReportActivity"
+            android:exported="false"
+            android:label="@string/startup_report_title" />
+
         <service
             android:name="com.kite.app.foundation.service.KFShellService"
             android:exported="false"

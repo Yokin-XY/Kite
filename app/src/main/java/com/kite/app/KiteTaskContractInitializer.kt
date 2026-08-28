@@ -5,6 +5,7 @@ import com.kite.app.application.runs.RunInstanceCloseCommand
 import com.kite.app.application.runs.RunInstanceCloseSource
 import com.kite.app.foundation.service.KiteTaskContract
 import com.kite.app.foundation.service.KiteTaskContractHost
+import com.kite.app.foundation.bootstrap.StartupTraceStore
 import com.kite.app.foundation.terminal.BrowserEnvironmentProvider
 import com.kite.app.foundation.terminal.BrowserEnvironmentProviderHost
 import com.kite.app.foundation.toolchain.ToolchainResourcePort
@@ -96,6 +97,11 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
             ) {
                 KiteAppGraph.from(context.applicationContext).resourceInstallStore
                     .markFailed(resourceId, KiteResourceInstallStore.OP_INSTALL, runId, reason, environmentId)
+                StartupTraceStore.recordSetupFailure(
+                    context,
+                    resourceId,
+                    reason.orEmpty().ifBlank { "安装失败，但没有记录原因" },
+                )
             }
 
         })

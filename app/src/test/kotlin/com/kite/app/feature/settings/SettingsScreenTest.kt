@@ -187,6 +187,7 @@ class SettingsScreenTest {
     @Test
     fun `权限和运行环境只投影 RuntimeBootstrap 事实`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        var reportOpenCount = 0
         val missingFiles = RuntimeBootstrapSnapshot(
             permissions = RuntimePermissionSnapshot(needsAllFilesAccess = true),
         )
@@ -203,6 +204,7 @@ class SettingsScreenTest {
             initialState = state(),
             initialRuntimeSnapshot = missingFiles,
             onBack = {},
+            onOpenStartupReport = { reportOpenCount += 1 },
         )
 
         val ready = RuntimeBootstrapSnapshot(
@@ -218,6 +220,11 @@ class SettingsScreenTest {
         assertTrue(runtime.root.allTexts().contains(activity.getString(R.string.settings_runtime_ready_summary)))
         assertTrue(runtime.root.allTexts().contains(activity.getString(R.string.settings_processes_title)))
         assertTrue(runtime.root.allTexts().contains(activity.getString(R.string.settings_toolchain_title)))
+        assertTrue(runtime.root.allTexts().contains(activity.getString(R.string.settings_startup_report_title)))
+        runtime.root.findTextView(activity.getString(R.string.settings_startup_report_title))
+            ?.clickableAncestor()
+            ?.performClick()
+        assertEquals(1, reportOpenCount)
     }
 
     @Test

@@ -49,6 +49,7 @@ internal class SettingsCategoryScreen(
     onOpenNotificationSettings: () -> Unit = {},
     onOpenAllFilesSettings: () -> Unit = {},
     onOpenProcesses: () -> Unit = {},
+    onOpenStartupReport: () -> Unit = {},
     onOpenLogs: () -> Unit = {},
     onOpenDropZone: () -> Unit = {},
     onOpenAboutPage: (SettingsAboutPage) -> Unit = {},
@@ -201,6 +202,11 @@ internal class SettingsCategoryScreen(
                             runtimeSummary(initialRuntimeSnapshot),
                         )
                         addRow(runtimeStatusBinding!!.root, first = true)
+                        addRow(factory.navigationRow(
+                            context.getString(R.string.settings_startup_report_title),
+                            context.getString(R.string.settings_startup_report_summary),
+                            onOpenStartupReport,
+                        ).root)
                         addRow(factory.navigationRow(
                             context.getString(R.string.settings_processes_title),
                             context.getString(R.string.settings_processes_summary),

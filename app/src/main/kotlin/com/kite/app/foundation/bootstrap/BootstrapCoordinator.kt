@@ -117,7 +117,13 @@ object BootstrapCoordinator {
                     Logger.i(LOG_TAG, "启动协调完成")
                 }.onFailure { error ->
                     Logger.e(LOG_TAG, "启动协调失败: ${error.message}")
-                    RuntimeBootstrapProgress.failed(error.message ?: error.javaClass.simpleName)
+                    val reason = error.message ?: error.javaClass.simpleName
+                    StartupTraceStore.recordSetupFailure(
+                        appContext,
+                        "runtime.bootstrap",
+                        "${_snapshot.value.stage}: $reason",
+                    )
+                    RuntimeBootstrapProgress.failed(reason)
                     _snapshot.value = _snapshot.value.copy(
                         stage = BootstrapStage.FAILED,
                         finishedAt = System.currentTimeMillis(),
