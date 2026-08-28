@@ -16,6 +16,32 @@ object KiteResourceInstallOutput {
         else -> null
     }
 
+    /** 从实时 SH 尾部提取用户可读的下载细节；未知输出保持为空，不猜进度。 */
+    fun progressDetail(output: String): String? {
+        if (output.isBlank()) return null
+        val normalized = output.replace('\r', '\n')
+        val candidates = buildList {
+            GIT_PROGRESS.findAll(normalized).forEach { match ->
+                val phase = when (match.groupValues[1]) {
+                    "Receiving objects" -> "源码下载"
+                    "Resolving deltas" -> "源码整理"
+                    else -> "源码写入"
+                }
+                add(match.range.first to "$phase ${match.groupValues[2]}%")
+            }
+            APT_DOWNLOAD.findAll(normalized).forEach { match ->
+                val host = sourceHost(match.groupValues[2])
+                val size = match.groupValues[3].trim()
+                val suffix = size.takeIf(String::isNotBlank)?.let { "（$it）" }.orEmpty()
+                add(match.range.first to "正在从 $host 下载第 ${match.groupValues[1]} 个安装组件$suffix")
+            }
+            SOURCE.findAll(normalized).forEach { match ->
+                add(match.range.first to "正在从 ${sourceHost(match.groupValues[1])} 获取资源")
+            }
+        }
+        return candidates.maxByOrNull { it.first }?.second
+    }
+
     private fun failureSummary(line: String): String {
         val stage = value(line, "stage")
         val exit = value(line, "exit")
@@ -83,4 +109,11 @@ object KiteResourceInstallOutput {
             ?.takeIf { it.isNotBlank() }
 
     private val TOKEN = Regex("(?:^|\\s)([A-Za-z0-9_-]+)=([^\\s]+)")
+    private val GIT_PROGRESS = Regex("(Receiving objects|Resolving deltas|Updating files):\\s+(\\d{1,3})%")
+    private val APT_DOWNLOAD = Regex("(?m)^Get:(\\d+)\\s+(https?://\\S+).*?\\[([^]\\r\\n]+)]")
+    private val SOURCE = Regex("(?:source|url)=(https?://[^\\s]+)")
+
+    private fun sourceHost(raw: String): String = runCatching {
+        java.net.URI(raw).host?.takeIf(String::isNotBlank)
+    }.getOrNull() ?: raw.substringAfter("://").substringBefore('/').ifBlank { raw }
 }

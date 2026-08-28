@@ -248,10 +248,18 @@ internal class ResourceInstallWizardScreen(
 
     private fun bindSecondaryAction(binding: RowBinding, row: ResourceInstallWizardRowViewState) {
         val canRecoverFailure = row.projection.failed && !row.projection.uninstalling
-        val key = "${row.operation}|$canRecoverFailure"
+        val runRequest = row.runRequest(CardRunSurface.Report)
+        val key = "${row.operation}|$canRecoverFailure|${runRequest?.instanceId.orEmpty()}"
         if (binding.secondaryKey == key) return
         binding.secondaryKey = key
         binding.secondaryHost.removeAllViews()
+        if (runRequest != null) {
+            binding.secondaryHost.addView(
+                inlineButton(
+                    label = root.context.getString(R.string.resource_wizard_view_live_log),
+                ) { onOpenRun(runRequest) }
+            )
+        }
         if (canRecoverFailure) {
             binding.secondaryHost.addView(
                 inlineButton(
@@ -394,6 +402,8 @@ internal class ResourceInstallWizardScreen(
                         textSize = 11.5f
                         setTextColor(factory.tokens.textSecondary)
                         setPadding(0, factory.dp(4), 0, 0)
+                        maxLines = 3
+                        ellipsize = TextUtils.TruncateAt.END
                     })
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 addView(status.apply {

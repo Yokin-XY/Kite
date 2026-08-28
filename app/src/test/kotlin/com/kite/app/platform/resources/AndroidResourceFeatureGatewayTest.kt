@@ -11,6 +11,7 @@ import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
+import com.kite.app.run.CardRunSurface
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -109,5 +110,57 @@ class AndroidResourceFeatureGatewayTest {
         assertEquals(CardRunStatus.Starting, gateway.openRunStatus(resourceId))
         store.activateEnvironment("default")
         assertEquals(CardRunStatus.Running, gateway.openRunStatus(resourceId))
+    }
+
+    @Test
+    fun `安装进度优先绑定资源登记指向的向导子实例`() {
+        val store = KiteResourceInstallStore(context)
+        val resourceId = "test.resource.progress.${System.nanoTime()}"
+        val recipe = KiteRecipe(
+            id = KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL),
+            name = "Install",
+            description = "",
+            type = KiteRecipe.TYPE_START_SERVICE,
+            category = "resource",
+            defaultUrl = "",
+            shortcut = false,
+            icon = KiteRecipeIcon(name = KiteRecipeIcon.ICON_TOOLS),
+            launch = KiteLaunchConfig(openInstance = false),
+            execution = KiteExecution.steps(emptyList())
+        )
+        CardRunStore.start(recipe, instanceId = "old-root")
+        CardRunStore.update(
+            recipe,
+            status = CardRunStatus.Failed,
+            instanceId = "old-root",
+            lastError = "old",
+        )
+        CardRunStore.start(recipe, instanceId = "live-child", parentInstanceId = "wizard")
+        CardRunStore.update(
+            recipe,
+            status = CardRunStatus.Running,
+            instanceId = "live-child",
+            parentInstanceId = "wizard",
+            surface = CardRunSurface.Report,
+            lastMeaningfulOutput = "资源仍在下载",
+            shellReportText = "Updating files:  42%",
+        )
+        store.markInstalling(
+            resourceId,
+            runId = "live-child",
+            operation = KiteResourceInstallRecipes.OP_INSTALL,
+        )
+        val gateway = AndroidResourceFeatureGateway.create(
+            KiteResourceManifestLoader(context),
+            store,
+            nodeRuntimeInstalled = { false },
+        )
+
+        val snapshot = gateway.operationRunSnapshot(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
+
+        assertEquals("live-child", snapshot?.instanceId)
+        assertEquals("资源仍在下载", snapshot?.progressText)
+        assertEquals("Updating files:  42%", snapshot?.reportText)
+        store.clear(resourceId)
     }
 }

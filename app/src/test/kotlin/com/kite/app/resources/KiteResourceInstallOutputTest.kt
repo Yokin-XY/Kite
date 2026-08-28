@@ -27,4 +27,18 @@ class KiteResourceInstallOutputTest {
             KiteResourceInstallOutput.summary("KITE_RESOURCE_HEARTBEAT stage=install step=installer elapsed=15")
         )
     }
+
+    @Test
+    fun `实时报告提取源码百分比和安装组件来源`() {
+        assertEquals(
+            "源码写入 76%",
+            KiteResourceInstallOutput.progressDetail("Updating files:  76% (7971/10488)"),
+        )
+        assertEquals(
+            "正在从 mirrors.aliyun.com 下载第 17 个安装组件（3407 kB）",
+            KiteResourceInstallOutput.progressDetail(
+                "Get:17 https://mirrors.aliyun.com/ubuntu-ports noble/main arm64 systemd [3407 kB]"
+            ),
+        )
+    }
 }

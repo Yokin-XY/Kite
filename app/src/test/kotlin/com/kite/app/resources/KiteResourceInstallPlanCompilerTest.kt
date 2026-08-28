@@ -98,8 +98,8 @@ class KiteResourceInstallPlanCompilerTest {
     }
 
     @Test
-    fun gitMirrorsShareOnePinnedCommitAndPreserveSourceOrder() {
-        val commit = "fcebd62163497e77e5de00d26d2ed86cb4ef8761"
+    fun gitMirrorsShareOnePinnedCommitPreserveSourceOrderAndRejectBadMirrorOnly() {
+        val commit = "5fc308a70719a83cccdbba4c0e39c23f5a8239d5"
         val action = managedAction(
             steps = listOf(
                 KiteResourceInstallStep(
@@ -124,6 +124,9 @@ class KiteResourceInstallPlanCompilerTest {
         assertTrue(script.contains("git-commit-mismatch"))
         assertTrue(script.contains(commit))
         assertTrue(script.contains("for repository in"))
+        val mismatchBlock = script.substringAfter("reason=git-commit-mismatch")
+        assertTrue(mismatchBlock.substringBefore("KITE_RESOURCE_FAILURE stage=acquire").contains("break"))
+        assertFalse(mismatchBlock.substringBefore("KITE_RESOURCE_FAILURE stage=acquire").contains("return 65"))
     }
 
     @Test

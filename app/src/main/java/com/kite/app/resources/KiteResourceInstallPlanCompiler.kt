@@ -311,8 +311,9 @@ object KiteResourceInstallPlanCompiler {
                   actual_commit="${'$'}(git -C "${'$'}candidate" rev-parse HEAD 2>/dev/null || true)"
                   if [ "${'$'}actual_commit" != "${'$'}expected_commit" ]; then
                     rm -rf "${'$'}candidate"
-                    echo "KITE_RESOURCE_FAILURE stage=verify-download step=${'$'}step_id reason=git-commit-mismatch expected=${'$'}expected_commit actual=${'$'}actual_commit"
-                    return 65
+                    last_status=65
+                    echo "KITE_RESOURCE_RETRY stage=verify-download step=${'$'}step_id source=${'$'}repository reason=git-commit-mismatch expected=${'$'}expected_commit actual=${'$'}actual_commit"
+                    break
                   fi
                 fi
                 rm -rf "${'$'}destination"

@@ -174,7 +174,7 @@ class ResourceInstallWizardScreenTest {
     }
 
     @Test
-    fun `运行步骤不增加显式按钮且队列行打开同一实例报告`() {
+    fun `运行步骤提供显式实时日志入口且队列行打开同一实例报告`() {
         val requests = mutableListOf<ResourceInstallWizardRunRequest>()
         val screen = createScreen(onOpenRun = requests::add)
         attach(screen)
@@ -182,7 +182,11 @@ class ResourceInstallWizardScreenTest {
         screen.render(runningState(surface = CardRunSurface.Report))
         shadowOf(Looper.getMainLooper()).idle()
 
-        assertFalse(screen.root.textViews().any { it.text.toString() == "查看报告" })
+        screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_view_live_log)
+        }.performClick()
+        assertEquals("install-instance", requests.single().instanceId)
+        requests.clear()
         val row = screen.root.views().first {
             it.contentDescription?.toString() == context.getString(
                 R.string.resource_wizard_row_description,
@@ -204,6 +208,24 @@ class ResourceInstallWizardScreenTest {
             ),
             requests,
         )
+    }
+
+    @Test
+    fun `运行步骤直接展示实时阶段和下载来源`() {
+        val screen = createScreen()
+        attach(screen)
+        screen.render(runningState(
+            surface = CardRunSurface.Report,
+            progressText = "资源仍在下载（已运行 15 秒）",
+            reportText = "Updating files:  76% (7971/10488)\n" +
+                "KITE_RESOURCE_HEARTBEAT stage=acquire step=source elapsed=15",
+        ))
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue(screen.root.textViews().any { view ->
+            val text = view.text.toString()
+            text.contains("资源仍在下载") && text.contains("源码写入 76%")
+        })
     }
 
     @Test
@@ -474,14 +496,20 @@ class ResourceInstallWizardScreenTest {
         )
     )
 
-    private fun runningState(surface: CardRunSurface): ResourceFeatureUiState {
+    private fun runningState(
+        surface: CardRunSurface,
+        progressText: String = "",
+        reportText: String = "",
+    ): ResourceFeatureUiState {
         val run = ResourceFeatureRunSnapshot(
             instanceId = "install-instance",
             operation = KiteResourceInstallStore.OP_INSTALL,
             status = CardRunStatus.Running,
             surface = surface,
             startedAt = 1_000L,
-            updatedAt = 2_000L
+            updatedAt = 2_000L,
+            progressText = progressText,
+            reportText = reportText,
         )
         return ResourceFeatureUiState(
             phase = ResourceCatalogPhase.Ready,

@@ -364,6 +364,15 @@ object CardRunStore {
                 .filter { environmentId == null || it.environmentId == environmentId.normalizedEnvironmentId() }
                 .maxByOrNull { it.updatedAt }
 
+    /** 包含向导子运行；资源进度绑定必须选择真实最新代次，不能优先旧的根运行。 */
+    @Synchronized
+    fun latestForRecipe(recipeId: String, environmentId: String? = null): CardRunState? =
+        _runs.value
+            .asSequence()
+            .filter { it.recipeId == recipeId }
+            .filter { environmentId == null || it.environmentId == environmentId.normalizedEnvironmentId() }
+            .maxByOrNull { it.updatedAt }
+
     @Synchronized
     fun get(instanceId: String): CardRunState? =
         runsByInstance[instanceId]

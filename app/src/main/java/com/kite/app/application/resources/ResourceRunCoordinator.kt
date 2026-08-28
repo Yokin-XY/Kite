@@ -62,7 +62,12 @@ internal interface ResourceRunGateway {
     fun rollbackMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
         Result.success(Unit)
     fun failRunPreparation(request: ResourceRunLaunchRequest, instanceId: String, message: String)
-    fun markOperationStarted(resourceId: String, operation: String, environmentId: String)
+    fun markOperationStarted(
+        resourceId: String,
+        operation: String,
+        instanceId: String,
+        environmentId: String,
+    )
     fun markInstalled(
         resourceId: String,
         versionHint: String?,
@@ -131,8 +136,14 @@ internal class ResourceRunCoordinator(
             return ResourceRunLaunchResult.Rejected("resource_write_conflict:${conflict.scope}")
         }
         val state = try {
-            gateway.markOperationStarted(boundRequest.resourceId, boundRequest.operation, boundRequest.environmentId)
-            gateway.beginRun(boundRequest)
+            gateway.beginRun(boundRequest).also { started ->
+                gateway.markOperationStarted(
+                    resourceId = boundRequest.resourceId,
+                    operation = boundRequest.operation,
+                    instanceId = started.instanceId,
+                    environmentId = boundRequest.environmentId,
+                )
+            }
         } catch (error: Throwable) {
             writeScopeLeases.release(writeScopeOwnerId)
             throw error
@@ -419,8 +430,20 @@ internal class ResourceRunCoordinator(
                 return false
             }
             if (!gateway.markPlanStepRunning(resourceId, environmentId)) return false
-            start(request)
-            return true
+            return when (val result = start(request)) {
+                is ResourceRunLaunchResult.Accepted -> true
+                is ResourceRunLaunchResult.Rejected -> {
+                    gateway.markFailed(
+                        resourceId = resourceId,
+                        operation = KiteResourceInstallRecipes.OP_INSTALL,
+                        runId = null,
+                        reason = "资源运行未启动：${result.reason}",
+                        environmentId = environmentId,
+                    )
+                    gateway.failPlanAt(resourceId, environmentId)
+                    false
+                }
+            }
         }
         return false
     }

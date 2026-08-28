@@ -185,14 +185,28 @@ internal class AndroidResourceRunGateway(
         )
     }
 
-    override fun markOperationStarted(resourceId: String, operation: String, environmentId: String) {
+    override fun markOperationStarted(
+        resourceId: String,
+        operation: String,
+        instanceId: String,
+        environmentId: String,
+    ) {
         when (operation) {
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
             KiteResourceInstallRecipes.OP_REINSTALL,
             KiteResourceInstallRecipes.OP_REPAIR ->
-                installStore.markInstalling(resourceId, operation = operation, environmentId = environmentId)
-            KiteResourceInstallRecipes.OP_UNINSTALL -> installStore.markUninstalling(resourceId, environmentId = environmentId)
+                installStore.markInstalling(
+                    resourceId,
+                    runId = instanceId,
+                    operation = operation,
+                    environmentId = environmentId,
+                )
+            KiteResourceInstallRecipes.OP_UNINSTALL -> installStore.markUninstalling(
+                resourceId,
+                runId = instanceId,
+                environmentId = environmentId,
+            )
         }
     }
 

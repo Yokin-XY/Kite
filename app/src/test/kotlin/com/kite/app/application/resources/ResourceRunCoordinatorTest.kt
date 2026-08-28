@@ -23,10 +23,50 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ResourceRunCoordinatorTest {
+    @Test
+    fun `资源运行先登记实例再投影安装状态`() {
+        val gateway = FakeResourceRunGateway()
+        val coordinator = coordinator(gateway, RunLifecycleEventHub())
+
+        val accepted = coordinator.start(launch("tool", KiteResourceInstallRecipes.OP_INSTALL))
+            as ResourceRunLaunchResult.Accepted
+
+        assertEquals(
+            listOf(FakeResourceRunGateway.OperationStart(
+                resourceId = "tool",
+                operation = KiteResourceInstallRecipes.OP_INSTALL,
+                instanceId = accepted.state.instanceId,
+                environmentId = "default",
+            )),
+            gateway.operationStarts,
+        )
+    }
+
+    @Test
+    fun `计划项启动被拒绝时写入失败而不伪装运行中`() {
+        val gateway = FakeResourceRunGateway().apply {
+            writeScopesByResource["blocker"] = setOf("command:shared")
+            writeScopesByResource["queued"] = setOf("command:shared")
+            pendingResources += "queued"
+            plannedInstalls["queued"] = launch("queued", KiteResourceInstallRecipes.OP_INSTALL)
+        }
+        val coordinator = coordinator(gateway, RunLifecycleEventHub())
+        assertTrue(coordinator.start(launch("blocker", KiteResourceInstallRecipes.OP_INSTALL)) is ResourceRunLaunchResult.Accepted)
+
+        val started = coordinator.startNextPlannedInstall("wizard-instance")
+
+        assertFalse(started)
+        assertEquals(listOf("queued"), gateway.planStepsStarted)
+        assertEquals(listOf("queued"), gateway.failedPlanResources)
+        assertTrue(gateway.failedResources.single().reason.contains("resource_write_conflict"))
+        assertTrue(gateway.startedRequests.none { it.resourceId == "queued" })
+    }
+
     @Test
     fun `写入范围冲突被拒绝且释放后可以重新启动`() {
         val gateway = FakeResourceRunGateway().apply {
@@ -398,9 +438,15 @@ class ResourceRunCoordinatorTest {
 
 private class FakeResourceRunGateway : ResourceRunGateway {
     data class Failure(val resourceId: String, val operation: String, val reason: String)
+    data class OperationStart(
+        val resourceId: String,
+        val operation: String,
+        val instanceId: String,
+        val environmentId: String,
+    )
 
     val startedRequests = CopyOnWriteArrayList<ResourceRunLaunchRequest>()
-    val operationStarts = CopyOnWriteArrayList<Pair<String, String>>()
+    val operationStarts = CopyOnWriteArrayList<OperationStart>()
     val installedResources = CopyOnWriteArrayList<String>()
     val installedEnvironments = CopyOnWriteArrayList<String>()
     val savedSnapshots = CopyOnWriteArrayList<String>()
@@ -474,8 +520,13 @@ private class FakeResourceRunGateway : ResourceRunGateway {
 
     override fun failRunPreparation(request: ResourceRunLaunchRequest, instanceId: String, message: String) = Unit
 
-    override fun markOperationStarted(resourceId: String, operation: String, environmentId: String) {
-        operationStarts += resourceId to operation
+    override fun markOperationStarted(
+        resourceId: String,
+        operation: String,
+        instanceId: String,
+        environmentId: String,
+    ) {
+        operationStarts += OperationStart(resourceId, operation, instanceId, environmentId)
     }
 
     override fun markInstalled(

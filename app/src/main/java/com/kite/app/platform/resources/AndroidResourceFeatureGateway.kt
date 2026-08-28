@@ -82,20 +82,28 @@ internal class AndroidResourceFeatureGateway(
     override fun operationRunSnapshot(
         resourceId: String,
         operation: String
-    ): ResourceFeatureRunSnapshot? =
-        CardRunStore.currentForRecipe(
-            KiteResourceInstallRecipes.recipeId(resourceId, operation),
-            installStore.currentEnvironmentId()
-        )?.let { run ->
+    ): ResourceFeatureRunSnapshot? {
+        val environmentId = installStore.currentEnvironmentId()
+        val recipeId = KiteResourceInstallRecipes.recipeId(resourceId, operation)
+        val registeredRun = installStore.registryEntry(resourceId, environmentId)
+            ?.takeIf { entry -> entry.operation == operation }
+            ?.runId
+            ?.takeIf(String::isNotBlank)
+            ?.let { instanceId -> CardRunStore.get(instanceId, environmentId) }
+            ?.takeIf { run -> run.recipeId == recipeId }
+        return (registeredRun ?: CardRunStore.latestForRecipe(recipeId, environmentId))?.let { run ->
             ResourceFeatureRunSnapshot(
                 instanceId = run.instanceId,
                 operation = operation,
                 status = run.status,
                 surface = run.surface,
                 startedAt = run.createdAt,
-                updatedAt = run.updatedAt
+                updatedAt = run.updatedAt,
+                progressText = run.lastMeaningfulOutput.orEmpty(),
+                reportText = run.shellReportText.orEmpty(),
             )
         }
+    }
 
     override fun homeLayout(): KiteResourceHomeLayout? = manifestLoader.requestHomeLayout()
 

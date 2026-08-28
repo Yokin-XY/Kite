@@ -1192,7 +1192,7 @@
             ],
             "steps": [
               {
-                "commit": "fcebd62163497e77e5de00d26d2ed86cb4ef8761",
+                "commit": "5fc308a70719a83cccdbba4c0e39c23f5a8239d5",
                 "depth": 1,
                 "destination": "$install_root/hermes-agent",
                 "id": "acquire-hermes-source",
@@ -1214,7 +1214,7 @@
                   "--branch",
                   "v2026.8.27",
                   "--commit",
-                  "fcebd62163497e77e5de00d26d2ed86cb4ef8761",
+                  "5fc308a70719a83cccdbba4c0e39c23f5a8239d5",
                   "--skip-setup",
                   "--skip-browser",
                   "--non-interactive"
@@ -1248,7 +1248,7 @@
             "type": "managed",
             "verify": [
               {
-                "cmd": "test \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"fcebd62163497e77e5de00d26d2ed86cb4ef8761\"",
+                "cmd": "test \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\"",
                 "id": "hermes-source-commit"
               },
               {
@@ -3511,6 +3511,6 @@
       }
     }
   },
-  "revision": 1,
+  "revision": 2,
   "schemaVersion": 1
 }

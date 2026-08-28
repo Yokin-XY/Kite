@@ -8,6 +8,7 @@ import com.kite.app.application.resources.ResourceFeatureRunSnapshot
 import com.kite.app.resources.KiteResourceInstallStepUiProjection
 import com.kite.app.resources.KiteResourceInstallStepUiProjector
 import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourceInstallOutput
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
 
@@ -243,7 +244,7 @@ internal fun ResourceInstallWizardRowViewState.subtitle(context: Context, now: L
         )
         else -> context.getString(R.string.resource_wizard_duration_days, seconds / (24L * 60L * 60L))
     }
-    return when {
+    val timing = when {
         currentRun.isLiveForWizard() -> context.getString(R.string.resource_wizard_subtitle_running, base, elapsed)
         currentRun.status == CardRunStatus.Completed ->
             context.getString(R.string.resource_wizard_subtitle_duration, base, elapsed)
@@ -253,4 +254,11 @@ internal fun ResourceInstallWizardRowViewState.subtitle(context: Context, now: L
             context.getString(R.string.resource_wizard_subtitle_stopped, base, elapsed)
         else -> base
     }
+    val progress = currentRun.progressText.trim()
+    val detail = KiteResourceInstallOutput.progressDetail(currentRun.reportText)
+    return listOf(timing, progress, detail)
+        .filterNotNull()
+        .filter(String::isNotBlank)
+        .distinct()
+        .joinToString("\n")
 }
