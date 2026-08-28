@@ -98,6 +98,35 @@ class KiteResourceInstallPlanCompilerTest {
     }
 
     @Test
+    fun gitMirrorsShareOnePinnedCommitAndPreserveSourceOrder() {
+        val commit = "fcebd62163497e77e5de00d26d2ed86cb4ef8761"
+        val action = managedAction(
+            steps = listOf(
+                KiteResourceInstallStep(
+                    id = "source",
+                    type = KiteResourceInstallPlanCompiler.STEP_GIT,
+                    repositories = listOf(
+                        "https://github.com/NousResearch/hermes-agent.git",
+                        "https://gitcode.com/GitHub_Trending/he/hermes-agent.git",
+                    ),
+                    destination = "${'$'}install_root/hermes-agent",
+                    ref = "v2026.8.27",
+                    commit = commit,
+                    retryAttempts = 1,
+                    retryDelaySeconds = 0,
+                )
+            )
+        )
+
+        val script = KiteResourceInstallPlanCompiler.compile(action)
+
+        assertTrue(script.indexOf("github.com/NousResearch") < script.indexOf("gitcode.com/GitHub_Trending"))
+        assertTrue(script.contains("git-commit-mismatch"))
+        assertTrue(script.contains(commit))
+        assertTrue(script.contains("for repository in"))
+    }
+
+    @Test
     fun verificationEmitsFailureBeforeInstallCommit() {
         val action = managedAction(
             steps = listOf(

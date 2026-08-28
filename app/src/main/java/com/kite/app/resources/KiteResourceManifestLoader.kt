@@ -153,7 +153,9 @@ data class KiteResourceInstallStep(
     val packages: List<String> = emptyList(),
     val updateIndex: Boolean = false,
     val repository: String = "",
+    val repositories: List<String> = emptyList(),
     val ref: String = "",
+    val commit: String = "",
     val depth: Int = 1,
     val retryAttempts: Int = 4,
     val retryDelaySeconds: Int = 2,
@@ -1097,6 +1099,12 @@ class KiteResourceManifestLoader private constructor(
                     listOf(step.optString("url")).filter { it.isNotBlank() } +
                         step.optJSONArray("urls").toStringList()
                     ).distinct()
+                val repositories = (
+                    listOf(
+                        step.optString("repository").ifBlank { step.optString("url") }
+                    ).filter { it.isNotBlank() } +
+                        step.optJSONArray("repositories").toStringList()
+                    ).distinct()
                 add(
                     KiteResourceInstallStep(
                         id = step.optString("id").trim().ifBlank { "${type}_${index + 1}" },
@@ -1111,8 +1119,10 @@ class KiteResourceManifestLoader private constructor(
                         environment = step.optJSONObject("env").toStringMap(),
                         packages = step.optJSONArray("packages").toStringList(),
                         updateIndex = step.optBoolean("update", false),
-                        repository = step.optString("repository").ifBlank { step.optString("url") },
+                        repository = repositories.firstOrNull().orEmpty(),
+                        repositories = repositories,
                         ref = step.optString("ref").trim(),
+                        commit = step.optString("commit").trim().lowercase(),
                         depth = step.optInt("depth", 1).coerceIn(0, 1000),
                         retryAttempts = step.optInt("retryAttempts", 4).coerceIn(1, 10),
                         retryDelaySeconds = step.optInt("retryDelaySeconds", 2).coerceIn(0, 60),

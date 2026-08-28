@@ -158,21 +158,21 @@ class AndroidResourceRecipeFactoryTest {
     }
 
     @Test
-    fun `显式官方脚本下载也走原生缓存而安装与校验仍在资源事务内`() {
+    fun `Hermes 从官方与 GitCode 的共同固定版本安装`() {
         val recipe = factory.recipe("kite.hermes.core", KiteResourceInstallRecipes.OP_INSTALL)
         val steps = recipe?.steps.orEmpty()
-        val native = steps.single { it.type == KiteRecipe.STEP_NATIVE_CAPABILITY }
         val shell = steps.single { it.type == KiteRecipe.STEP_SHELL }.cmd.orEmpty()
 
-        assertEquals("https://hermes-agent.nousresearch.com/install.sh", native.params?.getString("url"))
-        assertEquals(
-            "4b5839eb4f7cf4775108bcda6345a8de7766898ac4b4bbcafb5b0374f65603e3",
-            native.params?.getString(AndroidNativeDownloadCapabilityProvider.PARAM_EXPECTED_SHA256),
-        )
+        assertTrue(steps.none { it.type == KiteRecipe.STEP_NATIVE_CAPABILITY })
+        assertTrue(shell.indexOf("github.com/NousResearch/hermes-agent.git") < shell.indexOf("gitcode.com/GitHub_Trending/he/hermes-agent.git"))
+        assertTrue(shell.contains("v2026.8.27"))
+        assertTrue(shell.contains("fcebd62163497e77e5de00d26d2ed86cb4ef8761"))
+        assertTrue(shell.contains("hermes-agent/scripts/install.sh"))
         assertTrue(shell.contains("transactional_clean=\"0\""))
         assertTrue(shell.contains("run-hermes-installer"))
+        assertTrue(shell.contains("verify hermes-source-commit"))
         assertTrue(shell.contains("verify hermes-command"))
-        assertTrue(shell.indexOf("mv -f \"${'$'}native_cache\"") < shell.indexOf("run-hermes-installer"))
+        assertTrue(shell.indexOf("acquire-hermes-source") < shell.indexOf("run-hermes-installer"))
         assertTrue(shell.indexOf("verify hermes-command") < shell.indexOf("commit-install kite.hermes.core"))
     }
 

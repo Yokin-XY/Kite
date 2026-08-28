@@ -160,17 +160,27 @@ object KiteResourceInstallPlanCompiler {
     }
 
     private fun compileGit(step: KiteResourceInstallStep): String {
-        require(step.repository.isNotBlank()) { "git step ${step.id} has no repository" }
+        val repositories = step.repositories.ifEmpty {
+            listOf(step.repository).filter(String::isNotBlank)
+        }.distinct()
+        require(repositories.isNotEmpty()) { "git step ${step.id} has no repository" }
         require(step.destination.isNotBlank()) { "git step ${step.id} has no destination" }
-        return listOf(
+        val expectedCommit = step.commit.trim().lowercase()
+        require(expectedCommit.isBlank() || GIT_COMMIT.matches(expectedCommit)) {
+            "git step ${step.id} has an invalid pinned commit"
+        }
+        require(repositories.size == 1 || expectedCommit.isNotBlank()) {
+            "git step ${step.id} requires a pinned commit when mirrors are declared"
+        }
+        return (listOf(
             shellLiteral(safeId(step.id)),
-            shellExpression(step.repository),
             shellExpression(step.destination),
             step.depth.toString(),
             shellExpression(step.ref),
+            shellLiteral(expectedCommit),
             step.retryAttempts.toString(),
             step.retryDelaySeconds.toString()
-        ).joinToString(" ", prefix = "kite_resource_git ")
+        ) + repositories.map(::shellExpression)).joinToString(" ", prefix = "kite_resource_git ")
     }
 
     private fun compileInlineShell(step: KiteResourceInstallStep): String {
@@ -267,42 +277,53 @@ object KiteResourceInstallPlanCompiler {
     private fun gitHelper(): String = """
         kite_resource_git() {
           step_id="${'$'}1"
-          repository="${'$'}2"
-          destination="${'$'}3"
-          depth="${'$'}4"
-          ref="${'$'}5"
+          destination="${'$'}2"
+          depth="${'$'}3"
+          ref="${'$'}4"
+          expected_commit="${'$'}5"
           max_attempts="${'$'}6"
           retry_delay="${'$'}7"
+          shift 7
           command -v git >/dev/null 2>&1 || {
             echo "KITE_RESOURCE_FAILURE stage=prepare step=${'$'}step_id reason=git-missing"
             return 127
           }
           candidate="${'$'}destination.kite-clone"
           mkdir -p "${'$'}(dirname "${'$'}destination")"
-          attempt=1
           last_status=1
-          while [ "${'$'}attempt" -le "${'$'}max_attempts" ]; do
-            rm -rf "${'$'}candidate"
-            if [ -n "${'$'}ref" ]; then
-              set +e
-              kite_resource_run "${'$'}step_id" acquire git clone --depth "${'$'}depth" --branch "${'$'}ref" "${'$'}repository" "${'$'}candidate"
-              last_status=${'$'}?
-              set -e
-            else
-              set +e
-              kite_resource_run "${'$'}step_id" acquire git clone --depth "${'$'}depth" "${'$'}repository" "${'$'}candidate"
-              last_status=${'$'}?
-              set -e
-            fi
-            if [ "${'$'}last_status" -eq 0 ]; then
-              rm -rf "${'$'}destination"
-              mv "${'$'}candidate" "${'$'}destination"
-              echo "KITE_RESOURCE_STEP acquire-complete ${'$'}step_id"
-              return 0
-            fi
-            echo "KITE_RESOURCE_RETRY stage=acquire step=${'$'}step_id attempt=${'$'}attempt exit=${'$'}last_status"
-            sleep "$((retry_delay * attempt))"
-            attempt=$((attempt + 1))
+          for repository in "${'$'}@"; do
+            attempt=1
+            while [ "${'$'}attempt" -le "${'$'}max_attempts" ]; do
+              rm -rf "${'$'}candidate"
+              if [ -n "${'$'}ref" ]; then
+                set +e
+                kite_resource_run "${'$'}step_id" acquire git clone --depth "${'$'}depth" --branch "${'$'}ref" "${'$'}repository" "${'$'}candidate"
+                last_status=${'$'}?
+                set -e
+              else
+                set +e
+                kite_resource_run "${'$'}step_id" acquire git clone --depth "${'$'}depth" "${'$'}repository" "${'$'}candidate"
+                last_status=${'$'}?
+                set -e
+              fi
+              if [ "${'$'}last_status" -eq 0 ]; then
+                if [ -n "${'$'}expected_commit" ]; then
+                  actual_commit="${'$'}(git -C "${'$'}candidate" rev-parse HEAD 2>/dev/null || true)"
+                  if [ "${'$'}actual_commit" != "${'$'}expected_commit" ]; then
+                    rm -rf "${'$'}candidate"
+                    echo "KITE_RESOURCE_FAILURE stage=verify-download step=${'$'}step_id reason=git-commit-mismatch expected=${'$'}expected_commit actual=${'$'}actual_commit"
+                    return 65
+                  fi
+                fi
+                rm -rf "${'$'}destination"
+                mv "${'$'}candidate" "${'$'}destination"
+                echo "KITE_RESOURCE_STEP acquire-complete ${'$'}step_id source=${'$'}repository commit=${'$'}expected_commit"
+                return 0
+              fi
+              echo "KITE_RESOURCE_RETRY stage=acquire step=${'$'}step_id source=${'$'}repository attempt=${'$'}attempt exit=${'$'}last_status"
+              sleep "$((retry_delay * attempt))"
+              attempt=$((attempt + 1))
+            done
           done
           rm -rf "${'$'}candidate"
           echo "KITE_RESOURCE_FAILURE stage=acquire step=${'$'}step_id exit=${'$'}last_status"
@@ -320,4 +341,5 @@ object KiteResourceInstallPlanCompiler {
         value.lowercase().replace(Regex("[^a-z0-9._-]+"), "-").trim('-').ifBlank { "step" }
 
     private val SAFE_ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
+    private val GIT_COMMIT = Regex("[a-f0-9]{40}")
 }
