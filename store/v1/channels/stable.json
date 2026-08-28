@@ -1206,41 +1206,41 @@
                 "type": "git"
               },
               {
-                "args": [
-                  "--dir",
-                  "$install_root/hermes-agent",
-                  "--hermes-home",
-                  "$install_root/home",
-                  "--branch",
-                  "v2026.8.27",
-                  "--commit",
-                  "5fc308a70719a83cccdbba4c0e39c23f5a8239d5",
-                  "--skip-setup",
-                  "--skip-browser",
-                  "--non-interactive"
-                ],
-                "env": {
-                  "HERMES_HOME": "$install_root/home",
-                  "HERMES_INSTALL_DIR": "$install_root/hermes-agent",
-                  "UV_CACHE_DIR": "$install_root/uv-cache",
-                  "UV_LINK_MODE": "copy",
-                  "UV_NO_CONFIG": "1",
-                  "UV_PYTHON_BIN_DIR": "$install_root/uv-bin",
-                  "UV_PYTHON_INSTALL_DIR": "$install_root/uv-python"
-                },
-                "id": "run-hermes-installer",
-                "interpreter": "bash",
-                "path": "$install_root/hermes-agent/scripts/install.sh",
-                "type": "script"
-              },
-              {
-                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif ! \"$agent_python\" -m pip --version >/dev/null 2>&1; then\n  \"$agent_python\" -m ensurepip --upgrade || python3 -m pip --python \"$agent_python\" install --upgrade pip\nfi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"",
-                "id": "write-hermes-launcher",
+                "cmd": "mkdir -p \"$install_root/home\" \"$install_root/user-home\" \"/workspace/.kf/cache/resources/kite.hermes.core/uv\"\ncat > \"$install_root/kite-install-core-acp.sh\" <<'KITE_HERMES_INSTALL'\n#!/usr/bin/env bash\nset -e\n: \"${KITE_HERMES_INSTALL_ROOT:?KITE_HERMES_INSTALL_ROOT is required}\"\nrepo_dir=\"$KITE_HERMES_INSTALL_ROOT/hermes-agent\"\ncommand -v uv >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=uv-missing'; exit 127; }\nagent_python=\"\"\nfor candidate in /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11; do\n  if [ -x \"$candidate\" ]; then\n    agent_python=\"$candidate\"\n    break\n  fi\ndone\n[ -n \"$agent_python\" ] || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=compatible-system-python-missing'; exit 127; }\nagent_python_version=\"$(\"$agent_python\" -c 'import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")')\"\ncase \"$agent_python_version\" in\n  3.11|3.12|3.13) ;;\n  *) echo \"KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=unsupported-version version=$agent_python_version\"; exit 65 ;;\nesac\necho \"KITE_RESOURCE_STEP prepare hermes-python-$agent_python_version source=system\"\necho \"KITE_RESOURCE_STEP install hermes-core-acp python=$agent_python\"\necho 'KITE_RESOURCE_STEP acquire hermes-python-packages source=aliyun'\nif timeout 600 env UV_DEFAULT_INDEX=\"https://mirrors.aliyun.com/pypi/simple/\" UV_PROJECT_ENVIRONMENT=\"$repo_dir/venv\" UV_PYTHON=\"$agent_python\" uv sync --project \"$repo_dir\" --locked --no-default-groups --extra acp; then\n  echo 'KITE_RESOURCE_STEP acquire-complete hermes-python-packages source=aliyun'\nelse\n  mirror_status=$?\n  echo \"KITE_RESOURCE_RETRY stage=acquire step=hermes-python-packages source=aliyun exit=$mirror_status\"\n  rm -rf \"$repo_dir/venv\"\n  echo 'KITE_RESOURCE_STEP acquire hermes-python-packages source=pypi'\n  env UV_DEFAULT_INDEX=\"https://pypi.org/simple\" UV_PROJECT_ENVIRONMENT=\"$repo_dir/venv\" UV_PYTHON=\"$agent_python\" uv sync --project \"$repo_dir\" --locked --no-default-groups --extra acp\n  echo 'KITE_RESOURCE_STEP acquire-complete hermes-python-packages source=pypi'\nfi\n[ -x \"$repo_dir/venv/bin/hermes\" ] || { echo 'KITE_RESOURCE_FAILURE stage=install step=hermes-core-acp reason=entrypoint-missing'; exit 127; }\nprintf '%s\\n' 'core+acp' > \"$KITE_HERMES_INSTALL_ROOT/install-profile\"\necho 'KITE_RESOURCE_STEP install-complete hermes-core-acp'\nKITE_HERMES_INSTALL\nchmod +x \"$install_root/kite-install-core-acp.sh\"",
+                "id": "write-hermes-core-acp-installer",
                 "type": "shell"
               },
               {
-                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\n\"$agent_python\" -m pip install -e \"$install_root/hermes-agent[acp]\"",
-                "id": "install-hermes-acp-extra",
+                "env": {
+                  "HERMES_HOME": "$install_root/home",
+                  "HOME": "$install_root/user-home",
+                  "KITE_HERMES_INSTALL_ROOT": "$install_root",
+                  "UV_CACHE_DIR": "/workspace/.kf/cache/resources/kite.hermes.core/uv",
+                  "UV_LINK_MODE": "copy"
+                },
+                "id": "install-hermes-core-acp",
+                "interpreter": "bash",
+                "path": "$install_root/kite-install-core-acp.sh",
+                "type": "script"
+              },
+              {
+                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nsession_file=\"$install_root/hermes-agent/acp_adapter/session.py\"\ntest -x \"$agent_python\" || { echo 'KITE_RESOURCE_FAILURE stage=install step=hermes-acp-provider-identity reason=python-missing'; exit 127; }\ntest -f \"$session_file\" || { echo 'KITE_RESOURCE_FAILURE stage=install step=hermes-acp-provider-identity reason=session-source-missing'; exit 66; }\necho 'KITE_RESOURCE_STEP patch hermes-acp-provider-identity'\n\"$agent_python\" - \"$session_file\" <<'KITE_HERMES_PROVIDER_PATCH'\nimport os\nimport sys\nfrom pathlib import Path\n\ntarget = Path(sys.argv[1])\nsource = target.read_text(encoding='utf-8')\nimport_old = 'from hermes_cli.runtime_provider import resolve_runtime_provider'\nimport_new = 'from hermes_cli.runtime_provider import canonical_custom_identity, resolve_runtime_provider'\nif import_new not in source:\n    if import_old not in source:\n        raise SystemExit('Hermes runtime provider import contract changed')\n    source = source.replace(import_old, import_new, 1)\n\npersist_anchor = '        api_mode = getattr(state.agent, \"api_mode\", None)\\n'\npersist_marker = '            provider = canonical_custom_identity(\\n'\nif persist_marker not in source:\n    if persist_anchor not in source:\n        raise SystemExit('Hermes ACP persistence contract changed')\n    persist_patch = persist_anchor + (\n        '        if isinstance(provider, str) and provider.strip().lower() == \"custom\":\\n'\n        '            provider = canonical_custom_identity(\\n'\n        '                base_url=base_url if isinstance(base_url, str) else None,\\n'\n        '                model=model_str,\\n'\n        '            ) or provider\\n'\n    )\n    source = source.replace(persist_anchor, persist_patch, 1)\n\npersist_import = '            from hermes_cli.runtime_provider import canonical_custom_identity\\n'\nif persist_import not in source:\n    if persist_marker not in source:\n        raise SystemExit('Hermes ACP persistence provider contract changed')\n    source = source.replace(persist_marker, persist_import + persist_marker, 1)\n\nrestore_old = '            runtime = resolve_runtime_provider(requested=requested_provider or config_provider)'\nrestore_marker = '            runtime_provider = requested_provider or config_provider'\nif restore_marker not in source:\n    if restore_old not in source:\n        raise SystemExit('Hermes ACP restore contract changed')\n    restore_patch = (\n        '            runtime_provider = requested_provider or config_provider\\n'\n        '            if str(runtime_provider or \"\").strip().lower() == \"custom\":\\n'\n        '                runtime_provider = canonical_custom_identity(\\n'\n        '                    base_url=base_url,\\n'\n        '                    config_provider=config_provider,\\n'\n        '                    model=model or default_model,\\n'\n        '                ) or runtime_provider\\n'\n        '            runtime = resolve_runtime_provider(requested=runtime_provider)'\n    )\n    source = source.replace(restore_old, restore_patch, 1)\n\ncompile(source, str(target), 'exec')\ntemporary = target.with_name(target.name + '.kite-pending')\ntemporary.write_text(source, encoding='utf-8')\nos.replace(temporary, target)\nKITE_HERMES_PROVIDER_PATCH\necho 'KITE_RESOURCE_STEP patch-complete hermes-acp-provider-identity'",
+                "id": "patch-hermes-acp-provider-identity",
+                "type": "shell"
+              },
+              {
+                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nserver_file=\"$install_root/hermes-agent/acp_adapter/server.py\"\ntest -x \"$agent_python\" || { echo 'KITE_RESOURCE_FAILURE stage=install step=hermes-acp-model-selection reason=python-missing'; exit 127; }\ntest -f \"$server_file\" || { echo 'KITE_RESOURCE_FAILURE stage=install step=hermes-acp-model-selection reason=server-source-missing'; exit 66; }\necho 'KITE_RESOURCE_STEP patch hermes-acp-model-selection'\n\"$agent_python\" - \"$server_file\" <<'KITE_HERMES_MODEL_PATCH'\nimport os\nimport sys\nfrom pathlib import Path\n\ntarget = Path(sys.argv[1])\nsource = target.read_text(encoding='utf-8')\nanchor = '        target_provider = current_provider\\n        new_model = raw_model.strip()\\n\\n'\nmarker = '        # Kite compatibility: resolve named custom ACP choices before generic parsing.\\n'\nif marker not in source:\n    if anchor not in source:\n        raise SystemExit('Hermes ACP model selection contract changed')\n    patch = anchor + (\n        marker\n        + '        try:\\n'\n        + '            from hermes_cli.models import _configured_custom_provider_ids\\n\\n'\n        + '            configured = (\\n'\n        + '                str(provider_id).strip().lower()\\n'\n        + '                for provider_id in _configured_custom_provider_ids()\\n'\n        + '                if str(provider_id).strip().lower().startswith(\"custom:\")\\n'\n        + '            )\\n'\n        + '            lowered = new_model.lower()\\n'\n        + '            for candidate in sorted(configured, key=len, reverse=True):\\n'\n        + '                prefix = candidate + \":\"\\n'\n        + '                if lowered.startswith(prefix):\\n'\n        + '                    return candidate, new_model[len(prefix):]\\n'\n        + '        except Exception:\\n'\n        + '            logger.debug(\"Named custom provider detection failed\", exc_info=True)\\n\\n'\n    )\n    source = source.replace(anchor, patch, 1)\n\ncompile(source, str(target), 'exec')\ntemporary = target.with_name(target.name + '.kite-pending')\ntemporary.write_text(source, encoding='utf-8')\nos.replace(temporary, target)\nKITE_HERMES_MODEL_PATCH\necho 'KITE_RESOURCE_STEP patch-complete hermes-acp-model-selection'",
+                "id": "patch-hermes-acp-model-selection",
+                "type": "shell"
+              },
+              {
+                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nserver_file=\"$install_root/hermes-agent/acp_adapter/server.py\"\ntest -x \"$agent_python\" || { echo 'KITE_RESOURCE_FAILURE stage=install step=hermes-acp-bare-provider-selection reason=python-missing'; exit 127; }\ntest -f \"$server_file\" || { echo 'KITE_RESOURCE_FAILURE stage=install step=hermes-acp-bare-provider-selection reason=server-source-missing'; exit 66; }\necho 'KITE_RESOURCE_STEP patch hermes-acp-bare-provider-selection'\n\"$agent_python\" - \"$server_file\" <<'KITE_HERMES_BARE_PROVIDER_PATCH'\nimport os\nimport sys\nfrom pathlib import Path\n\ntarget = Path(sys.argv[1])\nsource = target.read_text(encoding='utf-8')\nold = (\n    '            for candidate in sorted(configured, key=len, reverse=True):\\n'\n    '                prefix = candidate + \":\"\\n'\n    '                if lowered.startswith(prefix):\\n'\n    '                    return candidate, new_model[len(prefix):]\\n'\n)\nnew = (\n    '            for candidate in sorted(configured, key=len, reverse=True):\\n'\n    '                prefixes = (candidate + \":\", candidate.removeprefix(\"custom:\") + \":\")\\n'\n    '                for prefix in prefixes:\\n'\n    '                    if lowered.startswith(prefix):\\n'\n    '                        return candidate, new_model[len(prefix):]\\n'\n)\nmarker = '                prefixes = (candidate + \":\", candidate.removeprefix(\"custom:\") + \":\")\\n'\nif marker not in source:\n    if old not in source:\n        raise SystemExit('Hermes ACP named-provider compatibility contract changed')\n    source = source.replace(old, new, 1)\n\ncompile(source, str(target), 'exec')\ntemporary = target.with_name(target.name + '.kite-pending')\ntemporary.write_text(source, encoding='utf-8')\nos.replace(temporary, target)\nKITE_HERMES_BARE_PROVIDER_PATCH\necho 'KITE_RESOURCE_STEP patch-complete hermes-acp-bare-provider-selection'",
+                "id": "patch-hermes-acp-bare-provider-selection",
+                "type": "shell"
+              },
+              {
+                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif [ ! -x \"$install_root/hermes-agent/venv/bin/hermes\" ]; then echo 'Hermes Agent entrypoint missing'; exit 127; fi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s\\n' 'v2026.8.27.4' > \"$install_root/.kite-version\"",
+                "id": "write-hermes-launcher",
                 "type": "shell"
               }
             ],
@@ -1258,6 +1258,18 @@
               {
                 "cmd": "hermes acp --help >/dev/null",
                 "id": "hermes-acp-command"
+              },
+              {
+                "cmd": "grep -q 'canonical_custom_identity' \"$install_root/hermes-agent/acp_adapter/session.py\" && grep -q 'runtime_provider = requested_provider or config_provider' \"$install_root/hermes-agent/acp_adapter/session.py\"",
+                "id": "hermes-acp-provider-identity"
+              },
+              {
+                "cmd": "grep -q 'Kite compatibility: resolve named custom ACP choices' \"$install_root/hermes-agent/acp_adapter/server.py\" && grep -q '_configured_custom_provider_ids' \"$install_root/hermes-agent/acp_adapter/server.py\"",
+                "id": "hermes-acp-model-selection"
+              },
+              {
+                "cmd": "grep -q 'candidate.removeprefix(\"custom:\")' \"$install_root/hermes-agent/acp_adapter/server.py\"",
+                "id": "hermes-acp-bare-provider-selection"
               }
             ]
           }
@@ -1294,6 +1306,76 @@
             ],
             "timeoutMs": 180000,
             "type": "shell"
+          }
+        ],
+        "update": [
+          {
+            "cleanInstallRoot": false,
+            "managedCommands": [
+              "hermes"
+            ],
+            "steps": [
+              {
+                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nsession_file=\"$install_root/hermes-agent/acp_adapter/session.py\"\ntest -x \"$agent_python\" || { echo 'KITE_RESOURCE_FAILURE stage=update step=hermes-acp-provider-identity reason=python-missing'; exit 127; }\ntest -f \"$session_file\" || { echo 'KITE_RESOURCE_FAILURE stage=update step=hermes-acp-provider-identity reason=session-source-missing'; exit 66; }\necho 'KITE_RESOURCE_STEP patch hermes-acp-provider-identity'\n\"$agent_python\" - \"$session_file\" <<'KITE_HERMES_PROVIDER_PATCH'\nimport os\nimport sys\nfrom pathlib import Path\n\ntarget = Path(sys.argv[1])\nsource = target.read_text(encoding='utf-8')\nimport_old = 'from hermes_cli.runtime_provider import resolve_runtime_provider'\nimport_new = 'from hermes_cli.runtime_provider import canonical_custom_identity, resolve_runtime_provider'\nif import_new not in source:\n    if import_old not in source:\n        raise SystemExit('Hermes runtime provider import contract changed')\n    source = source.replace(import_old, import_new, 1)\n\npersist_anchor = '        api_mode = getattr(state.agent, \"api_mode\", None)\\n'\npersist_marker = '            provider = canonical_custom_identity(\\n'\nif persist_marker not in source:\n    if persist_anchor not in source:\n        raise SystemExit('Hermes ACP persistence contract changed')\n    persist_patch = persist_anchor + (\n        '        if isinstance(provider, str) and provider.strip().lower() == \"custom\":\\n'\n        '            provider = canonical_custom_identity(\\n'\n        '                base_url=base_url if isinstance(base_url, str) else None,\\n'\n        '                model=model_str,\\n'\n        '            ) or provider\\n'\n    )\n    source = source.replace(persist_anchor, persist_patch, 1)\n\npersist_import = '            from hermes_cli.runtime_provider import canonical_custom_identity\\n'\nif persist_import not in source:\n    if persist_marker not in source:\n        raise SystemExit('Hermes ACP persistence provider contract changed')\n    source = source.replace(persist_marker, persist_import + persist_marker, 1)\n\nrestore_old = '            runtime = resolve_runtime_provider(requested=requested_provider or config_provider)'\nrestore_marker = '            runtime_provider = requested_provider or config_provider'\nif restore_marker not in source:\n    if restore_old not in source:\n        raise SystemExit('Hermes ACP restore contract changed')\n    restore_patch = (\n        '            runtime_provider = requested_provider or config_provider\\n'\n        '            if str(runtime_provider or \"\").strip().lower() == \"custom\":\\n'\n        '                runtime_provider = canonical_custom_identity(\\n'\n        '                    base_url=base_url,\\n'\n        '                    config_provider=config_provider,\\n'\n        '                    model=model or default_model,\\n'\n        '                ) or runtime_provider\\n'\n        '            runtime = resolve_runtime_provider(requested=runtime_provider)'\n    )\n    source = source.replace(restore_old, restore_patch, 1)\n\ncompile(source, str(target), 'exec')\ntemporary = target.with_name(target.name + '.kite-pending')\ntemporary.write_text(source, encoding='utf-8')\nos.replace(temporary, target)\nKITE_HERMES_PROVIDER_PATCH\necho 'KITE_RESOURCE_STEP patch-complete hermes-acp-provider-identity'",
+                "id": "patch-hermes-acp-provider-identity",
+                "type": "shell"
+              },
+              {
+                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nserver_file=\"$install_root/hermes-agent/acp_adapter/server.py\"\ntest -x \"$agent_python\" || { echo 'KITE_RESOURCE_FAILURE stage=update step=hermes-acp-model-selection reason=python-missing'; exit 127; }\ntest -f \"$server_file\" || { echo 'KITE_RESOURCE_FAILURE stage=update step=hermes-acp-model-selection reason=server-source-missing'; exit 66; }\necho 'KITE_RESOURCE_STEP patch hermes-acp-model-selection'\n\"$agent_python\" - \"$server_file\" <<'KITE_HERMES_MODEL_PATCH'\nimport os\nimport sys\nfrom pathlib import Path\n\ntarget = Path(sys.argv[1])\nsource = target.read_text(encoding='utf-8')\nanchor = '        target_provider = current_provider\\n        new_model = raw_model.strip()\\n\\n'\nmarker = '        # Kite compatibility: resolve named custom ACP choices before generic parsing.\\n'\nif marker not in source:\n    if anchor not in source:\n        raise SystemExit('Hermes ACP model selection contract changed')\n    patch = anchor + (\n        marker\n        + '        try:\\n'\n        + '            from hermes_cli.models import _configured_custom_provider_ids\\n\\n'\n        + '            configured = (\\n'\n        + '                str(provider_id).strip().lower()\\n'\n        + '                for provider_id in _configured_custom_provider_ids()\\n'\n        + '                if str(provider_id).strip().lower().startswith(\"custom:\")\\n'\n        + '            )\\n'\n        + '            lowered = new_model.lower()\\n'\n        + '            for candidate in sorted(configured, key=len, reverse=True):\\n'\n        + '                prefix = candidate + \":\"\\n'\n        + '                if lowered.startswith(prefix):\\n'\n        + '                    return candidate, new_model[len(prefix):]\\n'\n        + '        except Exception:\\n'\n        + '            logger.debug(\"Named custom provider detection failed\", exc_info=True)\\n\\n'\n    )\n    source = source.replace(anchor, patch, 1)\n\ncompile(source, str(target), 'exec')\ntemporary = target.with_name(target.name + '.kite-pending')\ntemporary.write_text(source, encoding='utf-8')\nos.replace(temporary, target)\nKITE_HERMES_MODEL_PATCH\necho 'KITE_RESOURCE_STEP patch-complete hermes-acp-model-selection'",
+                "id": "patch-hermes-acp-model-selection",
+                "type": "shell"
+              },
+              {
+                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nserver_file=\"$install_root/hermes-agent/acp_adapter/server.py\"\ntest -x \"$agent_python\" || { echo 'KITE_RESOURCE_FAILURE stage=update step=hermes-acp-bare-provider-selection reason=python-missing'; exit 127; }\ntest -f \"$server_file\" || { echo 'KITE_RESOURCE_FAILURE stage=update step=hermes-acp-bare-provider-selection reason=server-source-missing'; exit 66; }\necho 'KITE_RESOURCE_STEP patch hermes-acp-bare-provider-selection'\n\"$agent_python\" - \"$server_file\" <<'KITE_HERMES_BARE_PROVIDER_PATCH'\nimport os\nimport sys\nfrom pathlib import Path\n\ntarget = Path(sys.argv[1])\nsource = target.read_text(encoding='utf-8')\nold = (\n    '            for candidate in sorted(configured, key=len, reverse=True):\\n'\n    '                prefix = candidate + \":\"\\n'\n    '                if lowered.startswith(prefix):\\n'\n    '                    return candidate, new_model[len(prefix):]\\n'\n)\nnew = (\n    '            for candidate in sorted(configured, key=len, reverse=True):\\n'\n    '                prefixes = (candidate + \":\", candidate.removeprefix(\"custom:\") + \":\")\\n'\n    '                for prefix in prefixes:\\n'\n    '                    if lowered.startswith(prefix):\\n'\n    '                        return candidate, new_model[len(prefix):]\\n'\n)\nmarker = '                prefixes = (candidate + \":\", candidate.removeprefix(\"custom:\") + \":\")\\n'\nif marker not in source:\n    if old not in source:\n        raise SystemExit('Hermes ACP named-provider compatibility contract changed')\n    source = source.replace(old, new, 1)\n\ncompile(source, str(target), 'exec')\ntemporary = target.with_name(target.name + '.kite-pending')\ntemporary.write_text(source, encoding='utf-8')\nos.replace(temporary, target)\nKITE_HERMES_BARE_PROVIDER_PATCH\necho 'KITE_RESOURCE_STEP patch-complete hermes-acp-bare-provider-selection'",
+                "id": "patch-hermes-acp-bare-provider-selection",
+                "type": "shell"
+              },
+              {
+                "cmd": "test -x \"$install_root/hermes-agent/venv/bin/hermes\" || { echo 'Hermes Agent entrypoint missing'; exit 127; }\ntest \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\" || { echo 'Hermes source revision mismatch'; exit 65; }\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s\\n' 'v2026.8.27.4' > \"$install_root/.kite-version\"",
+                "id": "update-hermes-launcher",
+                "type": "shell"
+              }
+            ],
+            "timeoutMs": 120000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "test \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\"",
+                "id": "hermes-source-commit"
+              },
+              {
+                "cmd": "grep -q 'HERMES_DISABLE_LAZY_INSTALLS=1' \"$install_root/bin/hermes\"",
+                "id": "hermes-launcher-offline-acp"
+              },
+              {
+                "cmd": "grep -q 'canonical_custom_identity' \"$install_root/hermes-agent/acp_adapter/session.py\" && grep -q 'runtime_provider = requested_provider or config_provider' \"$install_root/hermes-agent/acp_adapter/session.py\"",
+                "id": "hermes-acp-provider-identity"
+              },
+              {
+                "cmd": "grep -q 'Kite compatibility: resolve named custom ACP choices' \"$install_root/hermes-agent/acp_adapter/server.py\" && grep -q '_configured_custom_provider_ids' \"$install_root/hermes-agent/acp_adapter/server.py\"",
+                "id": "hermes-acp-model-selection"
+              },
+              {
+                "cmd": "grep -q 'candidate.removeprefix(\"custom:\")' \"$install_root/hermes-agent/acp_adapter/server.py\"",
+                "id": "hermes-acp-bare-provider-selection"
+              },
+              {
+                "cmd": "hermes --help >/dev/null",
+                "id": "hermes-command"
+              },
+              {
+                "cmd": "hermes acp --help >/dev/null",
+                "id": "hermes-acp-command"
+              },
+              {
+                "cmd": "test \"$(cat \"$install_root/.kite-version\")\" = \"v2026.8.27.4\"",
+                "id": "hermes-kite-version"
+              }
+            ],
+            "writeScopes": [
+              "/workspace/.kf/software/kite.hermes.core",
+              "/workspace/.kf/bin/hermes"
+            ]
           }
         ]
       },
@@ -1368,18 +1450,14 @@
           "value": "resources/kite.hermes.core/icon.png"
         },
         "name": "Hermes",
-        "version": "v2026.8.27"
+        "version": "v2026.8.27.4"
       },
       "display": {
         "accent": "teal",
         "category": "AI",
-        "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。Nous Portal 官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Hermes 自己管理。",
+        "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 固定官方版本和提交，只安装核心运行依赖与 ACP，不自动安装桌面、浏览器、TTS、ffmpeg 或其他可选能力；代码、venv 和数据目录都固定在这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。Nous Portal 官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Hermes 自己管理。",
         "order": 40,
         "recommendations": [
-          {
-            "label": "运行时",
-            "resourceId": "kite.python"
-          },
           {
             "label": "依赖管理",
             "resourceId": "kite.uv"
@@ -1387,10 +1465,6 @@
           {
             "label": "源码工具",
             "resourceId": "kite.git"
-          },
-          {
-            "label": "下载工具",
-            "resourceId": "kite.curl"
           }
         ],
         "sections": [
@@ -1436,13 +1510,21 @@
       ],
       "id": "kite.hermes.core",
       "management": {
+        "latestVersionProbe": {
+          "command": "printf '%s\\n' 'v2026.8.27.4'",
+          "pattern": "(v?[0-9]+(?:\\.[0-9]+)+)"
+        },
         "managedCommands": [
           "hermes"
         ],
         "mode": "managed_extension",
         "preservePaths": [
           "home"
-        ]
+        ],
+        "versionProbe": {
+          "command": "cat /workspace/.kf/software/kite.hermes.core/.kite-version",
+          "pattern": "(v?[0-9]+(?:\\.[0-9]+)+)"
+        }
       },
       "paths": {
         "binRoot": "/workspace/.kf/bin",
@@ -1453,9 +1535,6 @@
       "relations": {
         "base": [
           "kite.git",
-          "kite.curl",
-          "kite.python",
-          "kite.nodejs",
           "kite.uv"
         ],
         "defaults": [],
@@ -1468,14 +1547,10 @@
       },
       "schemaVersion": 1,
       "source": {
-        "args": [
-          "--skip-setup",
-          "--skip-browser",
-          "--non-interactive"
-        ],
-        "type": "official_script",
+        "mirror": "https://gitcode.com/GitHub_Trending/he/hermes-agent.git",
+        "type": "git",
         "upstream": "https://github.com/NousResearch/hermes-agent",
-        "url": "https://hermes-agent.nousresearch.com/install.sh"
+        "url": "https://github.com/NousResearch/hermes-agent.git"
       }
     },
     "kite.kimi.code": {
@@ -3511,6 +3586,6 @@
       }
     }
   },
-  "revision": 2,
+  "revision": 8,
   "schemaVersion": 1
 }

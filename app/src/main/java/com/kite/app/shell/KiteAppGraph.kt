@@ -157,12 +157,16 @@ internal class KiteAppGraph private constructor(context: Context) {
         KiteResourceRemoteStore.create(appContext)
     }
     val resourceManifestLoader: KiteResourceManifestLoader by lazy {
+        val isDebugBuild = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        val assetDefinitionSource = KiteResourceAssetDefinitionSource(appContext)
         KiteResourceManifestLoader(
-            isDebugBuild = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0,
-            definitionSources = listOf(
-                resourceDefinitionStore,
-                KiteResourceAssetDefinitionSource(appContext),
-            ),
+            isDebugBuild = isDebugBuild,
+            definitionSources = if (isDebugBuild) {
+                // 调试包必须能验收本次构建携带的资源合同，不能被设备上较旧的远程缓存遮住。
+                listOf(assetDefinitionSource, resourceDefinitionStore)
+            } else {
+                listOf(resourceDefinitionStore, assetDefinitionSource)
+            },
         )
     }
     val resourceInstallCandidateCoordinator: ResourceInstallCandidateCoordinator by lazy {

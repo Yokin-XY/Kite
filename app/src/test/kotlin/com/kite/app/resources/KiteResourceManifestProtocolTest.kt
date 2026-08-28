@@ -505,6 +505,15 @@ class KiteResourceManifestProtocolTest {
         )
         assertTrue(providerCompatibility.contains("runtime_provider = requested_provider or config_provider"))
         assertTrue(providerCompatibility.contains("os.replace(temporary, target)"))
+        val modelCompatibility = hermes.installActions.single().installSteps.single {
+            it.id == "patch-hermes-acp-model-selection"
+        }.cmd
+        assertTrue(modelCompatibility.contains("_configured_custom_provider_ids"))
+        assertTrue(modelCompatibility.contains("return candidate, new_model[len(prefix):]"))
+        val bareProviderCompatibility = hermes.installActions.single().installSteps.single {
+            it.id == "patch-hermes-acp-bare-provider-selection"
+        }.cmd
+        assertTrue(bareProviderCompatibility.contains("candidate.removeprefix(\"custom:\")"))
         assertTrue(hermes.installActions.single().installSteps.none { it.id == "run-hermes-installer" })
         assertTrue(hermes.installActions.single().verifications.any { it.cmd.contains("hermes acp --help") })
         assertTrue(
@@ -512,10 +521,20 @@ class KiteResourceManifestProtocolTest {
                 it.id == "hermes-acp-provider-identity"
             }
         )
-        assertEquals("v2026.8.27.2", hermes.version)
+        assertTrue(
+            hermes.installActions.single().verifications.any {
+                it.id == "hermes-acp-model-selection"
+            }
+        )
+        assertTrue(
+            hermes.installActions.single().verifications.any {
+                it.id == "hermes-acp-bare-provider-selection"
+            }
+        )
+        assertEquals("v2026.8.27.4", hermes.version)
         assertEquals(1, hermes.updateActions.size)
         assertTrue(hermes.management.versionProbe?.command.orEmpty().contains(".kite-version"))
-        assertTrue(hermes.management.latestVersionProbe?.command.orEmpty().contains("v2026.8.27.2"))
+        assertTrue(hermes.management.latestVersionProbe?.command.orEmpty().contains("v2026.8.27.4"))
         val lightweightUpdate = hermes.updateActions.single()
         assertFalse(lightweightUpdate.cleanInstallRoot)
         assertTrue(
@@ -525,6 +544,14 @@ class KiteResourceManifestProtocolTest {
         assertTrue(
             lightweightUpdate.installSteps.single { it.id == "patch-hermes-acp-provider-identity" }
                 .cmd.contains("canonical_custom_identity")
+        )
+        assertTrue(
+            lightweightUpdate.installSteps.single { it.id == "patch-hermes-acp-model-selection" }
+                .cmd.contains("_configured_custom_provider_ids")
+        )
+        assertTrue(
+            lightweightUpdate.installSteps.single { it.id == "patch-hermes-acp-bare-provider-selection" }
+                .cmd.contains("candidate.removeprefix(\"custom:\")")
         )
         assertTrue(lightweightUpdate.installSteps.none { it.type == "git" || it.type == "script" })
     }

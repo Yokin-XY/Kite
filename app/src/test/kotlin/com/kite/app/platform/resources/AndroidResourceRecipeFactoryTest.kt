@@ -181,6 +181,10 @@ class AndroidResourceRecipeFactoryTest {
         assertTrue(shell.contains("patch-hermes-acp-provider-identity"))
         assertTrue(shell.contains("canonical_custom_identity"))
         assertTrue(shell.contains("from hermes_cli.runtime_provider import canonical_custom_identity"))
+        assertTrue(shell.contains("patch-hermes-acp-model-selection"))
+        assertTrue(shell.contains("_configured_custom_provider_ids"))
+        assertTrue(shell.contains("patch-hermes-acp-bare-provider-selection"))
+        assertTrue(shell.contains("candidate.removeprefix(\"custom:\")"))
         assertTrue(shell.contains("export HERMES_DISABLE_LAZY_INSTALLS=1"))
         assertTrue(shell.indexOf("1:-") < shell.indexOf("export HERMES_DISABLE_LAZY_INSTALLS=1"))
         assertFalse(shell.contains("uv python install"))
@@ -199,7 +203,7 @@ class AndroidResourceRecipeFactoryTest {
         val recipe = factory.recipe(
             "kite.hermes.core",
             KiteResourceInstallRecipes.OP_UPDATE,
-            "v2026.8.27.2",
+            "v2026.8.27.3",
         )
         val shell = recipe?.steps.orEmpty().single { it.type == KiteRecipe.STEP_SHELL }.cmd.orEmpty()
 
@@ -207,8 +211,12 @@ class AndroidResourceRecipeFactoryTest {
         assertTrue(shell.contains("patch-hermes-acp-provider-identity"))
         assertTrue(shell.contains("canonical_custom_identity"))
         assertTrue(shell.contains("from hermes_cli.runtime_provider import canonical_custom_identity"))
+        assertTrue(shell.contains("patch-hermes-acp-model-selection"))
+        assertTrue(shell.contains("return candidate, new_model[len(prefix):]"))
+        assertTrue(shell.contains("patch-hermes-acp-bare-provider-selection"))
+        assertTrue(shell.contains("candidate.removeprefix(\"custom:\")"))
         assertTrue(shell.contains("HERMES_DISABLE_LAZY_INSTALLS=1"))
-        assertTrue(shell.contains("v2026.8.27.2"))
+        assertTrue(shell.contains("v2026.8.27.4"))
         assertTrue(shell.contains("hermes acp --help"))
         assertFalse(shell.contains("git clone"))
         assertFalse(shell.contains("uv sync"))

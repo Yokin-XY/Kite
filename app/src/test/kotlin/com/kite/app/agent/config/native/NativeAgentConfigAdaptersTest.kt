@@ -14,6 +14,7 @@ import com.kite.app.agent.config.AgentConfigScope
 import com.kite.app.agent.config.normalizePublishedSessionConfiguration
 import com.kite.app.agent.config.AgentSessionConfigurationApplyResult
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
+import com.kite.app.agent.config.AgentSessionModelSelection
 import com.kite.app.agent.config.AgentCoreDocumentWriteRequest
 import com.kite.app.agent.config.AgentCoreDocumentWriteResult
 import com.kite.app.agent.config.AgentMcpDraft
@@ -1391,6 +1392,38 @@ class NativeAgentConfigAdaptersTest {
         assertTrue(Regex("provider:\\s*['\"]?zhipu['\"]?").containsMatchIn(text))
         assertTrue(Regex("default:\\s*['\"]?glm-5-code['\"]?").containsMatchIn(text))
         assertTrue(text.contains("max_turns: 77"))
+    }
+
+    @Test
+    fun hermesMapsConfiguredProviderModelsToItsAcpColonIds() {
+        val adapter = HermesAgentConfigAdapter(context, ::container)
+        val option = AgentConfigOption.Select(
+            id = "acp.session.model",
+            name = "Model",
+            category = AgentConfigCategory.Model,
+            currentValue = "custom:GLM-5.3",
+            choices = listOf(
+                AgentConfigChoice("custom:other:glm-5.2", "Other · glm-5.2"),
+                AgentConfigChoice("zhipu-coding-plan:glm-5.2", "Legacy GLM-5.2"),
+                AgentConfigChoice("custom:zhipu-coding-plan:glm-5.2", "GLM-5.2"),
+                AgentConfigChoice("openrouter:anthropic/claude-sonnet-4", "Claude Sonnet 4"),
+            ),
+        )
+
+        assertEquals(
+            AgentSessionModelSelection("acp.session.model", "custom:zhipu-coding-plan:glm-5.2"),
+            adapter.sessionModelSelection(
+                AgentPersistentConfigChange.SelectProvider("zhipu-coding-plan", "glm-5.2"),
+                listOf(option),
+            ),
+        )
+        assertEquals(
+            AgentSessionModelSelection("acp.session.model", "openrouter:anthropic/claude-sonnet-4"),
+            adapter.sessionModelSelection(
+                AgentPersistentConfigChange.SelectProvider("openrouter", "anthropic/claude-sonnet-4"),
+                listOf(option),
+            ),
+        )
     }
 
     @Test
