@@ -109,6 +109,9 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
             }
 
         })
+        context?.applicationContext?.let { appContext ->
+            KiteAppGraph.from(appContext).refreshResourceDefinitions()
+        }
         return true
     }
 

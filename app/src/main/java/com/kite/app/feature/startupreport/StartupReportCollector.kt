@@ -194,6 +194,7 @@ internal object StartupReportCollector {
                 StartupReportLogFile("Kite 运行日志（上一份）", File(generalLog.parentFile, "kftest.old.log")),
                 StartupReportLogFile("Kite 运行日志", generalLog),
                 StartupReportLogFile("内置工具包安装日志", ToolchainPackInstaller.logFile(appContext)),
+                StartupReportLogFile("远程资源目录状态", graph.resourceDefinitionStoreStatusFile()),
             ),
         )
     }

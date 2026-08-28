@@ -1,6 +1,7 @@
 package com.kite.app.shell
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.kite.app.CardRunTaskCloser
 import com.kite.app.action.KiteActionRouter
@@ -55,7 +56,10 @@ import com.kite.app.dropzone.KiteDropZoneManager
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteCardGroupStore
 import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourceAssetDefinitionSource
 import com.kite.app.resources.KiteResourceManifestLoader
+import com.kite.app.resources.KiteResourceRemoteStore
+import com.kite.app.resources.KiteResourceStoreRefreshResult
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.runtime.KFContainerManager
 import com.kite.app.foundation.runtime.StructuredJsonStringContext
@@ -105,6 +109,8 @@ internal class KiteAppGraph private constructor(context: Context) {
     private val processScope = CoroutineScope(processJob + Dispatchers.IO)
     @Volatile
     private var agentCatalogPreloadJob: Job? = null
+    @Volatile
+    private var resourceDefinitionRefreshJob: Job? = null
 
     val diagnostics: KiteDiagnostics by lazy { KiteDiagnostics(appContext) }
     val bridgeClient: KiteBridgeClient by lazy { KiteBridgeClient(diagnostics, appContext) }
@@ -147,7 +153,18 @@ internal class KiteAppGraph private constructor(context: Context) {
         // 正式资源事实固定归属原生 PRoot。View 只服务显式事务，不能再切换资源状态域。
         KiteResourceInstallStore(appContext)
     }
-    val resourceManifestLoader: KiteResourceManifestLoader by lazy { KiteResourceManifestLoader(appContext) }
+    private val resourceDefinitionStore: KiteResourceRemoteStore by lazy {
+        KiteResourceRemoteStore.create(appContext)
+    }
+    val resourceManifestLoader: KiteResourceManifestLoader by lazy {
+        KiteResourceManifestLoader(
+            isDebugBuild = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0,
+            definitionSources = listOf(
+                resourceDefinitionStore,
+                KiteResourceAssetDefinitionSource(appContext),
+            ),
+        )
+    }
     val resourceInstallCandidateCoordinator: ResourceInstallCandidateCoordinator by lazy {
         ResourceInstallCandidateCoordinator()
     }
@@ -207,6 +224,31 @@ internal class KiteAppGraph private constructor(context: Context) {
                     }
             }.also { agentCatalogPreloadJob = it }
         }
+
+    /** 进程级 single-flight 后台刷新；资源页面只消费刷新后发布的本地快照。 */
+    fun refreshResourceDefinitions(): Job =
+        resourceDefinitionRefreshJob?.takeIf(Job::isActive) ?: synchronized(this) {
+            resourceDefinitionRefreshJob?.takeIf(Job::isActive) ?: processScope.launch {
+                when (val result = resourceDefinitionStore.refresh()) {
+                    is KiteResourceStoreRefreshResult.Published -> {
+                        resourceManifestLoader.invalidate()
+                        agentRegistry.invalidateResourceDefinitions()
+                        Log.i(
+                            TAG,
+                            "Resource definitions published: revision=${result.revision} endpoint=${result.endpointId}",
+                        )
+                    }
+                    is KiteResourceStoreRefreshResult.Unchanged -> Log.i(
+                        TAG,
+                        "Resource definitions unchanged: revision=${result.revision} endpoint=${result.endpointId}",
+                    )
+                    KiteResourceStoreRefreshResult.Disabled -> Log.i(TAG, "Remote resource definitions disabled")
+                    is KiteResourceStoreRefreshResult.Failed -> Unit
+                }
+            }.also { resourceDefinitionRefreshJob = it }
+        }
+
+    fun resourceDefinitionStoreStatusFile(): java.io.File = resourceDefinitionStore.statusFile()
     val agentOfficialAccountManager: AgentOfficialAccountManager by lazy {
         AgentOfficialAccountManager(
             scope = processScope,

@@ -105,19 +105,31 @@ class KiteAgentRegistry(
             .toSet()
     }
 ) {
-    private val resourceRegistrations: List<AgentRegistration> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        resourceRegistrationSource?.invoke()
-            ?: manifestLoader.manifests().values.flatMap(AgentResourceRegistrationMapper::registrations)
-    }
-    private val agentIdsByResource: Map<String, List<String>> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        resourceRegistrations
+    private val definitionLock = Any()
+    @Volatile
+    private var cachedResourceRegistrations: List<AgentRegistration>? = null
+    @Volatile
+    private var cachedAgentIdsByResource: Map<String, List<String>>? = null
+
+    private fun resourceRegistrations(): List<AgentRegistration> =
+        cachedResourceRegistrations ?: synchronized(definitionLock) {
+            cachedResourceRegistrations ?: (
+                resourceRegistrationSource?.invoke()
+                    ?: manifestLoader.manifests().values.flatMap(AgentResourceRegistrationMapper::registrations)
+                ).also { cachedResourceRegistrations = it }
+        }
+
+    private fun agentIdsByResource(): Map<String, List<String>> =
+        cachedAgentIdsByResource ?: synchronized(definitionLock) {
+            cachedAgentIdsByResource ?: resourceRegistrations()
             .mapNotNull { registration ->
                 val source = registration.source as? AgentRegistrationSource.Resource ?: return@mapNotNull null
                 source.resourceId to registration.definition.agentId
             }
             .groupBy({ it.first }, { it.second })
             .mapValues { (_, agentIds) -> agentIds.distinct() }
-    }
+            .also { cachedAgentIdsByResource = it }
+        }
 
     val signals: Flow<KiteAgentRegistrySignal> = merge(
         installStore.signals.drop(1).map { signal ->
@@ -126,7 +138,7 @@ class KiteAgentRegistry(
                 .distinct()
             KiteAgentRegistrySignal(
                 reason = "resource:${signal.reason}",
-                affectedAgentIds = resourceIds.flatMap { agentIdsByResource[it].orEmpty() }.distinct(),
+                affectedAgentIds = resourceIds.flatMap { agentIdsByResource()[it].orEmpty() }.distinct(),
                 resourceId = signal.resourceId
             )
         },
@@ -140,7 +152,7 @@ class KiteAgentRegistry(
 
     fun snapshot(): AgentRegistrySnapshot {
         val custom = customStore.snapshot()
-        val registrations = resourceRegistrations + custom
+        val registrations = resourceRegistrations() + custom
         val installed = installStore.registrySnapshot().values
             .filter { it.installed }
             .map { it.resourceId }
@@ -182,7 +194,14 @@ class KiteAgentRegistry(
 
     fun removeCustom(agentId: String): Boolean = customStore.remove(agentId)
 
+    fun invalidateResourceDefinitions() {
+        synchronized(definitionLock) {
+            cachedResourceRegistrations = null
+            cachedAgentIdsByResource = null
+        }
+    }
+
     private fun resourceAgentIds(): Set<String> =
-        resourceRegistrations.map { it.definition.agentId }.toSet()
+        resourceRegistrations().map { it.definition.agentId }.toSet()
 
 }

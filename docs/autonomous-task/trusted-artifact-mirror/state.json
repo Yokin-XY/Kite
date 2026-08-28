@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "revision": 10,
+  "revision": 14,
   "taskKey": "trusted-artifact-mirror",
   "objective": "Introduce a general trusted multi-source artifact path and prove it with Hermes without trusting third-party forks.",
   "status": "completed",
@@ -13,22 +13,21 @@
     "Validate only one concrete fallback effect plus the final true-device crash check; no broad suites.",
     "Official upstream remains the authority. Mirrors may only transport bytes that match a pinned digest; no Hermes or device special cases."
   ],
-  "nextAction": "User performs the Hermes install path on Meizu 18 and reports the first concrete failure, if any.",
+  "nextAction": "等待用户基于 GitCode 在线目录继续挑选 Hermes 的定向问题。",
   "lastValidation": {
-    "taskId": "T202",
-    "name": "Hermes common-release mirror and device crash gate",
+    "taskId": "T203",
+    "name": "签名远程资源目录在线真机验证",
     "status": "passed",
-    "summary": "Official GitHub and GitCode expose v2026.8.27 at the same commit; focused recipe tests and Debug build passed, and the installed APK cold-started on Meizu 18 without crash output.",
+    "summary": "GitCode 公开快照与本地签名制品哈希一致；assembleDebug 成功；魅族 18 启动后状态为 published/revision 1/gitcode-main，进程存活且无 FATAL EXCEPTION 或 am_crash。",
     "evidenceRefs": [
-      "git-tag:v2026.8.27=fcebd62163497e77e5de00d26d2ed86cb4ef8761",
-      "test:focused-hermes-mirror-contracts",
+      "remote:gitcode-main:revision=1:sha256=4700EDEABBD1D74A5C6126D5FEC0AB0308739248EF3FA7A306F10B66CF3A1A6A",
       "build:app:assembleDebug",
-      "device:181QGEYH222B9:pid=11847:no-crash"
+      "device:181QGEYH222B9:published:revision=1:pid=13573:no-fatal"
     ],
-    "at": "2026-08-28T13:09:38Z"
+    "at": "2026-08-28T13:57:22Z"
   },
   "lastBatch": null,
-  "ledgerCursor": 10,
+  "ledgerCursor": 14,
   "legacyRefs": [],
-  "updatedAt": "2026-08-28T13:09:38Z"
+  "updatedAt": "2026-08-28T13:57:41Z"
 }

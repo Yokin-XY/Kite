@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "minimumRevision": 1,
+  "maxSnapshotBytes": 1048576,
+  "endpoints": [
+    {
+      "id": "gitcode-main",
+      "snapshotUrl": "https://api.gitcode.com/api/v5/repos/gcw_bLi3Mmrf/Kite-Resource-Store/raw/store/v1/channels/stable.json?ref=main",
+      "signatureUrl": "https://api.gitcode.com/api/v5/repos/gcw_bLi3Mmrf/Kite-Resource-Store/raw/store/v1/channels/stable.sig?ref=main"
+    }
+  ],
+  "trustedKeys": [
+    {
+      "id": "kite-store-2026-01",
+      "algorithm": "SHA256withECDSA",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBoVvpRtlLJC/JYYs7r65YG+6/VAoqqk0NSRS5qqfuBcloVTecXdSX09Z1a3p3LmYmWRfykuIum5NRbN+SgjZfw=="
+    }
+  ]
+}

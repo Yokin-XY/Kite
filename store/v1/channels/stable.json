@@ -1,0 +1,3516 @@
+{
+  "channel": "stable",
+  "homeLayout": {
+    "chips": [
+      "全部",
+      "Angel CLI"
+    ],
+    "hero": {
+      "contentDescription": "MiMo Code 海报，点击查看资源详情",
+      "imageAsset": "resources/kite.mimo.code/banner.png",
+      "resourceId": "kite.mimo.code"
+    },
+    "schemaVersion": 1,
+    "sections": [
+      {
+        "id": "ai-community",
+        "style": "shelf",
+        "title": "独立工具"
+      },
+      {
+        "id": "ai-vendor",
+        "style": "shelf",
+        "title": "厂商工具"
+      },
+      {
+        "id": "foundation",
+        "style": "list",
+        "title": "基础环境"
+      },
+      {
+        "id": "more",
+        "style": "list",
+        "title": "更多资源"
+      }
+    ],
+    "tabs": [
+      {
+        "id": "all",
+        "label": "全部"
+      },
+      {
+        "id": "angel-cli",
+        "label": "Angel CLI",
+        "sections": [
+          {
+            "id": "angel-cli",
+            "style": "list",
+            "title": "Angel CLI"
+          }
+        ]
+      }
+    ]
+  },
+  "keyId": "kite-store-2026-01",
+  "manifests": {
+    "kite.claude.code": {
+      "actions": {
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 Claude Code Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Claude Code"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "claude-code",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        }
+      },
+      "agents": [
+        {
+          "accounts": [
+            {
+              "id": "anthropic",
+              "login": {
+                "argv": [
+                  "claude",
+                  "auth",
+                  "login"
+                ],
+                "timeoutMs": 300000
+              },
+              "logout": {
+                "argv": [
+                  "claude",
+                  "auth",
+                  "logout"
+                ],
+                "timeoutMs": 30000
+              },
+              "modelGroupIds": [
+                "claude-code",
+                "anthropic",
+                "claude"
+              ],
+              "name": "Anthropic 官方",
+              "status": {
+                "argv": [
+                  "claude",
+                  "auth",
+                  "status"
+                ],
+                "loggedInPatterns": [
+                  "\"loggedIn\":true"
+                ],
+                "loggedOutPatterns": [
+                  "\"loggedIn\":false"
+                ],
+                "timeoutMs": 15000
+              }
+            }
+          ],
+          "configuration": {
+            "adapter": "claude-code",
+            "required": false
+          },
+          "description": "Claude Code 的 ACP 会话",
+          "id": "claude-code",
+          "launch": {
+            "argv": [
+              "/usr/bin/env",
+              "claude-agent-acp"
+            ],
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "claude-code",
+            "title": "Claude Code",
+            "transport": "stdio"
+          },
+          "name": "Claude Code"
+        }
+      ],
+      "base": {
+        "description": "Anthropic 的终端编码助手",
+        "icon": {
+          "fallbackText": "CC",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.claude.code/icon.png"
+        },
+        "name": "Claude Code",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "orange",
+        "category": "AI",
+        "longDescription": "Claude Code 是 Anthropic 面向终端的编码助手。Kite 使用 Anthropic 官方 NPM 包获取对应平台的原生 claude 命令，并负责依赖安装、命令暴露和结果验证；官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Claude Code 自己保存。",
+        "order": 70,
+        "recommendations": [
+          {
+            "label": "安装运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.codex.cli"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.opencode"
+          },
+          {
+            "label": "终端 Agent",
+            "resourceId": "kite.reasonix"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "claude",
+          "anthropic",
+          "coding-agent",
+          "terminal",
+          "ai"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Claude Code",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 Claude Code Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Claude Code"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "claude-code",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.claude.code",
+      "management": {
+        "managedCommands": [
+          "claude",
+          "claude-agent-acp"
+        ],
+        "mode": "managed_extension",
+        "versionProbe": {
+          "command": "claude --version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.claude.code",
+        "installRoot": "/workspace/.kf/software/kite.claude.code"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.claude",
+          "agent.anthropic.claude-code"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "companionPackages": [
+          "@agentclientprotocol/claude-agent-acp"
+        ],
+        "installArguments": [
+          "--allow-scripts=@anthropic-ai/claude-code"
+        ],
+        "package": "@anthropic-ai/claude-code",
+        "type": "npm"
+      }
+    },
+    "kite.codex.cli": {
+      "actions": {
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 Codex Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Codex CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "codex",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        }
+      },
+      "agents": [
+        {
+          "accounts": [
+            {
+              "id": "chatgpt",
+              "login": {
+                "argv": [
+                  "codex",
+                  "login"
+                ],
+                "timeoutMs": 300000
+              },
+              "logout": {
+                "argv": [
+                  "codex",
+                  "logout"
+                ],
+                "timeoutMs": 30000
+              },
+              "modelGroupIds": [
+                "codex",
+                "openai"
+              ],
+              "name": "ChatGPT 官方",
+              "status": {
+                "argv": [
+                  "codex",
+                  "login",
+                  "status"
+                ],
+                "loggedInPatterns": [
+                  "logged in"
+                ],
+                "loggedOutPatterns": [
+                  "not logged in"
+                ],
+                "timeoutMs": 15000
+              }
+            }
+          ],
+          "configuration": {
+            "adapter": "codex",
+            "required": false
+          },
+          "description": "Codex 官方 App Server 会话",
+          "id": "codex",
+          "launch": {
+            "argv": [
+              "kite-codex-app-server"
+            ],
+            "mode": "managed",
+            "protocol": "codex-app-server",
+            "providerId": "codex",
+            "title": "Codex",
+            "transport": "stdio"
+          },
+          "name": "Codex"
+        }
+      ],
+      "base": {
+        "description": "OpenAI 的终端编码助手",
+        "icon": {
+          "fallbackText": "Cx",
+          "type": "asset",
+          "value": "resources/kite.codex.cli/icon.png"
+        },
+        "name": "Codex CLI",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "teal",
+        "category": "AI",
+        "longDescription": "Codex CLI 是 OpenAI 面向终端的编码助手。Kite 使用 OpenAI 官方 NPM 包获取对应平台的 codex 命令，并把它暴露到 /workspace/.kf/bin；官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Codex 自己保存，不写入资源卡 JSON。",
+        "order": 50,
+        "recommendations": [
+          {
+            "label": "安装运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "兼容供应商",
+            "resourceId": "kite.codex.relay"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.claude.code"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.opencode"
+          },
+          {
+            "label": "终端 Agent",
+            "resourceId": "kite.mimo.code"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "codex",
+          "openai",
+          "coding-agent",
+          "terminal",
+          "ai"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Codex CLI",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 Codex Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Codex CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "codex",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.codex.cli",
+      "management": {
+        "managedCommands": [
+          "codex"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "codex --version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.codex.cli",
+        "installRoot": "/workspace/.kf/software/kite.codex.cli"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git",
+          "kite.codex.relay"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.codex",
+          "agent.openai.codex"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "@openai/codex",
+        "repository": "https://github.com/openai/codex",
+        "type": "npm"
+      }
+    },
+    "kite.codex.relay": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "codex-relay",
+              "kite-codex-acp",
+              "kite-codex-app-server"
+            ],
+            "steps": [
+              {
+                "cmd": "export UV_TOOL_DIR=\"$install_root/uv-tools\"\nexport UV_TOOL_BIN_DIR=\"$install_root/bin\"\nexport UV_CACHE_DIR=\"$install_root/uv-cache\"\nmkdir -p \"$UV_TOOL_BIN_DIR\"\nuv tool install --force --python /workspace/.kf/bin/python3 'codex-relay==0.5.5'",
+                "id": "install-codex-relay",
+                "type": "shell"
+              },
+              {
+                "cmd": "cat > \"$install_root/bin/kite-codex-upstream-proxy\" <<'KITE_CODEX_PROXY'\n#!/usr/bin/env node\n'use strict';\nconst http = require('http');\nconst https = require('https');\nconst upstream = new URL(process.env.KITE_CODEX_UPSTREAM || '');\nif (!['http:', 'https:'].includes(upstream.protocol)) throw new Error('unsupported_upstream_protocol');\nconst port = Number(process.env.KITE_CODEX_PROXY_PORT || '4454');\nconst hopByHop = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);\nconst cleanHeaders = (headers) => Object.fromEntries(Object.entries(headers).filter(([name]) => !hopByHop.has(name.toLowerCase())));\nconst basePath = upstream.pathname.replace(/\\/+$/, '');\nconst transport = upstream.protocol === 'https:' ? https : http;\nconst server = http.createServer((request, response) => {\n  const incomingPath = request.url || '/';\n  const suffix = incomingPath.startsWith('/') ? incomingPath : `/${incomingPath}`;\n  const headers = cleanHeaders(request.headers);\n  headers.host = upstream.host;\n  const outgoing = transport.request({\n    protocol: upstream.protocol,\n    hostname: upstream.hostname,\n    port: upstream.port || undefined,\n    method: request.method,\n    path: `${basePath}${suffix}`,\n    headers,\n  }, (upstreamResponse) => {\n    response.writeHead(upstreamResponse.statusCode || 502, cleanHeaders(upstreamResponse.headers));\n    upstreamResponse.pipe(response);\n  });\n  outgoing.on('error', (error) => {\n    if (!response.headersSent) response.writeHead(502, {'content-type': 'application/json'});\n    response.end(JSON.stringify({error: {message: 'upstream_transport_error', code: error.code || 'UNKNOWN'}}));\n  });\n  request.on('aborted', () => outgoing.destroy());\n  request.pipe(outgoing);\n});\nserver.on('clientError', (_error, socket) => socket.end('HTTP/1.1 400 Bad Request\\r\\n\\r\\n'));\nserver.listen(port, '127.0.0.1');\nKITE_CODEX_PROXY\ncat > \"$install_root/bin/kite-codex-acp\" <<'KITE_CODEX_ACP'\n#!/usr/bin/env bash\nset -eu\nupstream_file='/workspace/.kf/secrets/kite.codex-relay-upstream'\napi_key_file='/workspace/.kf/secrets/kite.codex-relay-api-key'\nrelay_log='/workspace/.kf/logs/codex-responses-relay.log'\nif [ ! -s \"$upstream_file\" ]; then exec codex-acp \"$@\"; fi\nrelay_pid=''\nproxy_pid=''\nstop_pid() {\n  target_pid=\"$1\"\n  if [ -n \"$target_pid\" ] && kill -0 \"$target_pid\" 2>/dev/null; then\n    kill \"$target_pid\" 2>/dev/null || true\n    wait \"$target_pid\" 2>/dev/null || true\n  fi\n}\ncleanup() {\n  stop_pid \"$relay_pid\"\n  stop_pid \"$proxy_pid\"\n}\ntrap cleanup EXIT\ntrap 'exit 129' HUP\ntrap 'exit 130' INT\ntrap 'exit 143' TERM\nupstream=\"$(tr -d '\\r\\n' < \"$upstream_file\")\"\nif [ -z \"$upstream\" ]; then echo 'Codex relay upstream missing' >&2; exit 2; fi\nif [ -s \"$api_key_file\" ]; then export CODEX_RELAY_API_KEY=\"$(cat \"$api_key_file\")\"; else unset CODEX_RELAY_API_KEY; fi\nmkdir -p \"$(dirname \"$relay_log\")\"\n: > \"$relay_log\"\nchmod 600 \"$relay_log\"\ncase \"$upstream\" in\n  https://*)\n    launcher_path=\"$(readlink -f \"$0\")\"\n    proxy_script=\"$(dirname \"$launcher_path\")/kite-codex-upstream-proxy\"\n    KITE_CODEX_UPSTREAM=\"$upstream\" KITE_CODEX_PROXY_PORT=4454 node \"$proxy_script\" >> \"$relay_log\" 2>&1 &\n    proxy_pid=$!\n    ready=0\n    attempts=0\n    while [ \"$attempts\" -lt 120 ]; do\n      if ! kill -0 \"$proxy_pid\" 2>/dev/null; then echo 'Codex upstream proxy exited during startup' >&2; exit 2; fi\n      if (exec 3<>/dev/tcp/127.0.0.1/4454) 2>/dev/null; then exec 3>&-; exec 3<&-; ready=1; break; fi\n      attempts=$((attempts + 1))\n      sleep 0.1\n    done\n    if [ \"$ready\" -ne 1 ]; then echo 'Codex upstream proxy startup timed out' >&2; exit 2; fi\n    export CODEX_RELAY_UPSTREAM='http://127.0.0.1:4454'\n    ;;\n  *) export CODEX_RELAY_UPSTREAM=\"$upstream\" ;;\nesac\ncodex-relay --bind 127.0.0.1 --port 4453 >> \"$relay_log\" 2>&1 &\nrelay_pid=$!\nready=0\nattempts=0\nwhile [ \"$attempts\" -lt 120 ]; do\n  if ! kill -0 \"$relay_pid\" 2>/dev/null; then echo 'Codex relay exited during startup' >&2; exit 2; fi\n  if (exec 3<>/dev/tcp/127.0.0.1/4453) 2>/dev/null; then exec 3>&-; exec 3<&-; ready=1; break; fi\n  attempts=$((attempts + 1))\n  sleep 0.1\ndone\nif [ \"$ready\" -ne 1 ]; then echo 'Codex relay startup timed out' >&2; exit 2; fi\ncodex-acp \"$@\"\nKITE_CODEX_ACP\nchmod 755 \"$install_root/bin/kite-codex-upstream-proxy\" \"$install_root/bin/kite-codex-acp\"",
+                "id": "install-kite-codex-launcher",
+                "type": "shell"
+              },
+              {
+                "cmd": "cat > \"$install_root/bin/kite-codex-app-server\" <<'KITE_CODEX_APP_SERVER'\n#!/usr/bin/env bash\nset -eu\nupstream_file='/workspace/.kf/secrets/kite.codex-relay-upstream'\napi_key_file='/workspace/.kf/secrets/kite.codex-relay-api-key'\nrelay_log='/workspace/.kf/logs/codex-responses-relay.log'\nif [ ! -s \"$upstream_file\" ]; then exec codex app-server \"$@\"; fi\nrelay_pid=''\nproxy_pid=''\nstop_pid() {\n  target_pid=\"$1\"\n  if [ -n \"$target_pid\" ] && kill -0 \"$target_pid\" 2>/dev/null; then\n    kill \"$target_pid\" 2>/dev/null || true\n    wait \"$target_pid\" 2>/dev/null || true\n  fi\n}\ncleanup() {\n  stop_pid \"$relay_pid\"\n  stop_pid \"$proxy_pid\"\n}\ntrap cleanup EXIT\ntrap 'exit 129' HUP\ntrap 'exit 130' INT\ntrap 'exit 143' TERM\nupstream=\"$(tr -d '\\r\\n' < \"$upstream_file\")\"\nif [ -z \"$upstream\" ]; then echo 'Codex relay upstream missing' >&2; exit 2; fi\nif [ -s \"$api_key_file\" ]; then export CODEX_RELAY_API_KEY=\"$(cat \"$api_key_file\")\"; else unset CODEX_RELAY_API_KEY; fi\nmkdir -p \"$(dirname \"$relay_log\")\"\n: > \"$relay_log\"\nchmod 600 \"$relay_log\"\ncase \"$upstream\" in\n  https://*)\n    launcher_path=\"$(readlink -f \"$0\")\"\n    proxy_script=\"$(dirname \"$launcher_path\")/kite-codex-upstream-proxy\"\n    KITE_CODEX_UPSTREAM=\"$upstream\" KITE_CODEX_PROXY_PORT=4454 node \"$proxy_script\" >> \"$relay_log\" 2>&1 &\n    proxy_pid=$!\n    ready=0\n    attempts=0\n    while [ \"$attempts\" -lt 120 ]; do\n      if ! kill -0 \"$proxy_pid\" 2>/dev/null; then echo 'Codex upstream proxy exited during startup' >&2; exit 2; fi\n      if (exec 3<>/dev/tcp/127.0.0.1/4454) 2>/dev/null; then exec 3>&-; exec 3<&-; ready=1; break; fi\n      attempts=$((attempts + 1))\n      sleep 0.1\n    done\n    if [ \"$ready\" -ne 1 ]; then echo 'Codex upstream proxy startup timed out' >&2; exit 2; fi\n    export CODEX_RELAY_UPSTREAM='http://127.0.0.1:4454'\n    ;;\n  *) export CODEX_RELAY_UPSTREAM=\"$upstream\" ;;\nesac\ncodex-relay --bind 127.0.0.1 --port 4453 >> \"$relay_log\" 2>&1 &\nrelay_pid=$!\nready=0\nattempts=0\nwhile [ \"$attempts\" -lt 120 ]; do\n  if ! kill -0 \"$relay_pid\" 2>/dev/null; then echo 'Codex relay exited during startup' >&2; exit 2; fi\n  if (exec 3<>/dev/tcp/127.0.0.1/4453) 2>/dev/null; then exec 3>&-; exec 3<&-; ready=1; break; fi\n  attempts=$((attempts + 1))\n  sleep 0.1\ndone\nif [ \"$ready\" -ne 1 ]; then echo 'Codex relay startup timed out' >&2; exit 2; fi\ncodex app-server \"$@\"\nKITE_CODEX_APP_SERVER\nchmod 755 \"$install_root/bin/kite-codex-app-server\"",
+                "id": "install-kite-codex-app-server",
+                "type": "shell"
+              }
+            ],
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "codex-relay --version",
+                "id": "codex-relay-command"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "检查本机协议桥版本",
+              "icon": {
+                "name": "code",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Codex 兼容协议桥"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "cmd": "codex-relay --version",
+                "surfaceMode": "panel",
+                "type": "shell"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        }
+      },
+      "base": {
+        "description": "把 Codex Responses 请求转换为兼容供应商接口",
+        "icon": {
+          "fallbackText": "Rx",
+          "type": "asset",
+          "value": "resources/kite.codex.cli/icon.png"
+        },
+        "name": "Codex 兼容协议桥",
+        "version": "0.5.5"
+      },
+      "display": {
+        "accent": "teal",
+        "category": "Agent",
+        "longDescription": "Codex 只使用 Responses API；这张受管组件通过通用协议转换，让 Codex 能连接只提供 OpenAI Chat Completions 兼容接口的供应商。服务仅监听 127.0.0.1，并且只有当前 Codex 供应商需要转换时才启动。",
+        "order": 180,
+        "recommendations": [
+          {
+            "label": "上层 Agent",
+            "resourceId": "kite.codex.cli"
+          },
+          {
+            "label": "安装运行时",
+            "resourceId": "kite.python"
+          }
+        ],
+        "sections": [
+          "foundation"
+        ],
+        "sizeLabel": "网络包",
+        "tags": [
+          "codex",
+          "responses",
+          "chat-completions",
+          "relay",
+          "agent"
+        ]
+      },
+      "homeCards": [],
+      "id": "kite.codex.relay",
+      "management": {
+        "managedCommands": [
+          "codex-relay",
+          "kite-codex-acp",
+          "kite-codex-app-server"
+        ],
+        "mode": "managed_extension",
+        "versionProbe": {
+          "command": "codex-relay --version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.codex.relay",
+        "installRoot": "/workspace/.kf/software/kite.codex.relay"
+      },
+      "relations": {
+        "base": [
+          "kite.python",
+          "kite.uv"
+        ],
+        "defaults": [],
+        "extensions": [
+          "kite.codex.cli"
+        ],
+        "provides": [
+          "service.codex.responses-relay"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "codex-relay",
+        "repository": "https://github.com/MetaFARS/codex-relay",
+        "type": "pypi"
+      }
+    },
+    "kite.curl": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "curl"
+            ],
+            "steps": [
+              {
+                "cmd": "install.sh --install-curl",
+                "id": "install-bundled-curl",
+                "type": "bundled"
+              }
+            ],
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "curl --version | head -1",
+                "id": "curl-runtime"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "检查 curl 版本",
+              "icon": {
+                "name": "code",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "curl"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "cmd": "curl --version | head -1",
+                "surfaceMode": "panel",
+                "type": "shell"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": "rm -rf /workspace/.kf/software/kite.curl /workspace/.kf/cache/resources/kite.curl; rm -f /workspace/.kf/bin/curl",
+            "type": "shell"
+          }
+        ]
+      },
+      "base": {
+        "description": "网络下载命令",
+        "icon": {
+          "fallbackText": "curl",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.curl/icon.png"
+        },
+        "name": "curl",
+        "version": "rootfs"
+      },
+      "display": {
+        "accent": "orange",
+        "category": "系统工具",
+        "longDescription": "curl 是网络型资源下载安装脚本的基础层工具。首次启动和资源获取都会从内置工具包缓存把 rootfs 内置 curl 接入 /workspace/.kf/software/kite.curl 与 /workspace/.kf/bin。",
+        "order": 170,
+        "recommendations": [
+          {
+            "label": "同级工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "被依赖",
+            "resourceId": "kite.hermes.core"
+          }
+        ],
+        "sections": [
+          "foundation"
+        ],
+        "sizeLabel": "内置底座",
+        "tags": [
+          "curl",
+          "download",
+          "dependency",
+          "hermes"
+        ]
+      },
+      "homeCards": [],
+      "id": "kite.curl",
+      "management": {
+        "managedCommands": [
+          "curl"
+        ],
+        "mode": "system_component"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.curl",
+        "installRoot": "/workspace/.kf/software/kite.curl"
+      },
+      "relations": {
+        "base": [],
+        "defaults": [],
+        "extensions": [
+          "kite.hermes.core"
+        ],
+        "provides": [
+          "tool.curl"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "asset": "toolchain/ai-dev-pack",
+        "type": "bundled"
+      }
+    },
+    "kite.gemini.cli": {
+      "actions": {
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 Gemini CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Gemini CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "gemini",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        }
+      },
+      "agents": [
+        {
+          "configuration": {
+            "adapter": "gemini-cli",
+            "required": false
+          },
+          "description": "Gemini CLI 原生 ACP 会话",
+          "id": "gemini",
+          "launch": {
+            "argv": [
+              "gemini",
+              "--acp"
+            ],
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "gemini",
+            "title": "Gemini CLI",
+            "transport": "stdio"
+          },
+          "name": "Gemini CLI"
+        }
+      ],
+      "base": {
+        "description": "Google 的终端 AI 编码 Agent",
+        "icon": {
+          "type": "text",
+          "value": "Ge"
+        },
+        "name": "Gemini CLI",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "purple",
+        "category": "AI",
+        "longDescription": "Gemini CLI 是 Google 官方的开源终端编码 Agent。Kite 使用官方 npm 包安装 gemini 命令，并通过 Gemini CLI 原生 ACP 模式接入统一会话；登录、API Key、模型和工具审批仍由 Gemini CLI 自己管理。",
+        "order": 85,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.qwen.code"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.codex.cli"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "gemini",
+          "google",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "acp"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Gemini CLI",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 Gemini CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Gemini CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "gemini",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.gemini.cli",
+      "management": {
+        "managedCommands": [
+          "gemini"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "gemini --version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.gemini.cli",
+        "installRoot": "/workspace/.kf/software/kite.gemini.cli"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.gemini",
+          "agent.google.gemini"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "@google/gemini-cli",
+        "repository": "https://github.com/google-gemini/gemini-cli",
+        "type": "npm"
+      }
+    },
+    "kite.git": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "git"
+            ],
+            "steps": [
+              {
+                "cmd": "install.sh --install-git",
+                "id": "install-bundled-git",
+                "type": "bundled"
+              }
+            ],
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "git --version",
+                "id": "git-runtime"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "查看 Git 版本与常用命令帮助",
+              "icon": {
+                "name": "code",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Git"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "cmd": "git --version && git --help | head -40",
+                "surfaceMode": "panel",
+                "type": "shell"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": "rm -rf /workspace/.kf/software/kite.git /workspace/.kf/cache/resources/kite.git; rm -f /workspace/.kf/bin/git",
+            "type": "shell"
+          }
+        ]
+      },
+      "base": {
+        "description": "源码下载与版本管理工具",
+        "icon": {
+          "fallbackText": "Git",
+          "type": "asset",
+          "value": "resources/kite.git/icon.png"
+        },
+        "name": "Git",
+        "version": "rootfs"
+      },
+      "display": {
+        "accent": "orange",
+        "category": "系统工具",
+        "longDescription": "Git 是 Hermes 本体和后续源码型资源的底层工具卡。首次启动和资源获取都会从内置工具包缓存把 rootfs 内置 Git 接入 /workspace/.kf/software/kite.git 与 /workspace/.kf/bin。",
+        "order": 150,
+        "recommendations": [
+          {
+            "label": "同级工具",
+            "resourceId": "kite.curl"
+          },
+          {
+            "label": "被依赖",
+            "resourceId": "kite.hermes.core"
+          }
+        ],
+        "sections": [
+          "foundation"
+        ],
+        "sizeLabel": "内置底座",
+        "tags": [
+          "git",
+          "source",
+          "dependency",
+          "hermes"
+        ]
+      },
+      "homeCards": [],
+      "id": "kite.git",
+      "management": {
+        "managedCommands": [
+          "git"
+        ],
+        "mode": "system_component"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.git",
+        "installRoot": "/workspace/.kf/software/kite.git"
+      },
+      "relations": {
+        "base": [],
+        "defaults": [],
+        "extensions": [
+          "kite.hermes.core"
+        ],
+        "provides": [
+          "tool.git"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "asset": "toolchain/ai-dev-pack",
+        "type": "bundled"
+      }
+    },
+    "kite.google.antigravity": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "agy"
+            ],
+            "steps": [
+              {
+                "destination": "$install_root/.kite-downloads/install.sh",
+                "id": "download-antigravity-installer",
+                "maxBytes": 16777216,
+                "type": "download",
+                "url": "https://antigravity.google/cli/install.sh"
+              },
+              {
+                "id": "run-antigravity-installer",
+                "interpreter": "bash",
+                "path": "$install_root/.kite-downloads/install.sh",
+                "type": "script"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v agy >/dev/null 2>&1",
+                "id": "antigravity-command"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "在终端里启动 Google Antigravity",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Antigravity CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "text": "cd /workspace\necho \"Antigravity CLI 首次启动会要求 Google OAuth 或 Google Cloud 项目登录，并确认信任当前工作区。\"\nagy\n",
+                "type": "terminal"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "agy"
+            ],
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "base": {
+        "description": "Google Antigravity 的终端 Agent",
+        "icon": {
+          "fallbackText": "Ag",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.google.antigravity/icon.png"
+        },
+        "name": "Antigravity CLI",
+        "version": "official"
+      },
+      "display": {
+        "accent": "blue",
+        "category": "AI",
+        "longDescription": "Antigravity CLI 是 Google Antigravity 的终端 TUI，接替消费者路径上的 Gemini CLI，用于在终端里运行多步推理、文件编辑、工具调用和项目任务。Kite 使用官方 install script 获取 agy 命令；Google OAuth、Google Cloud 项目和工作区信任确认在终端运行态完成。",
+        "order": 100,
+        "recommendations": [
+          {
+            "label": "下载工具",
+            "resourceId": "kite.curl"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.qwen.code"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.codex.cli"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "google",
+          "antigravity",
+          "gemini",
+          "coding-agent",
+          "terminal",
+          "ai"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Antigravity CLI",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "在终端里启动 Google Antigravity",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Antigravity CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "text": "cd /workspace\necho \"Antigravity CLI 首次启动会要求 Google OAuth 或 Google Cloud 项目登录，并确认信任当前工作区。\"\nagy\n",
+                "type": "terminal"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.google.antigravity",
+      "management": {
+        "managedCommands": [
+          "agy"
+        ],
+        "mode": "managed_extension"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.google.antigravity",
+        "installRoot": "/workspace/.kf/software/kite.google.antigravity"
+      },
+      "relations": {
+        "base": [
+          "kite.git",
+          "kite.curl"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.antigravity",
+          "agent.google.antigravity"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "repository": "https://antigravity.google",
+        "type": "official_script",
+        "url": "https://antigravity.google/cli/install.sh"
+      }
+    },
+    "kite.hermes.core": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "hermes"
+            ],
+            "steps": [
+              {
+                "commit": "fcebd62163497e77e5de00d26d2ed86cb4ef8761",
+                "depth": 1,
+                "destination": "$install_root/hermes-agent",
+                "id": "acquire-hermes-source",
+                "ref": "v2026.8.27",
+                "repositories": [
+                  "https://github.com/NousResearch/hermes-agent.git",
+                  "https://gitcode.com/GitHub_Trending/he/hermes-agent.git"
+                ],
+                "retryAttempts": 1,
+                "retryDelaySeconds": 0,
+                "type": "git"
+              },
+              {
+                "args": [
+                  "--dir",
+                  "$install_root/hermes-agent",
+                  "--hermes-home",
+                  "$install_root/home",
+                  "--branch",
+                  "v2026.8.27",
+                  "--commit",
+                  "fcebd62163497e77e5de00d26d2ed86cb4ef8761",
+                  "--skip-setup",
+                  "--skip-browser",
+                  "--non-interactive"
+                ],
+                "env": {
+                  "HERMES_HOME": "$install_root/home",
+                  "HERMES_INSTALL_DIR": "$install_root/hermes-agent",
+                  "UV_CACHE_DIR": "$install_root/uv-cache",
+                  "UV_LINK_MODE": "copy",
+                  "UV_NO_CONFIG": "1",
+                  "UV_PYTHON_BIN_DIR": "$install_root/uv-bin",
+                  "UV_PYTHON_INSTALL_DIR": "$install_root/uv-python"
+                },
+                "id": "run-hermes-installer",
+                "interpreter": "bash",
+                "path": "$install_root/hermes-agent/scripts/install.sh",
+                "type": "script"
+              },
+              {
+                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif ! \"$agent_python\" -m pip --version >/dev/null 2>&1; then\n  \"$agent_python\" -m ensurepip --upgrade || python3 -m pip --python \"$agent_python\" install --upgrade pip\nfi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"",
+                "id": "write-hermes-launcher",
+                "type": "shell"
+              },
+              {
+                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\n\"$agent_python\" -m pip install -e \"$install_root/hermes-agent[acp]\"",
+                "id": "install-hermes-acp-extra",
+                "type": "shell"
+              }
+            ],
+            "timeoutMs": 1800000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "test \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"fcebd62163497e77e5de00d26d2ed86cb4ef8761\"",
+                "id": "hermes-source-commit"
+              },
+              {
+                "cmd": "hermes --help >/dev/null",
+                "id": "hermes-command"
+              },
+              {
+                "cmd": "hermes acp --help >/dev/null",
+                "id": "hermes-acp-command"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 Hermes Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Hermes"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "hermes",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "hermes"
+            ],
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "accounts": [
+            {
+              "id": "nous",
+              "login": {
+                "argv": [
+                  "hermes",
+                  "portal",
+                  "login"
+                ],
+                "timeoutMs": 300000
+              },
+              "logout": {
+                "argv": [
+                  "hermes",
+                  "auth",
+                  "logout",
+                  "nous"
+                ],
+                "timeoutMs": 30000
+              },
+              "modelGroupIds": [
+                "nous",
+                "hermes"
+              ],
+              "name": "Nous Portal 官方",
+              "status": {
+                "argv": [
+                  "hermes",
+                  "portal",
+                  "info"
+                ],
+                "loggedInPatterns": [
+                  "logged in"
+                ],
+                "loggedOutPatterns": [
+                  "not logged in"
+                ],
+                "timeoutMs": 15000
+              }
+            }
+          ],
+          "configuration": {
+            "adapter": "hermes",
+            "required": false
+          },
+          "description": "Hermes 原生 ACP 会话",
+          "id": "hermes",
+          "launch": {
+            "argv": [
+              "hermes",
+              "acp"
+            ],
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "hermes",
+            "title": "Hermes",
+            "transport": "stdio"
+          },
+          "name": "Hermes"
+        }
+      ],
+      "base": {
+        "description": "Hermes Agent 本体与 CLI",
+        "icon": {
+          "fallbackText": "H",
+          "type": "asset",
+          "value": "resources/kite.hermes.core/icon.png"
+        },
+        "name": "Hermes",
+        "version": "v2026.8.27"
+      },
+      "display": {
+        "accent": "teal",
+        "category": "AI",
+        "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。Nous Portal 官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Hermes 自己管理。",
+        "order": 40,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.python"
+          },
+          {
+            "label": "依赖管理",
+            "resourceId": "kite.uv"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "下载工具",
+            "resourceId": "kite.curl"
+          }
+        ],
+        "sections": [
+          "ai-community"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "hermes",
+          "agent",
+          "ai",
+          "core"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Hermes",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 Hermes Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Hermes"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "hermes",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.hermes.core",
+      "management": {
+        "managedCommands": [
+          "hermes"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "home"
+        ]
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.hermes.core",
+        "configRoot": "/workspace/.kf/software/kite.hermes.core/home",
+        "installRoot": "/workspace/.kf/software/kite.hermes.core"
+      },
+      "relations": {
+        "base": [
+          "kite.git",
+          "kite.curl",
+          "kite.python",
+          "kite.nodejs",
+          "kite.uv"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.hermes",
+          "service.hermes",
+          "config.hermes"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "args": [
+          "--skip-setup",
+          "--skip-browser",
+          "--non-interactive"
+        ],
+        "type": "official_script",
+        "upstream": "https://github.com/NousResearch/hermes-agent",
+        "url": "https://hermes-agent.nousresearch.com/install.sh"
+      }
+    },
+    "kite.kimi.code": {
+      "actions": {
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 Kimi Code Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Kimi Code"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "kimi",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        }
+      },
+      "agents": [
+        {
+          "accounts": [
+            {
+              "id": "moonshot",
+              "login": {
+                "argv": [
+                  "kimi",
+                  "login"
+                ],
+                "timeoutMs": 300000
+              },
+              "modelGroupIds": [
+                "kimi-code",
+                "moonshot"
+              ],
+              "name": "Kimi 官方"
+            }
+          ],
+          "configuration": {
+            "adapter": "kimi-code",
+            "required": false
+          },
+          "description": "Kimi Code 原生 ACP 会话",
+          "id": "kimi",
+          "launch": {
+            "argv": [
+              "kimi",
+              "acp"
+            ],
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "kimi",
+            "title": "Kimi Code",
+            "transport": "stdio"
+          },
+          "name": "Kimi Code"
+        }
+      ],
+      "base": {
+        "description": "Moonshot AI 的终端编码助手",
+        "icon": {
+          "fallbackText": "Ki",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.kimi.code/icon.png"
+        },
+        "name": "Kimi Code",
+        "version": "official"
+      },
+      "display": {
+        "accent": "blue",
+        "category": "AI",
+        "longDescription": "Kimi Code 是 Moonshot AI 的开源 AI 编码 Agent，可以读写代码、运行命令、搜索文件和获取网页。Kite 使用官方 install script 获取 kimi 命令，并通过原生 ACP stdio 能力建立 Agent 会话；登录凭据和 Provider 配置仍由 Kimi Code 自己保存，不写入资源卡 JSON。",
+        "order": 80,
+        "recommendations": [
+          {
+            "label": "下载工具",
+            "resourceId": "kite.curl"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.qwen.code"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.codex.cli"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "kimi",
+          "moonshot",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "mcp"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Kimi Code",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 Kimi Code Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Kimi Code"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "kimi",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.kimi.code",
+      "management": {
+        "managedCommands": [
+          "kimi"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "kimi --version",
+          "pattern": "v?([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.kimi.code",
+        "installRoot": "/workspace/.kf/software/kite.kimi.code"
+      },
+      "relations": {
+        "base": [
+          "kite.git",
+          "kite.curl"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.kimi",
+          "agent.moonshot.kimi-code"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "environment": {
+          "KIMI_INSTALL_DIR": "$install_root",
+          "KIMI_NO_MODIFY_PATH": "1"
+        },
+        "latestFormat": "text",
+        "latestUrl": "https://code.kimi.com/kimi-code/latest",
+        "maxBytes": 16777216,
+        "repository": "https://github.com/MoonshotAI/kimi-code",
+        "type": "official_script",
+        "url": "https://code.kimi.com/kimi-code/install.sh",
+        "versionArguments": [
+          "--version",
+          "{version}"
+        ]
+      }
+    },
+    "kite.mimo.code": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "mimo"
+            ],
+            "steps": [
+              {
+                "id": "install-mimo-package",
+                "packages": [
+                  "@mimo-ai/cli"
+                ],
+                "type": "npm"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v mimo >/dev/null 2>&1",
+                "id": "mimo-command"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 MiMo Code Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "MiMo Code"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "mimo",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "mimo"
+            ],
+            "npmUninstallPackage": "@mimo-ai/cli",
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "configuration": {
+            "adapter": "mimo-code",
+            "required": false
+          },
+          "description": "MiMo Code 原生 ACP 会话",
+          "id": "mimo",
+          "launch": {
+            "argv": [
+              "mimo",
+              "acp"
+            ],
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "mimo",
+            "title": "MiMo Code",
+            "transport": "stdio"
+          },
+          "name": "MiMo Code"
+        }
+      ],
+      "base": {
+        "description": "小米 MiMo 终端 AI 编码助手",
+        "icon": {
+          "fallbackText": "Mi",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.mimo.code/icon.png"
+        },
+        "name": "MiMo Code",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "orange",
+        "category": "AI",
+        "longDescription": "MiMo Code 是小米 MiMo 团队的终端原生 AI 编码助手，可以读写代码、运行命令、管理 Git，并通过持久记忆理解项目。Kite 把它作为 Node.js 上层资源：获取阶段只安装 @mimo-ai/cli 并暴露 mimo 命令；打开后在终端表面完成首次配置或登录，不把 Provider、OAuth 或运行输出写进资源卡。",
+        "media": {
+          "asset": "resources/kite.mimo.code/banner.png",
+          "contentDescription": "MiMo Code 海报，点击查看资源详情",
+          "type": "image"
+        },
+        "order": 120,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.reasonix"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.codex.cli"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "mimo",
+          "mimocode",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "mcp",
+          "memory"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "MiMo Code",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 MiMo Code Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "MiMo Code"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "mimo",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.mimo.code",
+      "management": {
+        "managedCommands": [
+          "mimo"
+        ],
+        "mode": "managed_extension"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.mimo.code",
+        "installRoot": "/workspace/.kf/software/kite.mimo.code"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.mimo",
+          "agent.mimo.code"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "@mimo-ai/cli",
+        "repository": "https://github.com/XiaomiMiMo/MiMo-Code",
+        "type": "npm"
+      }
+    },
+    "kite.nodejs": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "node",
+              "npm",
+              "npx"
+            ],
+            "steps": [
+              {
+                "cmd": "install.sh --install-node",
+                "id": "install-bundled-node",
+                "type": "bundled"
+              }
+            ],
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "node --version && npm --version && npx --version",
+                "id": "node-runtime"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "检查 Node.js、npm 与 npx 版本",
+              "icon": {
+                "name": "code",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Node.js"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "cmd": "node --version && npm --version && npx --version",
+                "surfaceMode": "panel",
+                "type": "shell"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "reinstall": [
+          {
+            "name": "uninstall",
+            "type": "action"
+          },
+          {
+            "name": "install",
+            "type": "action"
+          }
+        ],
+        "uninstall": [
+          {
+            "cmd": "rm -rf /workspace/.kf/software/kite.nodejs /workspace/.kf/cache/resources/kite.nodejs; rm -f /workspace/.kf/bin/node /workspace/.kf/bin/npm /workspace/.kf/bin/npx",
+            "type": "shell"
+          }
+        ]
+      },
+      "base": {
+        "description": "现代 JavaScript 运行环境",
+        "icon": {
+          "fallbackText": "JS",
+          "type": "asset",
+          "value": "resources/kite.nodejs/icon.png"
+        },
+        "name": "Node.js",
+        "version": "26.4.0"
+      },
+      "display": {
+        "accent": "green",
+        "category": "JavaScript",
+        "longDescription": "Node.js 是 Kite 离线基础层的一部分。资源卡只把内置 Node.js 26.4.0 暴露到 /workspace/.kf/bin，供后续 Agent、网页工具和卡片脚本使用。",
+        "order": 130,
+        "recommendations": [
+          {
+            "label": "编码 Agent",
+            "resourceId": "kite.reasonix"
+          },
+          {
+            "label": "编码 Agent",
+            "resourceId": "kite.mimo.code"
+          },
+          {
+            "label": "编码 Agent",
+            "resourceId": "kite.openclaw"
+          }
+        ],
+        "sections": [
+          "foundation"
+        ],
+        "sizeLabel": "内置包",
+        "tags": [
+          "node",
+          "npm",
+          "npx",
+          "javascript"
+        ]
+      },
+      "homeCards": [],
+      "id": "kite.nodejs",
+      "management": {
+        "managedCommands": [
+          "node",
+          "npm",
+          "npx"
+        ],
+        "mode": "system_component"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.nodejs",
+        "installRoot": "/workspace/.kf/software/kite.nodejs"
+      },
+      "relations": {
+        "base": [],
+        "defaults": [],
+        "extensions": [
+          "kite.hermes.core",
+          "kite.reasonix",
+          "kite.mimo.code",
+          "kite.openclaw"
+        ],
+        "provides": [
+          "runtime.node>=26",
+          "tool.npm",
+          "tool.npx"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "asset": "toolchain/ai-dev-pack",
+        "type": "bundled"
+      }
+    },
+    "kite.openclaw": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "openclaw"
+            ],
+            "steps": [
+              {
+                "id": "install-openclaw-package",
+                "packages": [
+                  "openclaw@latest"
+                ],
+                "type": "npm"
+              },
+              {
+                "cmd": "umask 077 && mkdir -p /workspace/.kf/secrets && token_file=/workspace/.kf/secrets/kite.openclaw-gateway-token && if [ ! -s \"$token_file\" ]; then { cat /proc/sys/kernel/random/uuid; cat /proc/sys/kernel/random/uuid; } | tr -d '\\n-' > \"$token_file\"; fi && chmod 600 \"$token_file\" && test -s \"$token_file\"",
+                "id": "prepare-openclaw-gateway-token",
+                "type": "shell"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v openclaw >/dev/null 2>&1",
+                "id": "openclaw-command"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 OpenClaw Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "OpenClaw"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "openclaw",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "openclaw"
+            ],
+            "npmUninstallPackage": "openclaw",
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "configuration": {
+            "adapter": "openclaw",
+            "required": false
+          },
+          "description": "连接 OpenClaw Gateway 的 ACP 会话",
+          "id": "openclaw",
+          "launch": {
+            "argv": [
+              "openclaw",
+              "acp"
+            ],
+            "environmentFiles": {
+              "OPENCLAW_GATEWAY_TOKEN": "/workspace/.kf/secrets/kite.openclaw-gateway-token"
+            },
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "openclaw",
+            "runtimeDependencies": [
+              {
+                "argv": [
+                  "openclaw",
+                  "gateway",
+                  "run",
+                  "--bind",
+                  "loopback",
+                  "--port",
+                  "18789",
+                  "--auth",
+                  "token",
+                  "--allow-unconfigured"
+                ],
+                "bindAddress": "127.0.0.1",
+                "bindPort": 18789,
+                "environment": {
+                  "OPENCLAW_DISABLE_BONJOUR": "1"
+                },
+                "environmentFiles": {
+                  "OPENCLAW_GATEWAY_TOKEN": "/workspace/.kf/secrets/kite.openclaw-gateway-token"
+                },
+                "healthCheckStartupDelayMs": 0,
+                "healthHttpPath": "/readyz",
+                "id": "openclaw-gateway",
+                "restartPolicy": "on_failure",
+                "retentionClass": "resident",
+                "startupTimeoutMs": 30000,
+                "title": "OpenClaw 网关",
+                "workdir": "/workspace"
+              }
+            ],
+            "title": "OpenClaw",
+            "transport": "stdio"
+          },
+          "name": "OpenClaw"
+        }
+      ],
+      "base": {
+        "description": "多通道 AI Agent 网关",
+        "icon": {
+          "fallbackText": "Cl",
+          "type": "asset",
+          "value": "resources/kite.openclaw/icon.png"
+        },
+        "name": "OpenClaw",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "mint",
+        "category": "AI",
+        "longDescription": "OpenClaw 是偏网关和多通道协作的 AI Agent 工具。Kite 把它作为 Node.js 上层资源接入：获取阶段安装 openclaw npm 包并暴露 openclaw 命令，打开后直接进入本地对话界面；模型与网络搜索服务由 OpenClaw 自己管理。",
+        "order": 20,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.opencode"
+          },
+          {
+            "label": "终端 Agent",
+            "resourceId": "kite.codex.cli"
+          }
+        ],
+        "sections": [
+          "ai-community"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "openclaw",
+          "agent",
+          "gateway",
+          "terminal",
+          "ai"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "OpenClaw",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 OpenClaw Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "OpenClaw"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "openclaw",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.openclaw",
+      "management": {
+        "managedCommands": [
+          "openclaw"
+        ],
+        "mode": "managed_extension"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.openclaw",
+        "installRoot": "/workspace/.kf/software/kite.openclaw"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.openclaw",
+          "agent.openclaw"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "openclaw",
+        "repository": "https://github.com/openclaw/openclaw",
+        "type": "npm"
+      }
+    },
+    "kite.opencode": {
+      "actions": {
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 OpenCode Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "OpenCode"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "opencode",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        }
+      },
+      "agents": [
+        {
+          "configuration": {
+            "adapter": "opencode",
+            "required": false
+          },
+          "description": "OpenCode 原生 ACP 会话",
+          "id": "opencode",
+          "launch": {
+            "argv": [
+              "opencode",
+              "acp"
+            ],
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "opencode",
+            "title": "OpenCode",
+            "transport": "stdio"
+          },
+          "name": "OpenCode",
+          "sessions": {
+            "adapter": "opencode"
+          }
+        }
+      ],
+      "base": {
+        "description": "开源终端 AI 编码 Agent",
+        "icon": {
+          "fallbackText": "OC",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.opencode/icon.png"
+        },
+        "name": "OpenCode",
+        "version": "official"
+      },
+      "display": {
+        "accent": "blue",
+        "category": "AI",
+        "longDescription": "OpenCode 是开源的终端 AI 编码 Agent，可以连接 Claude、GPT、Gemini 等模型。Kite 通过官方发布包安装 opencode 命令，并使用 OpenCode 的 ACP stdio 能力建立原生 Agent 会话。",
+        "order": 10,
+        "recommendations": [
+          {
+            "label": "下载工具",
+            "resourceId": "kite.curl"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.codex.cli"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.claude.code"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.openclaw"
+          }
+        ],
+        "sections": [
+          "ai-community"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "opencode",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "open-source"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "OpenCode",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 OpenCode Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "OpenCode"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "opencode",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.opencode",
+      "management": {
+        "managedCommands": [
+          "opencode"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "opencode --version",
+          "pattern": "v?([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.opencode",
+        "installRoot": "/workspace/.kf/software/kite.opencode"
+      },
+      "relations": {
+        "base": [
+          "kite.git",
+          "kite.curl"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.opencode",
+          "agent.opencode"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "architectures": {
+          "aarch64|arm64": "linux-arm64",
+          "x86_64|amd64": "linux-x64"
+        },
+        "archiveType": "tar.gz",
+        "assetPattern": "opencode-{target}.tar.gz",
+        "binaryPath": "opencode",
+        "maxBytes": 536870912,
+        "releaseTagTemplate": "v{version}",
+        "repository": "https://github.com/anomalyco/opencode",
+        "type": "github_release"
+      }
+    },
+    "kite.pi.coding.agent": {
+      "actions": {
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 Pi Coding Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Pi Coding Agent"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "pi",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        }
+      },
+      "agents": [
+        {
+          "configuration": {
+            "adapter": "pi-coding-agent",
+            "required": false
+          },
+          "description": "Pi 原生 RPC 会话",
+          "id": "pi",
+          "launch": {
+            "argv": [
+              "pi",
+              "--mode",
+              "rpc"
+            ],
+            "mode": "managed",
+            "protocol": "pi-rpc",
+            "providerId": "pi",
+            "title": "Pi Coding Agent",
+            "transport": "stdio"
+          },
+          "name": "Pi Coding Agent"
+        }
+      ],
+      "base": {
+        "description": "可扩展的终端 AI 编码 Agent",
+        "icon": {
+          "type": "text",
+          "value": "Pi"
+        },
+        "name": "Pi Coding Agent",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "orange",
+        "category": "AI",
+        "longDescription": "Pi Coding Agent 是可扩展的终端编码 Agent。Kite 使用官方 npm 包安装 pi 命令，并通过 Pi 原生 JSONL RPC 接入统一会话、模型、推理强度、图片、工具流与命令目录。",
+        "order": 35,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.opencode"
+          }
+        ],
+        "sections": [
+          "ai-community"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "pi",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "rpc"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Pi Coding Agent",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 Pi Coding Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Pi Coding Agent"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "pi",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.pi.coding.agent",
+      "management": {
+        "managedCommands": [
+          "pi"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "pi --version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.pi.coding.agent",
+        "installRoot": "/workspace/.kf/software/kite.pi.coding.agent"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.pi",
+          "agent.pi.coding"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "@earendil-works/pi-coding-agent",
+        "repository": "https://github.com/earendil-works/pi",
+        "type": "npm"
+      }
+    },
+    "kite.python": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "python",
+              "python3",
+              "pip",
+              "pip3"
+            ],
+            "steps": [
+              {
+                "cmd": "install.sh --install-python",
+                "id": "install-bundled-python",
+                "type": "bundled"
+              }
+            ],
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "python3 --version && python3 -m venv --help >/dev/null && python3 -m pip --version",
+                "id": "python-runtime"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "检查 Python 与 pip 运行环境",
+              "icon": {
+                "name": "code",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Python"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "cmd": "python3 --version && python3 -m venv --help >/dev/null && python3 -m pip --version",
+                "surfaceMode": "panel",
+                "type": "shell"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": "rm -rf /workspace/.kf/software/kite.python /workspace/.kf/cache/resources/kite.python; rm -f /workspace/.kf/bin/python /workspace/.kf/bin/python3 /workspace/.kf/bin/python3.14 /workspace/.kf/bin/pip /workspace/.kf/bin/pip3",
+            "type": "shell"
+          }
+        ]
+      },
+      "base": {
+        "description": "Hermes 本体需要的 Python 运行时",
+        "icon": {
+          "fallbackText": "Py",
+          "type": "asset",
+          "value": "resources/kite.python/icon.png"
+        },
+        "name": "Python",
+        "version": "3.14.6"
+      },
+      "display": {
+        "accent": "blue",
+        "category": "Python",
+        "longDescription": "Python 是 Kite 离线基础层资源。首次启动和资源获取都会从内置工具包缓存安装 Python 3.14 到 /workspace/.kf/software/kite.python，并通过 /workspace/.kf/bin 暴露命令。",
+        "order": 140,
+        "recommendations": [
+          {
+            "label": "包管理",
+            "resourceId": "kite.uv"
+          },
+          {
+            "label": "上层应用",
+            "resourceId": "kite.hermes.core"
+          }
+        ],
+        "sections": [
+          "foundation"
+        ],
+        "sizeLabel": "内置底座",
+        "tags": [
+          "python",
+          "venv",
+          "pip",
+          "dependency",
+          "hermes"
+        ]
+      },
+      "homeCards": [],
+      "id": "kite.python",
+      "management": {
+        "managedCommands": [
+          "python",
+          "python3",
+          "pip",
+          "pip3"
+        ],
+        "mode": "system_component"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.python",
+        "installRoot": "/workspace/.kf/software/kite.python"
+      },
+      "relations": {
+        "base": [],
+        "defaults": [],
+        "extensions": [
+          "kite.hermes.core"
+        ],
+        "provides": [
+          "runtime.python>=3.14<3.15",
+          "tool.pip",
+          "tool.venv"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "asset": "toolchain/ai-dev-pack",
+        "type": "bundled"
+      }
+    },
+    "kite.qwen.code": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "qwen"
+            ],
+            "steps": [
+              {
+                "id": "install-qwen-package",
+                "packages": [
+                  "@qwen-code/qwen-code@latest"
+                ],
+                "type": "npm"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v qwen >/dev/null 2>&1",
+                "id": "qwen-command"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "在终端里启动 Qwen Code",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Qwen Code"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "qwen",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "qwen"
+            ],
+            "npmUninstallPackage": "@qwen-code/qwen-code",
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "configuration": {
+            "adapter": "qwen-code",
+            "required": false
+          },
+          "description": "Qwen Code 原生 ACP 会话",
+          "id": "qwen",
+          "launch": {
+            "argv": [
+              "qwen",
+              "--acp"
+            ],
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "qwen",
+            "title": "Qwen Code",
+            "transport": "stdio"
+          },
+          "name": "Qwen Code"
+        }
+      ],
+      "base": {
+        "description": "通义千问的终端编码 Agent",
+        "icon": {
+          "fallbackText": "Qw",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.qwen.code/icon.png"
+        },
+        "name": "Qwen Code",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "purple",
+        "category": "AI",
+        "longDescription": "Qwen Code 是 QwenLM 面向终端的开源 AI 编码 Agent，支持交互式终端 UI、headless 模式、Provider/API Key 配置和 ACP/daemon 等能力。Kite 使用 npm 包安装 qwen 命令；认证和模型选择由 qwen 的 /auth 流程在终端里完成。",
+        "order": 90,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.kimi.code"
+          },
+          {
+            "label": "同类 CLI",
+            "resourceId": "kite.google.antigravity"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "qwen",
+          "alibaba",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "acp"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Qwen Code",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "在终端里启动 Qwen Code",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Qwen Code"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "qwen",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.qwen.code",
+      "management": {
+        "managedCommands": [
+          "qwen"
+        ],
+        "mode": "managed_extension"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.qwen.code",
+        "installRoot": "/workspace/.kf/software/kite.qwen.code"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.qwen",
+          "agent.qwen.code"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "@qwen-code/qwen-code",
+        "repository": "https://github.com/QwenLM/qwen-code",
+        "type": "npm"
+      }
+    },
+    "kite.reasonix": {
+      "actions": {
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 Reasonix Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Reasonix"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "reasonix",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        }
+      },
+      "agents": [
+        {
+          "configuration": {
+            "adapter": "reasonix",
+            "required": false
+          },
+          "description": "Reasonix 原生 ACP 会话",
+          "id": "reasonix",
+          "launch": {
+            "argv": [
+              "reasonix",
+              "acp"
+            ],
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "reasonix",
+            "title": "Reasonix",
+            "transport": "stdio"
+          },
+          "name": "Reasonix"
+        }
+      ],
+      "base": {
+        "description": "DeepSeek 原生终端编码助手",
+        "icon": {
+          "fallbackText": "Rx",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.reasonix/icon.png"
+        },
+        "name": "Reasonix",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "teal",
+        "category": "AI",
+        "longDescription": "Reasonix 是围绕 DeepSeek prefix-cache 稳定性设计的终端编码 Agent。Kite 把它作为 Node.js 上层资源：安装阶段只通过 npm 装 CLI 并暴露 reasonix 命令；创建首页卡片后，用户从终端表面启动交互式 Reasonix，不把 API Key 或运行输出写回资源卡。",
+        "order": 30,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.mimo.code"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.claude.code"
+          }
+        ],
+        "sections": [
+          "ai-community"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "reasonix",
+          "deepseek",
+          "coding-agent",
+          "terminal",
+          "ai"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Reasonix",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 Reasonix Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Reasonix"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "reasonix",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.reasonix",
+      "management": {
+        "managedCommands": [
+          "reasonix"
+        ],
+        "mode": "managed_extension",
+        "versionProbe": {
+          "command": "reasonix version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.reasonix",
+        "installRoot": "/workspace/.kf/software/kite.reasonix"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.reasonix",
+          "agent.deepseek.reasonix"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "reasonix",
+        "repository": "https://github.com/esengine/deepseek-reasonix",
+        "type": "npm"
+      }
+    },
+    "kite.tool.env": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "pnpm",
+              "pnpx",
+              "wget",
+              "jq",
+              "rg",
+              "fd",
+              "zip",
+              "unzip",
+              "zstd",
+              "file"
+            ],
+            "steps": [
+              {
+                "cmd": "install.sh --install-system-tools",
+                "id": "install-bundled-tools",
+                "type": "bundled"
+              }
+            ],
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "for command_name in pnpm wget jq rg fd zip unzip zstd file; do command -v \"$command_name\" >/dev/null 2>&1 || exit 127; done",
+                "id": "tool-runtime"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "检查常用系统工具命令",
+              "icon": {
+                "name": "tools",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "工具环境合集"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "cmd": "for c in pnpm wget jq rg fd zip unzip zstd file ps ip ss netstat dig nslookup host; do printf \"%s: \" \"$c\"; if command -v \"$c\" >/dev/null 2>&1; then \"$c\" --version 2>&1 | sed -n '1p' || echo present; else echo missing; fi; done",
+                "surfaceMode": "panel",
+                "type": "shell"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": "rm -rf /workspace/.kf/software/kite.tool.env /workspace/.kf/cache/resources/kite.tool.env; for c in pnpm pnpx wget jq rg fd zip unzip zstd file tar gzip gunzip xz unxz bzip2 bunzip2 ps pgrep pkill pidof top free ip ss netstat ping dig nslookup host update-ca-certificates less tree rsync patch sed awk grep find xargs sort uniq head tail cut tr wc tee env which whoami id uname date sleep timeout kill sha256sum sha1sum md5sum base64 chmod chown chgrp ln readlink realpath mkdir rmdir rm cp mv touch du df stat systemctl service; do rm -f \"/workspace/.kf/bin/$c\"; done",
+            "type": "shell"
+          }
+        ]
+      },
+      "base": {
+        "description": "pnpm、wget、jq、rg、fd、zip、unzip、zstd、file、procps、iproute2、net-tools、dnsutils 常用命令合集",
+        "icon": {
+          "type": "text",
+          "value": ">_"
+        },
+        "name": "工具环境合集",
+        "version": "v16"
+      },
+      "display": {
+        "accent": "teal",
+        "category": "系统工具",
+        "longDescription": "工具环境合集是隐藏的底层资源包，必需接入 pnpm、wget、jq、rg、fd、zip；离线 rootfs 里已有的压缩、网络、DNS、进程、文本和文件类常用命令会尽量接入。curl 与 Git 是独立资源，ADB/fastboot 属于 Kite 系统命令层，不参与资源注册和卸载。",
+        "order": 220,
+        "recommendations": [],
+        "sections": [
+          "search-only"
+        ],
+        "sizeLabel": "内置包",
+        "tags": [
+          "tool",
+          "node",
+          "pnpm",
+          "wget",
+          "jq",
+          "rg",
+          "fd",
+          "zip",
+          "unzip",
+          "zstd",
+          "file",
+          "procps",
+          "iproute2",
+          "net-tools",
+          "dnsutils",
+          "system",
+          "archive",
+          "network",
+          "dns",
+          "process"
+        ]
+      },
+      "homeCards": [],
+      "id": "kite.tool.env",
+      "management": {
+        "managedCommands": [
+          "pnpm",
+          "pnpx",
+          "wget",
+          "jq",
+          "rg",
+          "fd",
+          "zip",
+          "unzip",
+          "zstd",
+          "file"
+        ],
+        "mode": "system_component"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.tool.env",
+        "installRoot": "/workspace/.kf/software/kite.tool.env"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "tool.pnpm",
+          "tool.wget",
+          "tool.ripgrep",
+          "tool.fd",
+          "tool.jq",
+          "tool.zip",
+          "tool.archive",
+          "tool.network",
+          "tool.dns",
+          "tool.procps",
+          "tool.iproute2",
+          "tool.net-tools",
+          "tool.coreutils",
+          "tool.textutils",
+          "tool.file"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "asset": "toolchain/ai-dev-pack",
+        "type": "bundled"
+      }
+    },
+    "kite.uv": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "uv",
+              "uvx"
+            ],
+            "steps": [
+              {
+                "cmd": "install.sh --install-uv",
+                "id": "install-bundled-uv",
+                "type": "bundled"
+              }
+            ],
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "uv --version && uvx --version",
+                "id": "uv-runtime"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "检查 uv 与 uvx 命令",
+              "icon": {
+                "name": "code",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "uv"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "cmd": "uv --version && uvx --version",
+                "surfaceMode": "panel",
+                "type": "shell"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": "rm -rf /workspace/.kf/software/kite.uv /workspace/.kf/cache/resources/kite.uv; rm -f /workspace/.kf/bin/uv /workspace/.kf/bin/uvx",
+            "type": "shell"
+          }
+        ]
+      },
+      "base": {
+        "description": "Hermes 本体安装 Python 依赖的高速包管理器",
+        "icon": {
+          "fallbackText": "uv",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.uv/icon.png"
+        },
+        "name": "uv",
+        "version": "0.11.25"
+      },
+      "display": {
+        "accent": "green",
+        "category": "Python",
+        "longDescription": "uv 是 Hermes 安装 Python 依赖和管理虚拟环境的基础工具卡。Kite 使用内置 ai-dev-pack 中的 uv 0.11.25，只安装 uv/uvx 到 /workspace/.kf/bin，不顺带安装完整工具合集。",
+        "order": 160,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.python"
+          },
+          {
+            "label": "上层应用",
+            "resourceId": "kite.hermes.core"
+          }
+        ],
+        "sections": [
+          "foundation"
+        ],
+        "sizeLabel": "内置包",
+        "tags": [
+          "uv",
+          "python",
+          "package-manager",
+          "dependency",
+          "hermes"
+        ]
+      },
+      "homeCards": [],
+      "id": "kite.uv",
+      "management": {
+        "managedCommands": [
+          "uv",
+          "uvx"
+        ],
+        "mode": "system_component"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.uv",
+        "installRoot": "/workspace/.kf/software/kite.uv"
+      },
+      "relations": {
+        "base": [],
+        "defaults": [],
+        "extensions": [
+          "kite.hermes.core"
+        ],
+        "provides": [
+          "tool.uv",
+          "tool.uvx"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "asset": "toolchain/ai-dev-pack",
+        "type": "bundled"
+      }
+    },
+    "kite.zai.coding.helper": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "coding-helper",
+              "chelper"
+            ],
+            "steps": [
+              {
+                "id": "install-zai-helper-package",
+                "packages": [
+                  "@z_ai/coding-helper"
+                ],
+                "type": "npm"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v coding-helper >/dev/null 2>&1 && command -v chelper >/dev/null 2>&1",
+                "id": "zai-helper-commands"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 GLM Coding Plan 配置助手",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Z.AI Helper"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "text": "cd /workspace\necho \"Z.AI Coding Helper 会引导输入 GLM Coding Plan API Key，并可配置 Claude Code、OpenCode 等工具。\"\ncoding-helper\n",
+                "type": "terminal"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "coding-helper",
+              "chelper"
+            ],
+            "npmUninstallPackage": "@z_ai/coding-helper",
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "base": {
+        "description": "GLM Coding Plan 的命令行配置助手",
+        "icon": {
+          "fallbackText": "Z",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.zai.coding.helper/icon.png"
+        },
+        "name": "Z.AI Helper",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "teal",
+        "category": "AI",
+        "longDescription": "Z.AI Coding Tool Helper 是 Z.AI 官方命令行助手，用于把 GLM Coding Plan 接入 Claude Code、OpenCode、Crush、Factory Droid 等 CLI 工具，并管理 API Key、工具安装和 MCP 配置。ZCode 桌面 ADE 和终端 CLI 是分开的；Kite 这里只接入官方 CLI helper。",
+        "order": 110,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "可配置工具",
+            "resourceId": "kite.claude.code"
+          },
+          {
+            "label": "可配置工具",
+            "resourceId": "kite.opencode"
+          },
+          {
+            "label": "同类 CLI",
+            "resourceId": "kite.google.antigravity"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "zai",
+          "glm",
+          "coding-helper",
+          "terminal",
+          "ai",
+          "mcp"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Z.AI Helper",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 GLM Coding Plan 配置助手",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Z.AI Helper"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "text": "cd /workspace\necho \"Z.AI Coding Helper 会引导输入 GLM Coding Plan API Key，并可配置 Claude Code、OpenCode 等工具。\"\ncoding-helper\n",
+                "type": "terminal"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.zai.coding.helper",
+      "management": {
+        "managedCommands": [
+          "coding-helper",
+          "chelper"
+        ],
+        "mode": "managed_extension"
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.zai.coding.helper",
+        "installRoot": "/workspace/.kf/software/kite.zai.coding.helper"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs"
+        ],
+        "defaults": [],
+        "extensions": [
+          "kite.claude.code",
+          "kite.opencode"
+        ],
+        "provides": [
+          "cli.zai.coding-helper",
+          "tool.glm-coding-plan-helper"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "@z_ai/coding-helper",
+        "repository": "https://docs.z.ai/devpack/extension/coding-tool-helper",
+        "type": "npm"
+      }
+    }
+  },
+  "revision": 1,
+  "schemaVersion": 1
+}
