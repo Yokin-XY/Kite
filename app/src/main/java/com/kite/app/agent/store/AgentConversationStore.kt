@@ -58,6 +58,7 @@ data class AgentConversationTurn(
     val state: AgentConversationTurnState,
     val startedAtMillis: Long? = null,
     val endedAtMillis: Long? = null,
+    val errorMessage: String? = null,
 ) {
     val durationMillis: Long?
         get() = if (startedAtMillis != null && endedAtMillis != null) {
@@ -308,11 +309,32 @@ object AgentConversationStore {
         return snapshot
     }
 
-    /** 首发失败时撤销 Kite 本地乐观消息；Agent 已确认的其他时间线内容保持不变。 */
+    /** 首发失败时撤销 Kite 本地乐观消息；仅供明确放弃本地草稿的调用方使用。 */
     @Synchronized
     fun discardLocalMessage(key: AgentConversationKey, messageId: String): Boolean {
         val conversation = mutableConversations[key] ?: return false
         if (!conversation.discardMessage(messageId)) return false
+        publishNow(key)
+        return true
+    }
+
+    /**
+     * 首发失败仍保留用户已经看见的消息，只结束这一轮并恢复输入能力。失败不是连接事实，
+     * 因此不能把整个 Agent 会话推进到 Failed。
+     */
+    @Synchronized
+    fun failLocalTurn(key: AgentConversationKey, messageId: String, message: String): Boolean {
+        val conversation = mutableConversations[key] ?: return false
+        if (!conversation.failLocalTurn(messageId, message)) return false
+        publishNow(key)
+        return true
+    }
+
+    /** 相同草稿重试时复用原来的右侧消息，避免产生失败和重发两条重复气泡。 */
+    @Synchronized
+    fun retryLocalTurn(key: AgentConversationKey, messageId: String): Boolean {
+        val conversation = mutableConversations[key] ?: return false
+        if (!conversation.retryLocalTurn(messageId)) return false
         publishNow(key)
         return true
     }
@@ -440,7 +462,10 @@ object AgentConversationStore {
                     when (event.phase) {
                         AgentSessionPhase.Prompting -> ensureTurn()
                         AgentSessionPhase.Ready -> finishTurn(AgentConversationTurnState.Completed)
-                        AgentSessionPhase.Failed -> finishTurn(AgentConversationTurnState.Failed)
+                        AgentSessionPhase.Failed -> finishTurn(
+                            AgentConversationTurnState.Failed,
+                            event.message?.trim()?.takeIf(String::isNotBlank),
+                        )
                         AgentSessionPhase.Cancelled,
                         AgentSessionPhase.Closed -> finishTurn(AgentConversationTurnState.Cancelled)
                         AgentSessionPhase.Preparing,
@@ -606,12 +631,13 @@ object AgentConversationStore {
             )
         }
 
-        private fun finishTurn(state: AgentConversationTurnState) {
+        private fun finishTurn(state: AgentConversationTurnState, errorMessage: String? = null) {
             if (!turnActive) return
             turns[turnOrdinal]?.apply {
                 if (recordsLiveTiming) {
                     this.state = state
                     endedAtMillis = nowMillis()
+                    this.errorMessage = errorMessage
                 } else {
                     this.state = AgentConversationTurnState.Historical
                 }
@@ -632,6 +658,40 @@ object AgentConversationStore {
             val removed = timeline.removeAt(index)
             retainedTextChars = (retainedTextChars - removed.retainedTextChars).coerceAtLeast(0L)
             retainedInlineBytes = (retainedInlineBytes - removed.retainedInlineBytes).coerceAtLeast(0L)
+            revision++
+            return true
+        }
+
+        fun failLocalTurn(messageId: String, message: String): Boolean {
+            val localMessage = timeline.filterIsInstance<MutableMessage>()
+                .lastOrNull { it.messageId == messageId }
+                ?: return false
+            val turn = turns[localMessage.turnOrdinal] ?: return false
+            turn.state = AgentConversationTurnState.Failed
+            turn.endedAtMillis = nowMillis()
+            turn.errorMessage = message.trim().takeIf(String::isNotBlank) ?: "本轮未完成"
+            if (turn.ordinal == turnOrdinal) {
+                turnActive = false
+                currentTurnHasUser = false
+            }
+            phase = AgentSessionPhase.Ready
+            revision++
+            return true
+        }
+
+        fun retryLocalTurn(messageId: String): Boolean {
+            val localMessage = timeline.filterIsInstance<MutableMessage>()
+                .lastOrNull { it.messageId == messageId }
+                ?: return false
+            val turn = turns[localMessage.turnOrdinal] ?: return false
+            if (turn.state != AgentConversationTurnState.Failed) return false
+            turn.state = AgentConversationTurnState.Running
+            turn.endedAtMillis = null
+            turn.errorMessage = null
+            turnOrdinal = turn.ordinal
+            turnActive = true
+            currentTurnHasUser = true
+            phase = AgentSessionPhase.Preparing
             revision++
             return true
         }
@@ -802,12 +862,14 @@ object AgentConversationStore {
         var state: AgentConversationTurnState,
         val startedAtMillis: Long?,
         var endedAtMillis: Long? = null,
+        var errorMessage: String? = null,
     ) {
         fun freeze(): AgentConversationTurn = AgentConversationTurn(
             ordinal = ordinal,
             state = state,
             startedAtMillis = startedAtMillis,
             endedAtMillis = endedAtMillis,
+            errorMessage = errorMessage,
         )
     }
 

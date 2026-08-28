@@ -147,6 +147,12 @@ object AgentRuntimeRegistry {
     private const val DRAFT_CONVERSATION_PREFIX = "kite-draft:"
     private const val COLD_COMPOSER_DRAFT_KEY = "kite-cold-draft"
 
+    private data class FailedLocalMessage(
+        val key: AgentConversationKey,
+        val messageId: String,
+        val draft: AgentPromptDraft,
+    )
+
     private class ActiveRuntime(
         @Volatile var session: AgentRuntimeSession,
         val defaultCwd: String,
@@ -174,6 +180,7 @@ object AgentRuntimeRegistry {
         val draftConfiguration: LinkedHashMap<String, AgentConfigValue> = linkedMapOf(),
         val composerDrafts: LinkedHashMap<String, AgentPromptDraft> = linkedMapOf(),
         val composerDraftLock: Any = Any(),
+        val failedLocalMessages: LinkedHashMap<String, FailedLocalMessage> = linkedMapOf(),
         @Volatile var defaultDraftPermissionSelection: AgentDraftConfigurationSelection? = null,
         @Volatile var draftModeId: String? = null,
         @Volatile var defaultDraftModeId: String? = null,
@@ -208,6 +215,16 @@ object AgentRuntimeRegistry {
         }
 
         val preferredSessionId = request.preferredSessionId?.trim()?.takeIf(String::isNotBlank)
+        val restoredPreferences = preferredSessionId
+            ?.let { sessionId -> runCatching { request.loadSessionDraftPreferences(sessionId) }.getOrNull() }
+        val startupPreferences = restoredPreferences ?: request.initialDraftPreferences
+        startupPreferences.modelSelection?.let { selection ->
+            when (val prepared = request.prepareDraftModelSelection(selection)) {
+                is AgentProviderPreparationResult.Failed ->
+                    return AgentOperationResult.Failure(prepared.message)
+                is AgentProviderPreparationResult.Ready -> Unit
+            }
+        }
         var observedCatalog = request.initialDraftCatalog.copy(
             modes = request.normalizeModes(request.initialDraftCatalog.modes).distinctBy(AgentMode::id),
         )
@@ -379,9 +396,6 @@ object AgentRuntimeRegistry {
         val defaultPermission = observedCatalog.acceptedPermissionSelection(
             request.initialDraftPreferences.permissionSelection,
         )
-        val restoredPreferences = session.sessionId
-            ?.takeUnless { session.isDraft }
-            ?.let { sessionId -> runCatching { request.loadSessionDraftPreferences(sessionId) }.getOrNull() }
         val restoredPermission = observedCatalog.acceptedPermissionSelection(
             restoredPreferences?.permissionSelection,
         ) ?: defaultPermission
@@ -399,8 +413,7 @@ object AgentRuntimeRegistry {
             resolveDraftModelSelection = request.resolveDraftModelSelection,
             prepareDraftModelSelection = request.prepareDraftModelSelection,
             composeSkillPrompt = request.composeSkillPrompt,
-            draftModelSelection = restoredPreferences?.modelSelection
-                ?: request.initialDraftPreferences.modelSelection,
+            draftModelSelection = startupPreferences.modelSelection,
             defaultDraftModelSelection = request.initialDraftPreferences.modelSelection,
             draftCatalog = observedCatalog,
             draftConfiguration = linkedMapOf<String, AgentConfigValue>().apply {
@@ -703,20 +716,7 @@ object AgentRuntimeRegistry {
             ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
         val nextCwd = cwd?.trim()?.takeIf(String::isNotBlank) ?: active.session.cwd
         return active.sessionOperationMutex.withLock {
-            when (val loaded = restoreExistingSession(
-                connection = active.connection,
-                instanceId = active.session.instanceId,
-                providerId = active.session.providerId,
-                sessionId = sessionId,
-                cwd = nextCwd,
-                additionalDirectories = active.additionalDirectories
-            )) {
-                is AgentOperationResult.Success -> AgentOperationResult.Success(
-                    active.activate(loaded.value, nextCwd, preserveDraftPreferences = false)
-                )
-                is AgentOperationResult.Failure -> loaded
-                is AgentOperationResult.Unsupported -> loaded
-            }
+            active.loadPreparedSession(sessionId, nextCwd)
         }
     }
 
@@ -804,21 +804,28 @@ object AgentRuntimeRegistry {
         val sourceComposerSessionId = active.session.sessionId
         active.storeComposerDraft(sourceComposerSessionId, draft)
         return active.sessionOperationMutex.withLock {
-            val localMessageId = "local-${System.currentTimeMillis()}"
-            val optimisticKey = AgentConversationKey(
+            val retry = active.takeFailedLocalMessage(sourceComposerSessionId, draft)
+            val localMessageId = retry?.messageId ?: "local-${System.currentTimeMillis()}"
+            val optimisticKey = retry?.key ?: AgentConversationKey(
                 active.session.providerId,
                 active.session.sessionId ?: draftConversationId(instanceId, generation),
             )
             AgentConversationStore.bind(active.session.instanceId, optimisticKey, AgentSessionPhase.Ready)
-            visibleContent.forEach { block ->
-                AgentConversationStore.applyEvent(
-                    optimisticKey,
-                    AgentSessionEvent.MessageChunk(
-                        role = com.kite.app.agent.contract.AgentMessageRole.User,
-                        content = block,
-                        messageId = localMessageId
+            val reusedMessage = retry != null && AgentConversationStore.retryLocalTurn(
+                optimisticKey,
+                localMessageId,
+            )
+            if (!reusedMessage) {
+                visibleContent.forEach { block ->
+                    AgentConversationStore.applyEvent(
+                        optimisticKey,
+                        AgentSessionEvent.MessageChunk(
+                            role = com.kite.app.agent.contract.AgentMessageRole.User,
+                            content = block,
+                            messageId = localMessageId
+                        )
                     )
-                )
+                }
             }
             AgentConversationStore.applyEvent(
                 optimisticKey,
@@ -827,18 +834,44 @@ object AgentRuntimeRegistry {
             val sessionId = when (val prepared = active.prepareDraftRequest()) {
                 is AgentOperationResult.Success -> prepared.value
                 is AgentOperationResult.Failure -> {
-                    AgentConversationStore.discardLocalMessage(optimisticKey, localMessageId)
-                    AgentConversationStore.applyEvent(
-                        optimisticKey,
-                        AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready),
+                    val failureKey = active.session.sessionId?.let { nativeSessionId ->
+                        AgentConversationKey(active.session.providerId, nativeSessionId)
+                    } ?: optimisticKey
+                    if (failureKey != optimisticKey) {
+                        AgentConversationStore.rekey(
+                            active.session.instanceId,
+                            optimisticKey,
+                            failureKey,
+                            AgentSessionPhase.Ready,
+                        )
+                    }
+                    AgentConversationStore.failLocalTurn(failureKey, localMessageId, prepared.message)
+                    active.rememberFailedLocalMessage(
+                        active.session.sessionId,
+                        FailedLocalMessage(failureKey, localMessageId, draft.immutableCopy()),
                     )
                     return@withLock prepared
                 }
                 is AgentOperationResult.Unsupported -> {
-                    AgentConversationStore.discardLocalMessage(optimisticKey, localMessageId)
-                    AgentConversationStore.applyEvent(
-                        optimisticKey,
-                        AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready),
+                    val failureKey = active.session.sessionId?.let { nativeSessionId ->
+                        AgentConversationKey(active.session.providerId, nativeSessionId)
+                    } ?: optimisticKey
+                    if (failureKey != optimisticKey) {
+                        AgentConversationStore.rekey(
+                            active.session.instanceId,
+                            optimisticKey,
+                            failureKey,
+                            AgentSessionPhase.Ready,
+                        )
+                    }
+                    AgentConversationStore.failLocalTurn(
+                        failureKey,
+                        localMessageId,
+                        "Agent 不支持：${prepared.operation}",
+                    )
+                    active.rememberFailedLocalMessage(
+                        active.session.sessionId,
+                        FailedLocalMessage(failureKey, localMessageId, draft.immutableCopy()),
                     )
                     return@withLock prepared
                 }
@@ -857,7 +890,16 @@ object AgentRuntimeRegistry {
                 AgentPromptRequest(sessionId, transportContent, messageId = localMessageId),
             )
             if (result !is AgentOperationResult.Success) {
-                AgentConversationStore.discardLocalMessage(key, localMessageId)
+                val message = when (result) {
+                    is AgentOperationResult.Failure -> result.message
+                    is AgentOperationResult.Unsupported -> "Agent 不支持：${result.operation}"
+                    is AgentOperationResult.Success -> error("unreachable")
+                }
+                AgentConversationStore.failLocalTurn(key, localMessageId, message)
+                active.rememberFailedLocalMessage(
+                    active.session.sessionId,
+                    FailedLocalMessage(key, localMessageId, draft.immutableCopy()),
+                )
             } else {
                 synchronized(active.composerDraftLock) {
                     active.composerDrafts.remove(composerDraftKey(sourceComposerSessionId))
@@ -1497,10 +1539,122 @@ object AgentRuntimeRegistry {
         }
     }
 
+    private fun ActiveRuntime.takeFailedLocalMessage(
+        sessionId: String?,
+        draft: AgentPromptDraft,
+    ): FailedLocalMessage? = synchronized(composerDraftLock) {
+        val key = composerDraftKey(sessionId)
+        val failed = failedLocalMessages[key] ?: return@synchronized null
+        if (failed.draft != draft) {
+            failedLocalMessages.remove(key)
+            null
+        } else {
+            failedLocalMessages.remove(key)
+        }
+    }
+
+    private fun ActiveRuntime.rememberFailedLocalMessage(
+        sessionId: String?,
+        failed: FailedLocalMessage,
+    ) {
+        synchronized(composerDraftLock) {
+            failedLocalMessages[composerDraftKey(sessionId)] = failed
+            while (failedLocalMessages.size > MAX_COMPOSER_DRAFTS) {
+                failedLocalMessages.remove(failedLocalMessages.keys.first())
+            }
+        }
+    }
+
     private fun AgentPromptDraft.immutableCopy(): AgentPromptDraft = AgentPromptDraft(
         content = content.toList(),
         skills = skills.toList(),
     )
+
+    /**
+     * 加载历史会话前先恢复该会话保存的 Provider 选择。若 Agent 进程在配置准备前已经启动，
+     * 第一次加载失败后只重建一次连接并复用同一 session/load，不创建替代会话。
+     */
+    private suspend fun ActiveRuntime.loadPreparedSession(
+        sessionId: String,
+        cwd: String,
+    ): AgentOperationResult<AgentRuntimeSession> {
+        val preferences = runCatching { loadSessionDraftPreferences(sessionId) }.getOrNull()
+        val targetModel = preferences?.modelSelection ?: defaultDraftModelSelection
+        val preparation = targetModel?.let { prepareDraftModelSelection(it) }
+        if (preparation is AgentProviderPreparationResult.Failed) {
+            return AgentOperationResult.Failure(preparation.message)
+        }
+
+        val needsFreshConnection = (preparation as? AgentProviderPreparationResult.Ready)
+            ?.takeIf { it.nativeConfigurationChanged }
+            ?.effect in setOf(
+                AgentSessionConfigurationEffect.Reconnect,
+                AgentSessionConfigurationEffect.ReconnectNewSession,
+            )
+        var candidate = connection
+        var candidateOwned = false
+
+        suspend fun connectCandidate(): AgentOperationResult<Unit> = when (
+            val connected = provider.connect(connectionRequest, endpoint)
+        ) {
+            is AgentOperationResult.Success -> {
+                candidate = connected.value
+                candidateOwned = candidate !== connection
+                AgentOperationResult.Success(Unit)
+            }
+            is AgentOperationResult.Failure -> connected
+            is AgentOperationResult.Unsupported -> connected
+        }
+
+        if (needsFreshConnection) {
+            when (val connected = connectCandidate()) {
+                is AgentOperationResult.Success -> Unit
+                is AgentOperationResult.Failure -> return connected
+                is AgentOperationResult.Unsupported -> return connected
+            }
+        }
+
+        suspend fun restore(target: KiteAgentConnection) = restoreExistingSession(
+            connection = target,
+            instanceId = session.instanceId,
+            providerId = session.providerId,
+            sessionId = sessionId,
+            cwd = cwd,
+            additionalDirectories = additionalDirectories,
+        )
+
+        var loaded = restore(candidate)
+        if (loaded is AgentOperationResult.Failure && !candidateOwned && targetModel != null) {
+            when (val connected = connectCandidate()) {
+                is AgentOperationResult.Success -> loaded = restore(candidate)
+                is AgentOperationResult.Failure -> return connected
+                is AgentOperationResult.Unsupported -> return connected
+            }
+        }
+
+        return when (loaded) {
+            is AgentOperationResult.Success -> {
+                if (candidateOwned) {
+                    val previous = connection
+                    connection = candidate
+                    previous.disconnect()
+                }
+                draftModelSelection = targetModel
+                pendingProviderConfigurationEffect = null
+                AgentOperationResult.Success(
+                    activate(loaded.value, cwd, preserveDraftPreferences = false),
+                )
+            }
+            is AgentOperationResult.Failure -> {
+                if (candidateOwned) candidate.disconnect()
+                loaded
+            }
+            is AgentOperationResult.Unsupported -> {
+                if (candidateOwned) candidate.disconnect()
+                loaded
+            }
+        }
+    }
 
     private suspend fun restoreExistingSession(
         connection: KiteAgentConnection,

@@ -38,6 +38,7 @@ import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationHistoryStatus
 import com.kite.app.agent.store.AgentConversationItem
 import com.kite.app.agent.store.AgentConversationStore
+import com.kite.app.agent.store.AgentConversationTurnState
 import com.kite.app.agent.sdk.skill.AgentPromptDraft
 import com.kite.app.agent.sdk.skill.AgentSelectedSkill
 import com.kite.app.agent.sdk.skill.AgentSkillPromptComposer
@@ -386,7 +387,10 @@ class AgentRuntimeRegistryTest {
         assertEquals("session-1", AgentRuntimeRegistry.session("instance-first-send")?.sessionId)
         assertEquals(1, provider.connection.newSessionCalls)
         assertEquals(1, provider.connection.promptCalls)
-        assertTrue(AgentConversationStore.snapshot(key)?.timeline.orEmpty().isEmpty())
+        val failedSnapshot = requireNotNull(AgentConversationStore.snapshot(key))
+        assertEquals(1, failedSnapshot.timeline.filterIsInstance<AgentConversationItem.Message>().size)
+        assertEquals(AgentConversationTurnState.Failed, failedSnapshot.turns.single().state)
+        assertEquals("发送失败", failedSnapshot.turns.single().errorMessage)
 
         val retried = AgentRuntimeRegistry.prompt(
             "instance-first-send",
@@ -404,6 +408,56 @@ class AgentRuntimeRegistryTest {
             .filter { it.role == AgentMessageRole.User }
         assertEquals(snapshot.toString(), 1, userMessages.size)
         assertEquals(null, AgentConversationStore.snapshot(key)?.title)
+    }
+
+    @Test
+    fun `默认Provider在连接Agent进程前完成准备`() = runTest {
+        val order = mutableListOf<String>()
+        val provider = FakeProvider(onConnect = { order += "connect" })
+        val selection = AgentDraftModelSelection("zhipu", "glm-5.3", false)
+
+        start(
+            provider,
+            request("instance-provider-before-connect").copy(
+                initialDraftPreferences = AgentDraftPersistenceSnapshot(modelSelection = selection),
+                prepareDraftModelSelection = {
+                    order += "prepare"
+                    AgentProviderPreparationResult.Ready()
+                },
+            ),
+        )
+
+        assertEquals(listOf("prepare", "connect"), order)
+    }
+
+    @Test
+    fun `加载历史会话前先准备该会话保存的Provider`() = runTest {
+        val order = mutableListOf<String>()
+        val provider = FakeProvider(onLoadSession = { order += "load" })
+        val historical = AgentDraftPersistenceSnapshot(
+            modelSelection = AgentDraftModelSelection("zhipu", "glm-5.3", false),
+        )
+        start(
+            provider,
+            request("instance-provider-before-load").copy(
+                loadSessionDraftPreferences = { sessionId ->
+                    historical.takeIf { sessionId == "historical-1" }
+                },
+                prepareDraftModelSelection = {
+                    order += "prepare"
+                    AgentProviderPreparationResult.Ready()
+                },
+            ),
+        )
+
+        val loaded = AgentRuntimeRegistry.loadSession(
+            "instance-provider-before-load",
+            1L,
+            "historical-1",
+        )
+
+        assertTrue(loaded is AgentOperationResult.Success)
+        assertEquals(listOf("prepare", "load"), order)
     }
 
     @Test
@@ -1211,6 +1265,8 @@ class AgentRuntimeRegistryTest {
         private val newSessionGate: CompletableDeferred<Unit>? = null,
         private val promptGate: CompletableDeferred<Unit>? = null,
         private val uniqueSessionIdsAcrossConnections: Boolean = false,
+        private val onConnect: () -> Unit = {},
+        private val onLoadSession: () -> Unit = {},
     ) : KiteAgentProvider {
         lateinit var connection: FakeConnection
         val connections = mutableListOf<FakeConnection>()
@@ -1221,6 +1277,7 @@ class AgentRuntimeRegistryTest {
             request: AgentConnectionRequest,
             client: AgentClientEndpoint
         ): AgentOperationResult<KiteAgentConnection> {
+            onConnect()
             connection = FakeConnection(
                 client,
                 resumeSupported,
@@ -1244,6 +1301,7 @@ class AgentRuntimeRegistryTest {
                 } else {
                     null
                 },
+                onLoadSession,
             )
             connections += connection
             return AgentOperationResult.Success(connection)
@@ -1269,6 +1327,7 @@ class AgentRuntimeRegistryTest {
         private val newSessionGate: CompletableDeferred<Unit>?,
         private val promptGate: CompletableDeferred<Unit>?,
         private val nextSharedSessionId: (() -> String)?,
+        private val onLoadSession: () -> Unit,
     ) : KiteAgentConnection {
         val disconnected = AtomicBoolean(false)
         var newSessionCalls = 0
@@ -1367,6 +1426,7 @@ class AgentRuntimeRegistryTest {
 
         override suspend fun loadSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> {
             loadSessionCalls++
+            onLoadSession()
             if (restoreFails) return AgentOperationResult.Failure("恢复失败")
             return AgentOperationResult.Success(readySnapshot(request.sessionId, includeHistory = true))
         }

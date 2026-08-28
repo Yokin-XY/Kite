@@ -43,6 +43,7 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -157,6 +158,7 @@ internal class ConversationAdapter(
     fun submitConversation(
         items: List<AgentConversationItem>,
         turns: List<AgentConversationTurn>,
+        phase: AgentSessionPhase,
         committed: () -> Unit,
     ) {
         val activeIds = items.mapTo(linkedSetOf()) { it.id }
@@ -169,7 +171,7 @@ internal class ConversationAdapter(
                     projectionCache[item.id] = item to blocks
                 })
         }
-        val projected = AgentConversationPresentation.composeTurns(items, turns) { item ->
+        val projected = AgentConversationPresentation.composeTurns(items, turns, phase) { item ->
             projectedById[item.id].orEmpty()
         }
         submitList(projected, committed)
@@ -183,6 +185,7 @@ internal class ConversationAdapter(
         is AgentConversationDisplayItem.Table -> TYPE_TABLE
         is AgentConversationDisplayItem.AnswerCopy -> TYPE_ANSWER_COPY
         is AgentConversationDisplayItem.Process -> TYPE_PROCESS
+        is AgentConversationDisplayItem.TurnStatus -> TYPE_TURN_STATUS
         is AgentConversationDisplayItem.Thought -> TYPE_THOUGHT
         is AgentConversationDisplayItem.Tool -> TYPE_TOOL
         is AgentConversationDisplayItem.Plan -> TYPE_PLAN
@@ -198,6 +201,7 @@ internal class ConversationAdapter(
         TYPE_TABLE -> TableHolder()
         TYPE_ANSWER_COPY -> AnswerCopyHolder()
         TYPE_PROCESS -> ProcessHolder()
+        TYPE_TURN_STATUS -> TurnStatusHolder()
         TYPE_THOUGHT -> ThoughtHolder()
         TYPE_TOOL -> ToolHolder()
         TYPE_PLAN -> PlanHolder()
@@ -678,6 +682,53 @@ internal class ConversationAdapter(
         }
     }
 
+    inner class TurnStatusHolder : DisplayHolder(
+        LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = rowParams(top = 3, bottom = 10)
+        }
+    ) {
+        private val row = itemView as LinearLayout
+        private val progress = ProgressBar(context).apply {
+            isIndeterminate = true
+        }.also {
+            row.addView(it, LinearLayout.LayoutParams(ui.dp(16), ui.dp(16)).apply {
+                marginEnd = ui.dp(9)
+            })
+        }
+        private val copy = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+        }.also {
+            row.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        private val label = TextView(context).apply {
+            textSize = 13.5f
+            includeFontPadding = false
+        }.also(copy::addView)
+        private val detail = TextView(context).apply {
+            textSize = 12.5f
+            includeFontPadding = false
+            maxLines = 3
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, ui.dp(3), 0, 0)
+        }.also(copy::addView)
+
+        override fun bind(item: AgentConversationDisplayItem) {
+            item as AgentConversationDisplayItem.TurnStatus
+            val failed = item.state == com.kite.app.agent.store.AgentConversationTurnState.Failed
+            progress.visibility = if (
+                item.state == com.kite.app.agent.store.AgentConversationTurnState.Running
+            ) View.VISIBLE else View.INVISIBLE
+            label.text = item.label
+            label.setTextColor(if (failed) tokens.danger else tokens.textSecondary)
+            detail.text = item.detail.orEmpty()
+            detail.setTextColor(if (failed) tokens.danger else tokens.textTertiary)
+            detail.visibility = if (item.detail.isNullOrBlank()) View.GONE else View.VISIBLE
+            row.contentDescription = listOfNotNull(item.label, item.detail).joinToString("，")
+        }
+    }
+
     inner class AnswerCopyHolder : DisplayHolder(
         FrameLayout(context).apply {
             layoutParams = rowParams(top = 0, bottom = 8)
@@ -1082,6 +1133,7 @@ internal class ConversationAdapter(
         const val TYPE_TABLE = 10
         const val TYPE_PROCESS = 11
         const val TYPE_ANSWER_COPY = 12
+        const val TYPE_TURN_STATUS = 13
         const val COPY_BUTTON_SIZE_DP = 36
         const val PLAN_ROWS = 6
         const val COLLAPSED_TOOL_LINES = 4

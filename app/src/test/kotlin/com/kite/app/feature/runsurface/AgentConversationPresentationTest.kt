@@ -3,6 +3,7 @@ package com.kite.app.feature.runsurface
 import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentMessageRole
 import com.kite.app.agent.contract.AgentPlanEntry
+import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentToolCall
 import com.kite.app.agent.contract.AgentToolContent
 import com.kite.app.agent.contract.AgentToolLocation
@@ -16,6 +17,52 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentConversationPresentationTest {
+    @Test
+    fun `用户消息发送后立即出现左侧连接状态`() {
+        val items = AgentConversationPresentation.composeTurns(
+            items = listOf(
+                AgentConversationItem.Message(
+                    id = "user",
+                    role = AgentMessageRole.User,
+                    content = listOf(AgentContent.Text("你好")),
+                    turnOrdinal = 1L,
+                ),
+            ),
+            turns = listOf(AgentConversationTurn(1L, AgentConversationTurnState.Running)),
+            phase = AgentSessionPhase.Preparing,
+        )
+
+        assertTrue(items[0] is AgentConversationDisplayItem.UserMessage)
+        val status = items[1] as AgentConversationDisplayItem.TurnStatus
+        assertEquals("正在连接 Agent…", status.label)
+    }
+
+    @Test
+    fun `失败回合保留左侧原因而不伪装成Agent回答`() {
+        val items = AgentConversationPresentation.composeTurns(
+            items = listOf(
+                AgentConversationItem.Message(
+                    id = "user",
+                    role = AgentMessageRole.User,
+                    content = listOf(AgentContent.Text("你好")),
+                    turnOrdinal = 1L,
+                ),
+            ),
+            turns = listOf(
+                AgentConversationTurn(
+                    ordinal = 1L,
+                    state = AgentConversationTurnState.Failed,
+                    errorMessage = "网络连接失败",
+                ),
+            ),
+        )
+
+        val status = items[1] as AgentConversationDisplayItem.TurnStatus
+        assertEquals("本轮未完成", status.label)
+        assertEquals("网络连接失败", status.detail)
+        assertFalse(items.any { it is AgentConversationDisplayItem.AssistantText })
+    }
+
     @Test
     fun `行内强调和代码去掉标记并保留样式语义`() {
         val segments = AgentConversationPresentation.parseInlineMarkdown(

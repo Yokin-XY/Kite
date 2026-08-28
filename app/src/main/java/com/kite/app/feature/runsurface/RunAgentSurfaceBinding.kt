@@ -996,7 +996,7 @@ internal class RunAgentSurfaceBinding(
         currentSnapshot = snapshot
         statusText.text = snapshot.lastError
             ?: phaseLabel(snapshot.phase)
-        adapter.submitConversation(snapshot.timeline, snapshot.turns) {
+        adapter.submitConversation(snapshot.timeline, snapshot.turns, snapshot.phase) {
             if (nearBottom && adapter.itemCount > 0) list.scrollToPosition(adapter.itemCount - 1)
         }
         renderHistoryStatus(snapshot)
