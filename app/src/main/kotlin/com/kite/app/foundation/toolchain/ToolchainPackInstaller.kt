@@ -9,6 +9,7 @@ import com.kite.app.foundation.capability.CapabilityOutputLevel
 import com.kite.app.foundation.capability.CapabilityRequest
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.storage.AtomicDirectoryPublisher
+import com.kite.app.foundation.storage.ImmutableArtifactIntegrity
 import com.kite.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.foundation.workspace.WorkspaceBuildSupport
@@ -715,19 +716,25 @@ object ToolchainPackInstaller {
         val expectedManifestText = context.assets.open("$ASSET_ROOT/manifest.json")
             .bufferedReader()
             .use { it.readText() }
+        val integrity = expectedArtifactIntegrity(context)
+        val expectedManifest = ToolchainPackManifest.fromJson(JSONObject(expectedManifestText))
+        check(integrity.packageId == expectedManifest.packId && integrity.version == expectedManifest.version) {
+            "Bundled toolchain identity does not match its integrity manifest"
+        }
         val runtimePackDir = runtimePackDir(context)
         AtomicDirectoryPublisher.publish(
             destination = runtimePackDir,
-            isComplete = { candidate -> bundledPackDirectoryIsComplete(candidate, expectedManifestText) },
+            isComplete = integrity::isPublished,
         ) { pendingDir ->
             pendingDir.mkdirs()
             copyAssetTree(context, ASSET_ROOT, pendingDir)
             normalizeShellScripts(pendingDir)
             cleanupUndeclaredBundledPackageFiles(pendingDir, expectedManifestText)
+            integrity.validateStageAndSeal(pendingDir)
         }
         val manifestFile = File(runtimePackDir, "manifest.json")
         val manifest = ToolchainPackManifest.fromJson(JSONObject(manifestFile.readText()))
-        appendLog(context, "Prepared ${manifest.packId} v${manifest.version} at ${runtimePackDir.absolutePath}")
+        appendLog(context, "Prepared ${integrity.artifactKey} at ${runtimePackDir.absolutePath}")
         return manifest
     }
 
@@ -737,13 +744,14 @@ object ToolchainPackInstaller {
         WorkspaceBuildSupport.ensure(workspaceDir)
         val workspacePackDir = File(workspaceDir, ".kf/toolchains/$PACK_ID")
         val sourcePackDir = runtimePackDir(context)
-        val sourceManifest = File(sourcePackDir, "manifest.json").readText()
+        val integrity = sourceArtifactIntegrity(sourcePackDir)
         AtomicDirectoryPublisher.publish(
             destination = workspacePackDir,
-            isComplete = { candidate -> bundledPackDirectoryIsComplete(candidate, sourceManifest) },
+            isComplete = integrity::isPublished,
         ) { pendingDir ->
             sourcePackDir.copyRecursively(pendingDir, overwrite = true)
             normalizeShellScripts(pendingDir)
+            integrity.validateStageAndSeal(pendingDir)
         }
         appendLog(context, "Mirrored $PACK_ID to ${workspacePackDir.absolutePath}")
         return workspacePackDir
@@ -755,14 +763,15 @@ object ToolchainPackInstaller {
             val workspaceDir = File(container.workspacePath).also { it.mkdirs() }
             WorkspaceBuildSupport.ensure(workspaceDir)
             val sourcePackDir = runtimePackDir(context)
-            val sourceManifest = File(sourcePackDir, "manifest.json").readText()
+            val integrity = sourceArtifactIntegrity(sourcePackDir)
             val workspacePackDir = File(workspaceDir, ".kf/cache/shared/$PACK_ID")
             AtomicDirectoryPublisher.publish(
                 destination = workspacePackDir,
-                isComplete = { candidate -> bundledPackDirectoryIsComplete(candidate, sourceManifest) },
+                isComplete = integrity::isPublished,
             ) { pendingDir ->
                 sourcePackDir.copyRecursively(pendingDir, overwrite = true)
                 normalizeShellScripts(pendingDir)
+                integrity.validateStageAndSeal(pendingDir)
             }
             val reclaimed = cleanupLegacyResourcePackCopies(workspaceDir)
             appendLog(
@@ -820,7 +829,6 @@ object ToolchainPackInstaller {
             export KF_TOOLCHAIN_DIR=$toolchainDir
             export KF_TOOLCHAIN_BIN_DIR=$binDir
             export UV_LINK_MODE=copy
-            chmod +x "$scriptPath" 2>/dev/null || true
             bash "$scriptPath" "$mode"
         """.trimIndent()
         val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
@@ -898,6 +906,14 @@ object ToolchainPackInstaller {
                 }
             }
     }
+
+    private fun expectedArtifactIntegrity(context: Context): ImmutableArtifactIntegrity =
+        context.assets.open("$ASSET_ROOT/${ImmutableArtifactIntegrity.INTEGRITY_FILE}")
+            .bufferedReader()
+            .use { reader -> ImmutableArtifactIntegrity.parse(reader.readText()) }
+
+    private fun sourceArtifactIntegrity(root: File): ImmutableArtifactIntegrity =
+        ImmutableArtifactIntegrity.parse(File(root, ImmutableArtifactIntegrity.INTEGRITY_FILE).readText())
 
     private fun runtimePackDir(context: Context): File {
         return File(WorkSurfaceRuntimeBridge.getRuntimeRoot(context), "toolchain-packs/$PACK_ID")
@@ -997,31 +1013,6 @@ object ToolchainPackInstaller {
         val durationMs: Long,
         val output: String
     )
-}
-
-internal fun bundledPackDirectoryIsComplete(root: File, expectedManifestText: String): Boolean {
-    if (!root.isDirectory) return false
-    return runCatching {
-        val expected = JSONObject(expectedManifestText)
-        val actual = JSONObject(File(root, "manifest.json").readText())
-        if (expected.optString("packId") != actual.optString("packId") ||
-            expected.optInt("version") != actual.optInt("version")
-        ) {
-            return@runCatching false
-        }
-        val installScript = expected.optString("installScript", "install.sh")
-        if (!File(root, installScript).isFile) return@runCatching false
-        val declaredFiles = declaredBundledPackageFiles(expected)
-        val declaredFilesPresent = declaredFiles.all { relativePath ->
-            File(root, relativePath).let { it.isFile && it.length() > 0L }
-        }
-        val actualPackageFiles = File(root, "packages")
-            .walkTopDown()
-            .filter(File::isFile)
-            .map { file -> file.relativeTo(root).invariantSeparatorsPath }
-            .toSet()
-        declaredFilesPresent && actualPackageFiles.all { it in declaredFiles }
-    }.getOrDefault(false)
 }
 
 internal fun cleanupUndeclaredBundledPackageFiles(root: File, manifestText: String): Long {

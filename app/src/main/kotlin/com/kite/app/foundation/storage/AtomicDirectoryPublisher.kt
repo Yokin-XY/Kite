@@ -117,6 +117,7 @@ internal object AtomicDirectoryPublisher {
 
     private fun deleteOwnedPath(path: File) {
         if (!pathExists(path)) return
+        path.walkTopDown().forEach { ownedPath -> ownedPath.setWritable(true, true) }
         check(path.deleteRecursively()) { "Unable to remove artifact path: ${path.absolutePath}" }
     }
 

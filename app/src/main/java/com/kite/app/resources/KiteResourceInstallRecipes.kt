@@ -72,7 +72,6 @@ object KiteResourceInstallRecipes {
             $cleanCommand
             echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}KF_TOOLCHAIN_DIR"
             mkdir -p "${'$'}KF_TOOLCHAIN_DIR" "${'$'}KF_TOOLCHAIN_BIN_DIR"
-            chmod +x "${'$'}KF_TOOLCHAIN_PACK_DIR/install.sh" 2>/dev/null || true
             echo "KITE_RESOURCE_STEP run-install-script ${'$'}KF_TOOLCHAIN_PACK_DIR/install.sh $mode"
             bash "${'$'}KF_TOOLCHAIN_PACK_DIR/install.sh" "$mode"
         """.trimIndent()

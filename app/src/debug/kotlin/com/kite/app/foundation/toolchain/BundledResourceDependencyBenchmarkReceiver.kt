@@ -7,6 +7,8 @@ import android.content.Intent
 import android.os.IBinder
 import android.os.SystemClock
 import android.util.Log
+import com.kite.app.foundation.storage.AtomicDirectoryPublisher
+import com.kite.app.foundation.storage.ImmutableArtifactIntegrity
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import java.io.File
 import java.util.Locale
@@ -296,22 +298,30 @@ private object BundledResourceDependencyBenchmark {
         val expectedManifest = context.assets.open("$ASSET_ROOT/manifest.json")
             .bufferedReader()
             .use { it.readText() }
-        val pending = File(inputHost.parentFile, "ai-dev-pack.pending")
-        pending.deleteRecursively()
-        pending.mkdirs()
-        copyAssetTree(context, ASSET_ROOT, pending)
-        pending.walkTopDown()
-            .filter { file -> file.isFile && file.extension.equals("sh", ignoreCase = true) }
-            .forEach { file ->
-                val original = file.readText(Charsets.UTF_8)
-                val normalized = original.replace("\r\n", "\n").replace("\r", "\n")
-                if (normalized != original) file.writeText(normalized, Charsets.UTF_8)
-            }
-        check(bundledPackDirectoryIsComplete(pending, expectedManifest)) { "fixed_pack_incomplete" }
-        inputHost.deleteRecursively()
-        check(pending.renameTo(inputHost)) { "fixed_pack_publish_failed" }
+        val integrity = context.assets.open("$ASSET_ROOT/${ImmutableArtifactIntegrity.INTEGRITY_FILE}")
+            .bufferedReader()
+            .use { reader -> ImmutableArtifactIntegrity.parse(reader.readText()) }
+        AtomicDirectoryPublisher.publish(
+            destination = inputHost,
+            isComplete = integrity::isPublished,
+        ) { pending ->
+            pending.mkdirs()
+            copyAssetTree(context, ASSET_ROOT, pending)
+            pending.walkTopDown()
+                .filter { file -> file.isFile && file.extension.equals("sh", ignoreCase = true) }
+                .forEach { file ->
+                    val original = file.readText(Charsets.UTF_8)
+                    val normalized = original.replace("\r\n", "\n").replace("\r", "\n")
+                    if (normalized != original) file.writeText(normalized, Charsets.UTF_8)
+                }
+            integrity.validateStageAndSeal(pending)
+        }
+        val expected = JSONObject(expectedManifest)
         val actual = JSONObject(File(inputHost, "manifest.json").readText())
-        check(actual.optString("packId") == "ai-dev-pack" && actual.optInt("version") == 18) {
+        check(
+            actual.optString("packId") == expected.optString("packId") &&
+                actual.optInt("version") == expected.optInt("version"),
+        ) {
             "fixed_pack_identity_invalid"
         }
     }

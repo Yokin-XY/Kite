@@ -1,4 +1,6 @@
 import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
 
 plugins {
     id "com.android.application"
@@ -9,6 +11,8 @@ def generatedLegalAssetsDir = layout.buildDirectory.dir("generated/legal-assets"
 def resourceDefinitionsDir = rootProject.file("assets/resources")
 def generatedResourceCatalogAssetsDir = layout.buildDirectory.dir("generated/resource-catalog-assets")
 def generatedNodeRuntimeAssetsDir = layout.buildDirectory.dir("generated/node-runtime-assets")
+def toolchainPackDir = rootProject.file("assets/toolchain/ai-dev-pack")
+def generatedToolchainIntegrityAssetsDir = layout.buildDirectory.dir("generated/toolchain-integrity-assets")
 def syncLegalDocuments = tasks.register("syncLegalDocuments", Sync) {
     from(rootProject.file("LICENSE")) {
         rename { "LICENSE.txt" }
@@ -37,6 +41,59 @@ def generateResourceCatalogIndex = tasks.register("generateResourceCatalogIndex"
 def syncNodeRuntimeAssets = tasks.register("syncNodeRuntimeAssets", Sync) {
     from(rootProject.file("scripts/kite-node-host-runtime.cjs"))
     into(generatedNodeRuntimeAssetsDir.map { it.dir("node-runtime") })
+}
+
+def generateToolchainIntegrityManifest = tasks.register("generateToolchainIntegrityManifest") {
+    inputs.dir(toolchainPackDir)
+    outputs.file(generatedToolchainIntegrityAssetsDir.map {
+        it.file("toolchain/ai-dev-pack/integrity.json")
+    })
+    doLast {
+        def packManifest = new JsonSlurper().parse(new File(toolchainPackDir, "manifest.json"))
+        def digestFile = { File file ->
+            def digest = MessageDigest.getInstance("SHA-256")
+            file.withInputStream { input ->
+                byte[] buffer = new byte[64 * 1024]
+                int count
+                while ((count = input.read(buffer)) >= 0) {
+                    if (count > 0) digest.update(buffer, 0, count)
+                }
+            }
+            digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+        }
+        def files = fileTree(toolchainPackDir)
+            .files
+            .findAll { it.isFile() && it.name != "integrity.json" }
+            .collect { file ->
+                [
+                    path: toolchainPackDir.toPath().relativize(file.toPath()).toString().replace(File.separatorChar, '/' as char),
+                    size: file.length(),
+                    sha256: digestFile(file),
+                ]
+            }
+            .sort { left, right -> left.path <=> right.path }
+        def contentRows = files.collect { file ->
+            "${file.path}\u0000${file.size}\u0000${file.sha256}\n"
+        }.join().getBytes("UTF-8")
+        def contentDigest = MessageDigest.getInstance("SHA-256")
+            .digest(contentRows)
+            .collect { String.format("%02x", it & 0xff) }
+            .join()
+        def outputFile = generatedToolchainIntegrityAssetsDir.get()
+            .file("toolchain/ai-dev-pack/integrity.json")
+            .asFile
+        outputFile.parentFile.mkdirs()
+        outputFile.setText(
+            JsonOutput.prettyPrint(JsonOutput.toJson([
+                schemaVersion: 1,
+                packageId: packManifest.packId,
+                version: packManifest.version,
+                contentDigest: contentDigest,
+                files: files,
+            ])) + System.lineSeparator(),
+            "UTF-8"
+        )
+    }
 }
 
 android {
@@ -70,6 +127,7 @@ android {
             assets.srcDir generatedLegalAssetsDir
             assets.srcDir generatedResourceCatalogAssetsDir
             assets.srcDir generatedNodeRuntimeAssetsDir
+            assets.srcDir generatedToolchainIntegrityAssetsDir
         }
     }
 
@@ -90,6 +148,7 @@ tasks.named("preBuild").configure {
     dependsOn(syncLegalDocuments)
     dependsOn(generateResourceCatalogIndex)
     dependsOn(syncNodeRuntimeAssets)
+    dependsOn(generateToolchainIntegrityManifest)
 }
 
 dependencies {
