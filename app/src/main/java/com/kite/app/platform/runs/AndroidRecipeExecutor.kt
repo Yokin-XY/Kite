@@ -12,6 +12,7 @@ import com.kite.app.application.runs.RecipeStopRequest
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunExecutionEffect
 import com.kite.app.application.runs.RunExecutionEnvironmentProvider
+import com.kite.app.application.runs.RunExecutionEnvironment
 import com.kite.app.application.runs.RunStateMutation
 import com.kite.app.application.runs.StopExecutionOutcome
 import com.kite.app.application.runs.StopExecutionResult
@@ -239,7 +240,7 @@ internal class AndroidRecipeExecutor(
             runCatching {
                 val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(appContext)
                 val executionEnvironment = executionEnvironmentProvider.environment(request)
-                val preparedSpace = if (requiresActiveWorkspacePreparation(executionEnvironment)) {
+                val preparedSpace = if (requiresActiveWorkspacePreparation(executionEnvironment.variables)) {
                     val activeEnvironment = WorkSurfaceRuntimeBridge.resolveActiveWorkspaceEnvironment(container)
                     KFWorkspaceManager.ensureActiveSpace(appContext, activeEnvironment).also { space ->
                         TerminalRuntimeHost.refreshRuntimeSnapshot(appContext, preparedSpace = space)
@@ -294,9 +295,11 @@ internal class AndroidRecipeExecutor(
                 )
             )
         )
+        val executionEnvironment = executionEnvironmentProvider.environment(request)
         bridgeClient.runRecipe(
             recipe = stepRecipe,
-            extraEnv = browserEnvironment(request, "shell_step"),
+            extraEnv = browserEnvironment(request, "shell_step", executionEnvironment),
+            extraFilesystemBindings = executionEnvironment.filesystemBindings,
             onProgress = { progress -> handleShellProgress(request, progress, callback) }
         ) { result ->
             handleShellResult(request, result, callback)
@@ -941,7 +944,11 @@ internal class AndroidRecipeExecutor(
         appendLine(rawBody)
     }
 
-    internal fun browserEnvironment(request: RecipeStepExecutionRequest, source: String): Map<String, String> =
+    internal fun browserEnvironment(
+        request: RecipeStepExecutionRequest,
+        source: String,
+        executionEnvironment: RunExecutionEnvironment = executionEnvironmentProvider.environment(request),
+    ): Map<String, String> =
         KiteBrowserProxyInstaller.environment(
             context = appContext,
             recipeId = request.recipe.id,
@@ -952,7 +959,7 @@ internal class AndroidRecipeExecutor(
                 ?.let { RuntimeOwnerIdentity.RUNTIME_ID_ENV to it },
             request.runtimeUnitId?.takeIf { it.isNotBlank() }
                 ?.let { RuntimeOwnerIdentity.UNIT_ID_ENV to it }
-        ).toMap() + executionEnvironmentProvider.environment(request)
+        ).toMap() + executionEnvironment.variables
 
     private fun RecipeStepExecutionRequest.runtimeNamespace(): RuntimeOwnerNamespace =
         if (runtimeRootOwnerId?.startsWith("resource:") == true) {

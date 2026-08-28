@@ -6,6 +6,7 @@ import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
 import com.kite.app.run.CardRunAgentBinding
+import java.io.File
 
 internal data class RunStartRequest(
     val recipe: KiteRecipe,
@@ -76,11 +77,37 @@ internal data class RecipeStepExecutionRequest(
  * 为一次运行补充底层执行环境。提供者只按运行实例返回通用环境变量，
  * 不感知资源类型、步骤类型或具体命令。
  */
+internal data class RunExecutionFilesystemBinding(
+    val sourcePath: String,
+    val targetPath: String,
+    val role: String,
+) {
+    init {
+        require(File(sourcePath).isAbsolute && '\u0000' !in sourcePath) {
+            "run_filesystem_binding_source_invalid"
+        }
+        require(targetPath.startsWith("/") && '\u0000' !in targetPath) {
+            "run_filesystem_binding_target_invalid"
+        }
+        require(targetPath.split('/').none { it == "." || it == ".." }) {
+            "run_filesystem_binding_target_unsafe"
+        }
+        require(role.isNotBlank() && role.all { it.isLetterOrDigit() || it == '-' || it == '_' }) {
+            "run_filesystem_binding_role_invalid"
+        }
+    }
+}
+
+internal data class RunExecutionEnvironment(
+    val variables: Map<String, String> = emptyMap(),
+    val filesystemBindings: List<RunExecutionFilesystemBinding> = emptyList(),
+)
+
 internal fun interface RunExecutionEnvironmentProvider {
-    fun environment(request: RecipeStepExecutionRequest): Map<String, String>
+    fun environment(request: RecipeStepExecutionRequest): RunExecutionEnvironment
 
     companion object {
-        val None = RunExecutionEnvironmentProvider { emptyMap() }
+        val None = RunExecutionEnvironmentProvider { RunExecutionEnvironment() }
     }
 }
 

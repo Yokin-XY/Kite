@@ -1,28 +1,10 @@
 {
   "schemaVersion": 2,
-  "revision": 8,
+  "revision": 13,
   "taskKey": "install-reliability-closure",
   "objective": "Complete the general resource installation reliability contract: content-addressed immutable artifacts, capacity-aware candidate installation, durable phase recovery, and repair.",
   "status": "active",
-  "activeTasks": [
-    {
-      "id": "T102",
-      "title": "install through a capacity-aware candidate",
-      "status": "in_progress",
-      "objective": "Preflight required working space, install into an owned candidate, validate it, and atomically activate without losing the last known-good install.",
-      "dependsOn": [
-        "T101"
-      ],
-      "acceptance": [
-        "Insufficient space is rejected before mutation; a validated candidate becomes formal while a failed candidate preserves the prior install."
-      ],
-      "invariants": [
-        "Avoid retaining duplicate full installations after commit."
-      ],
-      "nextAction": "Inspect the current resource transaction shell contract and size facts available from resource manifests.",
-      "owner": "root"
-    }
-  ],
+  "activeTasks": [],
   "ready": [],
   "blocked": [],
   "phaseGates": [],
@@ -31,21 +13,21 @@
     "For each phase, validation is limited to one concrete target effect plus one final true-device crash check; no broad suites.",
     "Do not disable concurrency, add resource/device special cases, or restore UI-owned installation state."
   ],
-  "nextAction": "Inspect the current resource transaction shell contract and size facts available from resource manifests.",
+  "nextAction": "select_next_task",
   "lastValidation": {
-    "taskId": "T101",
-    "name": "immutable artifact rejects truncated stage and app cold-starts",
+    "taskId": "T102",
+    "name": "final capacity-aware candidate build and cold start",
     "status": "passed",
-    "summary": "The focused integrity test rejected a truncated staged file before receipt creation and accepted a valid receipt; assembleDebug succeeded; Meizu 18 cold start reached MainActivity with process 537 alive and no AndroidRuntime or ActivityManager error.",
+    "summary": "The final focused candidate test passed after path-safety hardening; assembleDebug succeeded; the exact final APK installed on Meizu 18 and cold-started MainActivity with process 3910 alive and no AndroidRuntime or ActivityManager error.",
     "evidenceRefs": [
-      "test:ImmutableArtifactIntegrityTest",
+      "test:ResourceInstallCandidateCoordinatorTest",
       "build:app:assembleDebug",
-      "device:181QGEYH222B9:pid=537:no-crash"
+      "device:181QGEYH222B9:pid=3910:no-crash"
     ],
-    "at": "2026-08-28T11:22:45Z"
+    "at": "2026-08-28T11:54:59Z"
   },
   "lastBatch": null,
-  "ledgerCursor": 8,
+  "ledgerCursor": 13,
   "legacyRefs": [
     {
       "path": "D:\\xm\\Kite-agent-conversation\\docs\\autonomous-task\\install-reliability\\state.json",
@@ -54,5 +36,5 @@
       "sha256": "2db8d23eef5b8ee149a46b4944e9a4b6fc8b95e816ea3ffe820449bfbebdf8ae"
     }
   ],
-  "updatedAt": "2026-08-28T11:22:46Z"
+  "updatedAt": "2026-08-28T11:55:07Z"
 }

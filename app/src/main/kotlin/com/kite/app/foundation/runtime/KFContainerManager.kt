@@ -513,7 +513,8 @@ object KFContainerManager {
         payload: String,
         loginShell: Boolean = true,
         requestedProotViewId: String? = null,
-        requestedProotEnvironmentId: String? = null
+        requestedProotEnvironmentId: String? = null,
+        extraBindMounts: List<ProotBindMount> = emptyList(),
     ): ContainerExecConfig {
         return launchLifecycleLock.read {
             val prepared = prepareBuildContext(
@@ -535,6 +536,7 @@ object KFContainerManager {
                 purpose = "container_exec_config",
                 viewBinding = prepared.viewBinding,
                 environmentWorkspace = prepared.environmentWorkspace,
+                extraBindMounts = extraBindMounts,
             ).apply {
                 if (loginShell) {
                     add("/bin/bash")
@@ -569,7 +571,8 @@ object KFContainerManager {
         workingDirectory: String = RuntimeBoundary.CONTAINER_WORKSPACE_PATH,
         argv: List<String>,
         requestedProotViewId: String? = null,
-        requestedProotEnvironmentId: String? = null
+        requestedProotEnvironmentId: String? = null,
+        extraBindMounts: List<ProotBindMount> = emptyList(),
     ): ContainerExecConfig {
         return launchLifecycleLock.read {
             val prepared = prepareBuildContext(
@@ -580,7 +583,13 @@ object KFContainerManager {
             )
             val safeWorkingDirectory = workingDirectory.trim()
                 .ifBlank { RuntimeBoundary.CONTAINER_WORKSPACE_PATH }
-            assembleContainerArgvExecConfig(context, prepared, safeWorkingDirectory, argv)
+            assembleContainerArgvExecConfig(
+                context,
+                prepared,
+                safeWorkingDirectory,
+                argv,
+                extraBindMounts,
+            )
         }
     }
 
@@ -634,6 +643,7 @@ object KFContainerManager {
         prepared: BuildPreparation,
         workingDirectory: String,
         argv: List<String>,
+        extraBindMounts: List<ProotBindMount> = emptyList(),
     ): ContainerExecConfig {
         val command = buildContainerProotBaseArgv(
             layout = prepared.layout,
@@ -645,6 +655,7 @@ object KFContainerManager {
             purpose = "container_argv_exec_config",
             viewBinding = prepared.viewBinding,
             environmentWorkspace = prepared.environmentWorkspace,
+            extraBindMounts = extraBindMounts,
         ).apply {
             addAll(argv)
         }
@@ -1264,6 +1275,7 @@ object KFContainerManager {
         purpose: String,
         viewBinding: ProotViewBinding?,
         environmentWorkspace: ProotEnvironmentWorkspacePlan,
+        extraBindMounts: List<ProotBindMount> = emptyList(),
     ): MutableList<String> {
         val plan = buildContainerProotLaunchPlan(
             layout = layout,
@@ -1275,6 +1287,7 @@ object KFContainerManager {
             purpose = purpose,
             viewBinding = viewBinding,
             environmentWorkspace = environmentWorkspace,
+            extraBindMounts = extraBindMounts,
         )
         publishProotLaunchContract(container, plan)
         return plan.baseArgv()
@@ -1290,6 +1303,7 @@ object KFContainerManager {
         purpose: String,
         viewBinding: ProotViewBinding?,
         environmentWorkspace: ProotEnvironmentWorkspacePlan,
+        extraBindMounts: List<ProotBindMount> = emptyList(),
     ): ProotLaunchPlan {
         val prootRuntime = readProotRuntimeDescriptor(layout)
         return ProotLaunchPlan(
@@ -1308,7 +1322,7 @@ object KFContainerManager {
                     targetPath = networkPlan.containerResolvConfTarget,
                     role = "runtime_resolv_conf",
                     writable = false
-                ),
+                ) + extraBindMounts,
             networkMode = container.networkMode,
             networkSemantics = networkPlan.semantics,
             includeNetworkModeFlag = true,

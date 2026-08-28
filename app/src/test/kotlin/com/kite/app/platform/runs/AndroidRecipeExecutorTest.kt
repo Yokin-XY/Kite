@@ -4,6 +4,7 @@ import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.application.runs.RecipeStopRequest
 import com.kite.app.application.runs.RunExecutionEnvironmentProvider
+import com.kite.app.application.runs.RunExecutionEnvironment
 import com.kite.app.application.runs.StopExecutionOutcome
 import com.kite.app.application.runs.StopExecutionResult
 import com.kite.app.bridge.KiteBridgeClient
@@ -238,12 +239,14 @@ class AndroidRecipeExecutorTest {
             diagnostics = diagnostics,
             executionEnvironmentProvider = RunExecutionEnvironmentProvider { execution ->
                 if (execution.instanceId == request.instanceId) {
-                    mapOf(
-                        "KF_PROOT_VIEW_ID" to "view-update",
-                        "KF_PROOT_VIEW_CONTROL_PATH" to "/private/view/control.conf"
+                    RunExecutionEnvironment(
+                        variables = mapOf(
+                            "KF_PROOT_VIEW_ID" to "view-update",
+                            "KF_PROOT_VIEW_CONTROL_PATH" to "/private/view/control.conf"
+                        )
                     )
                 } else {
-                    emptyMap()
+                    RunExecutionEnvironment()
                 }
             }
         )

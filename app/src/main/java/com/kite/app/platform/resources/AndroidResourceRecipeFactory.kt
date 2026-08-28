@@ -72,6 +72,26 @@ internal class AndroidResourceRecipeFactory(
         }
     }
 
+    fun declaredWorkingBytes(
+        resourceId: String,
+        operation: String,
+        targetVersion: String? = null,
+    ): Long {
+        val manifest = manifestLoader.requestManifest(resourceId) ?: return 0L
+        val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest, targetVersion)
+        val actions = when (operation) {
+            KiteResourceInstallRecipes.OP_INSTALL,
+            KiteResourceInstallRecipes.OP_UPDATE,
+            KiteResourceInstallRecipes.OP_REINSTALL -> sourcePlan.installActions
+            else -> emptyList()
+        }
+        val stepBytes = actions.asSequence()
+            .flatMap(KiteResourceShellAction::installSteps)
+            .map { step -> step.maxBytes.coerceAtLeast(0L) }
+            .fold(0L, ::saturatingAdd)
+        return maxOf(manifest.source.maxBytes.coerceAtLeast(0L), stepBytes)
+    }
+
     private fun actionSteps(
         manifest: KiteResourceManifest,
         operation: String,
@@ -220,6 +240,9 @@ internal class AndroidResourceRecipeFactory(
         KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装"
         else -> "获取"
     }
+
+    private fun saturatingAdd(left: Long, right: Long): Long =
+        if (right > Long.MAX_VALUE - left) Long.MAX_VALUE else left + right
 
     private fun isStaticHttpsUrl(value: String): Boolean {
         val trimmed = value.trim()

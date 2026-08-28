@@ -22,6 +22,7 @@ internal data class ProotCompatibilityPlan(
     val loginShell: Boolean,
     val requestedProotViewId: String?,
     val requestedProotEnvironmentId: String?,
+    val filesystemBindings: List<RuntimeFilesystemBinding> = emptyList(),
 )
 
 internal object ProotCompatibilityRuntimeProvider :
@@ -55,6 +56,7 @@ internal object ProotCompatibilityRuntimeProvider :
                 requestedProotEnvironmentId = request.environment[ProotViewBinding.ENV_ENVIRONMENT_ID]
                     ?.trim()
                     ?.takeIf(String::isNotBlank),
+                filesystemBindings = request.filesystemBindings.toList(),
             ),
             reason = context.selectionReason,
         )

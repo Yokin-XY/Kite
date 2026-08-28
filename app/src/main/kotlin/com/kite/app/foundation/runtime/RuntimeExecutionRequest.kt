@@ -1,5 +1,7 @@
 package com.kite.app.foundation.runtime
 
+import java.io.File
+
 /** Runtime Planner 可以识别的请求形状；普通 argv、兼容命令文本和原生能力不会互相冒充。 */
 internal sealed interface RuntimeExecutionPayload {
     data class Argv(
@@ -91,6 +93,28 @@ internal enum class RuntimeFallbackPolicy {
     DISABLED,
 }
 
+/** 由受信任调用方声明的单次运行文件绑定；物理 PRoot 参数仍只由运行时统一构造。 */
+internal data class RuntimeFilesystemBinding(
+    val sourcePath: String,
+    val targetPath: String,
+    val role: String,
+) {
+    init {
+        require(File(sourcePath).isAbsolute && '\u0000' !in sourcePath) {
+            "runtime_filesystem_binding_source_invalid"
+        }
+        require(targetPath.startsWith("/") && '\u0000' !in targetPath) {
+            "runtime_filesystem_binding_target_invalid"
+        }
+        require(targetPath.split('/').none { it == "." || it == ".." }) {
+            "runtime_filesystem_binding_target_unsafe"
+        }
+        require(role.isNotBlank() && role.all { it.isLetterOrDigit() || it == '-' || it == '_' }) {
+            "runtime_filesystem_binding_role_invalid"
+        }
+    }
+}
+
 /**
  * 入口无关的执行请求。运行实例身份仍由 Orchestrator/Registry 持有，本对象只表达 Provider 选择所需事实。
  */
@@ -101,6 +125,7 @@ internal data class RuntimeExecutionRequest(
     val requirements: Set<RuntimeExecutionRequirement> = emptySet(),
     val guarantees: Set<RuntimeExecutionGuarantee> = emptySet(),
     val guaranteeEvidence: Map<String, String> = emptyMap(),
+    val filesystemBindings: List<RuntimeFilesystemBinding> = emptyList(),
     val fallbackPolicy: RuntimeFallbackPolicy = RuntimeFallbackPolicy.BEFORE_START_ONLY,
 ) {
     init {

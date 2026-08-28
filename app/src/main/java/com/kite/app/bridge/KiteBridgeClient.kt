@@ -15,6 +15,8 @@ import com.kite.app.resources.KiteResourceInstallOutput
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.runtime.ProotCompatibilityRuntimeProvider
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.RuntimeFilesystemBinding
+import com.kite.app.application.runs.RunExecutionFilesystemBinding
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import com.kite.app.foundation.contracts.ContainerExecConfig
@@ -66,9 +68,10 @@ class KiteBridgeClient(
         }
     }
 
-    fun runRecipe(
+    internal fun runRecipe(
         recipe: KiteRecipe,
         extraEnv: Map<String, String> = emptyMap(),
+        extraFilesystemBindings: List<RunExecutionFilesystemBinding> = emptyList(),
         onProgress: ((BridgeProgress) -> Unit)? = null,
         callback: (BridgeResult) -> Unit
     ) {
@@ -96,8 +99,21 @@ class KiteBridgeClient(
                 recipe,
                 mapOf("requestId" to requestId, "shellSteps" to shellSteps.size.toString())
             )
-            runDirectRecipe(context, recipe, requestId, shellSteps, extraEnv, onProgress, callback)
+            runDirectRecipe(
+                context,
+                recipe,
+                requestId,
+                shellSteps,
+                extraEnv,
+                extraFilesystemBindings,
+                onProgress,
+                callback,
+            )
             return
+        }
+
+        require(extraFilesystemBindings.isEmpty()) {
+            "bridge_remote_filesystem_bindings_unsupported"
         }
 
         val payload = JSONObject()
@@ -390,6 +406,7 @@ class KiteBridgeClient(
         requestId: String,
         shellSteps: List<KiteRecipeStep>,
         extraEnv: Map<String, String> = emptyMap(),
+        extraFilesystemBindings: List<RunExecutionFilesystemBinding> = emptyList(),
         onProgress: ((BridgeProgress) -> Unit)? = null,
         callback: (BridgeResult) -> Unit
     ) {
@@ -409,7 +426,16 @@ class KiteBridgeClient(
                 val runEnv = directRuntimeEnv(recipe, runId, extraEnv)
 
                 for (step in shellSteps) {
-                    val execution = executeDirectShellStep(context, recipe, runId, requestId, step, runEnv, onProgress)
+                    val execution = executeDirectShellStep(
+                        context,
+                        recipe,
+                        runId,
+                        requestId,
+                        step,
+                        runEnv,
+                        extraFilesystemBindings,
+                        onProgress,
+                    )
                     stepReports.add(execution.report)
                     if (!execution.pid.isNullOrBlank()) pid = execution.pid
                     if (!execution.rootPid.isNullOrBlank()) rootPid = execution.rootPid
@@ -502,13 +528,32 @@ class KiteBridgeClient(
         requestId: String,
         step: KiteRecipeStep,
         extraEnv: Map<String, String> = emptyMap(),
+        extraFilesystemBindings: List<RunExecutionFilesystemBinding> = emptyList(),
         onProgress: ((BridgeProgress) -> Unit)? = null
     ): DirectStepExecution {
         val runMode = KiteRecipe.normalizeRunMode(step.runMode) ?: KiteRecipe.RUN_MODE_ATTACHED
         return if (runMode == KiteRecipe.RUN_MODE_DETACHED) {
-            executeDetachedShellStep(context, recipe, runId, requestId, step, extraEnv, onProgress)
+            executeDetachedShellStep(
+                context,
+                recipe,
+                runId,
+                requestId,
+                step,
+                extraEnv,
+                extraFilesystemBindings,
+                onProgress,
+            )
         } else {
-            executeAttachedShellStep(context, recipe, runId, requestId, step, extraEnv, onProgress)
+            executeAttachedShellStep(
+                context,
+                recipe,
+                runId,
+                requestId,
+                step,
+                extraEnv,
+                extraFilesystemBindings,
+                onProgress,
+            )
         }
     }
 
@@ -543,6 +588,7 @@ class KiteBridgeClient(
         requestId: String,
         step: KiteRecipeStep,
         extraEnv: Map<String, String> = emptyMap(),
+        extraFilesystemBindings: List<RunExecutionFilesystemBinding> = emptyList(),
         onProgress: ((BridgeProgress) -> Unit)? = null
     ): DirectStepExecution {
         val config = buildProotShellExecConfig(
@@ -550,6 +596,7 @@ class KiteBridgeClient(
             workingDirectory = step.workdir?.trim().orEmpty().ifBlank { DEFAULT_WORKDIR },
             payload = groupedAttachedPayload(step.cmd.orEmpty()),
             environment = extraEnv,
+            filesystemBindings = extraFilesystemBindings,
             selectionReason = "shell_command_requires_proot",
         )
         val timeoutMs = step.timeoutMs?.takeIf { it > 0L } ?: DEFAULT_ATTACHED_TIMEOUT_MS
@@ -616,6 +663,7 @@ class KiteBridgeClient(
         requestId: String,
         step: KiteRecipeStep,
         extraEnv: Map<String, String> = emptyMap(),
+        extraFilesystemBindings: List<RunExecutionFilesystemBinding> = emptyList(),
         onProgress: ((BridgeProgress) -> Unit)? = null
     ): DirectStepExecution {
         val logPath = "/tmp/kite-${safeId(recipe.id)}-${safeId(step.id)}.log"
@@ -634,6 +682,7 @@ class KiteBridgeClient(
             workingDirectory = step.workdir?.trim().orEmpty().ifBlank { DEFAULT_WORKDIR },
             payload = payload,
             environment = extraEnv,
+            filesystemBindings = extraFilesystemBindings,
             selectionReason = "detached_shell_requires_proot",
         )
         val process = executeProcess(config.command, config.env, DETACHED_START_TIMEOUT_MS) { output, chunk ->
@@ -1061,6 +1110,7 @@ class KiteBridgeClient(
         workingDirectory: String,
         payload: String,
         environment: Map<String, String> = emptyMap(),
+        filesystemBindings: List<RunExecutionFilesystemBinding> = emptyList(),
         selectionReason: String,
     ): ContainerExecConfig {
         val plan = ProotCompatibilityRuntimeProvider.requirePlan(
@@ -1068,6 +1118,13 @@ class KiteBridgeClient(
                 payload = RuntimeExecutionPayload.CommandLine(payload),
                 workingDirectory = workingDirectory,
                 environment = environment,
+                filesystemBindings = filesystemBindings.map { binding ->
+                    RuntimeFilesystemBinding(
+                        sourcePath = binding.sourcePath,
+                        targetPath = binding.targetPath,
+                        role = binding.role,
+                    )
+                },
                 requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
             ),
             selectionReason = selectionReason,

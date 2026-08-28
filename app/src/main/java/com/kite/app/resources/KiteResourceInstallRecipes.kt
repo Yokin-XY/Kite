@@ -57,7 +57,7 @@ object KiteResourceInstallRecipes {
         val cleanCommand = if (cleanInstallRoot) {
             """
                 echo "KITE_RESOURCE_STEP clean-install-root ${'$'}KF_TOOLCHAIN_DIR"
-                rm -rf "${'$'}KF_TOOLCHAIN_DIR"
+                kite_clean_install_root "${'$'}KF_TOOLCHAIN_DIR"
             """.trimIndent()
         } else {
             ":"
@@ -190,7 +190,14 @@ SH
         val transactionTargetVersion = transactionStateValue(expectedVersion.orEmpty())
         val versionEvidence = versionEvidenceCommand(versionProbeCommand, expectedVersion)
         val restorePreservedPaths = restorePreservedPathsCommand(preservePaths)
-        val clearRetainedPaths = clearRetainedPathsCommand(preservePaths)
+        val stageCandidatePreservedPaths = stageCandidatePreservedPathsCommand(preservePaths)
+        val clearRetainedPaths = clearRetainedPathsCommand(preservePaths).let { command ->
+            if (command == ":") command else """
+                if [ "${'$'}candidate_install" != "1" ]; then
+                  $command
+                fi
+            """.trimIndent()
+        }
         val ownershipCommit = if (recordOwnership) {
             """
                 ownership_tmp="${'$'}install_root/.ownership.tmp-${'$'}${'$'}"
@@ -215,6 +222,10 @@ SH
             transaction_target_version="$transactionTargetVersion"
             transactional_clean="$transactionalClean"
             clean_install_root="$cleanInstallRootFlag"
+            candidate_install="${'$'}{KITE_RESOURCE_CANDIDATE:-0}"
+            if [ "${'$'}candidate_install" = "1" ]; then
+              transactional_clean=0
+            fi
             transaction_committed=0
             update_lock_owned=0
             user_home="${'$'}install_root/user-home"
@@ -224,6 +235,7 @@ SH
             export PATH="$WORKSPACE_BIN_ROOT:${'$'}install_root/bin:${'$'}npm_prefix/bin:${'$'}HOME/.local/bin:${'$'}HOME/.kimi-code/bin:${'$'}HOME/.codex/bin:${'$'}HOME/.claude/local:${'$'}HOME/.opencode/bin:/root/.local/bin:/root/.kimi-code/bin:/root/.codex/bin:/root/.claude/local:/root/.opencode/bin:${'$'}PATH"
             command_ledger="${'$'}install_root/.kite-managed-commands"
             command_snapshot_after="${'$'}install_root/.kite-commands-after"
+            candidate_input="${'$'}install_root/.kite-candidate-input"
             explicit_commands="$commandList"
             public_command_roots="${'$'}install_root/bin ${'$'}npm_prefix/bin ${'$'}HOME/.local/bin ${'$'}HOME/.kimi-code/bin ${'$'}HOME/.codex/bin ${'$'}HOME/.claude/local ${'$'}HOME/.opencode/bin"
             legacy_kite_wrapper_target() {
@@ -449,6 +461,15 @@ SH
               esac
               return 0
             }
+            kite_clean_install_root() {
+              clean_target="${'$'}1"
+              if [ "${'$'}candidate_install" = "1" ] && [ "${'$'}clean_target" = "${'$'}install_root" ]; then
+                find "${'$'}install_root" -mindepth 1 -maxdepth 1 \
+                  ! -name '.kite-candidate-input' -exec rm -rf -- {} +
+              else
+                rm -rf "${'$'}clean_target"
+              fi
+            }
             snapshot_public_commands() {
               for command_root in ${'$'}public_command_roots; do
                 [ -d "${'$'}command_root" ] || continue
@@ -464,7 +485,18 @@ SH
             echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}install_root"
             acquire_update_lock || exit ${'$'}?
             recover_interrupted_install
-            if [ -f "${'$'}command_ledger" ]; then
+            if [ "${'$'}candidate_install" = "1" ]; then
+              rm -rf "${'$'}candidate_input"
+              mkdir -p "${'$'}candidate_input"
+              old_ledger_snapshot="${'$'}candidate_input/old-commands"
+              failed_ledger_snapshot="${'$'}candidate_input/failed-commands"
+              transaction_state="${'$'}candidate_input/transaction-state"
+              transaction_state_tmp="${'$'}transaction_state.tmp.${'$'}${'$'}"
+              if [ -f "${'$'}command_ledger" ]; then
+                cp "${'$'}command_ledger" "${'$'}old_ledger_snapshot"
+              fi
+              $stageCandidatePreservedPaths
+            elif [ -f "${'$'}command_ledger" ]; then
               cp "${'$'}command_ledger" "${'$'}old_ledger_snapshot"
             fi
             if [ "${'$'}transactional_clean" = "1" ]; then
@@ -475,7 +507,12 @@ SH
               fi
               trap rollback_install_transaction EXIT
             elif [ "${'$'}clean_install_root" = "1" ]; then
-              rm -rf "${'$'}install_root"
+              if [ "${'$'}candidate_install" = "1" ]; then
+                find "${'$'}install_root" -mindepth 1 -maxdepth 1 \
+                  ! -name '.kite-candidate-input' -exec rm -rf -- {} +
+              else
+                rm -rf "${'$'}install_root"
+              fi
             fi
             for required_dir in "${'$'}install_root" "${'$'}install_root/bin" "${'$'}npm_prefix/bin" "${'$'}user_home" "$WORKSPACE_BIN_ROOT"; do
               [ -d "${'$'}required_dir" ] || mkdir -p "${'$'}required_dir"
@@ -597,6 +634,9 @@ SH
               rm -f "${'$'}transaction_state" "${'$'}transaction_state_tmp"
             fi
             rm -f "${'$'}old_ledger_snapshot" "${'$'}failed_ledger_snapshot"
+            if [ "${'$'}candidate_install" = "1" ]; then
+              rm -rf "${'$'}candidate_input"
+            fi
             release_update_lock
             trap - EXIT
             echo "$displayName installed by manifest action"
@@ -648,7 +688,12 @@ SH
                 preserved_relative=$literalPath
                 preserved_retained="${'$'}retained_root/${'$'}preserved_relative"
                 preserved_backup="${'$'}backup_root/${'$'}preserved_relative"
+                preserved_candidate="${'$'}candidate_input/preserved/${'$'}preserved_relative"
                 preserved_new="${'$'}install_root/${'$'}preserved_relative"
+                if [ "${'$'}candidate_install" = "1" ] && preserved_source_has_content "${'$'}preserved_candidate"; then
+                  echo "KITE_RESOURCE_STEP restore-candidate-path ${'$'}preserved_relative"
+                  restore_preserved_source "${'$'}preserved_candidate" "${'$'}preserved_new"
+                fi
                 if preserved_source_has_content "${'$'}preserved_retained"; then
                   echo "KITE_RESOURCE_STEP restore-retained-path ${'$'}preserved_relative"
                   restore_preserved_source "${'$'}preserved_retained" "${'$'}preserved_new"
@@ -657,6 +702,25 @@ SH
                    { [ -e "${'$'}preserved_backup" ] || [ -L "${'$'}preserved_backup" ]; }; then
                   echo "KITE_RESOURCE_STEP restore-preserved-path ${'$'}preserved_relative"
                   restore_preserved_source "${'$'}preserved_backup" "${'$'}preserved_new"
+                fi
+            """.trimIndent()
+        }
+    }
+
+    private fun stageCandidatePreservedPathsCommand(paths: List<String>): String {
+        val safePaths = normalizedPreservePaths(paths)
+        if (safePaths.isEmpty()) return ":"
+        return safePaths.joinToString("\n") { relativePath ->
+            val literalPath = shellLiteral(relativePath)
+            """
+                candidate_relative=$literalPath
+                candidate_source="${'$'}install_root/${'$'}candidate_relative"
+                candidate_preserved="${'$'}candidate_input/preserved/${'$'}candidate_relative"
+                if preserved_source_has_content "${'$'}candidate_source"; then
+                  echo "KITE_RESOURCE_STEP stage-candidate-path ${'$'}candidate_relative"
+                  candidate_parent="${'$'}(dirname "${'$'}candidate_preserved")"
+                  mkdir -p "${'$'}candidate_parent"
+                  cp -a --no-preserve=timestamps "${'$'}candidate_source" "${'$'}candidate_parent/"
                 fi
             """.trimIndent()
         }
@@ -823,7 +887,7 @@ SH
               exit 127
             fi
             echo "KITE_RESOURCE_STEP clean-install-root ${'$'}resource_root"
-            rm -rf "${'$'}resource_root"
+            kite_clean_install_root "${'$'}resource_root"
             echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}resource_root"
             mkdir -p "${'$'}resource_root" "${'$'}home_dir" "${'$'}user_home" "${'$'}bin_dir"
             export HOME="${'$'}user_home"

@@ -70,6 +70,7 @@ import com.kite.app.recipe.KiteRecipe
 import com.kite.app.platform.resources.AndroidResourceRecipeFactory
 import com.kite.app.platform.resources.AndroidResourceRunGateway
 import com.kite.app.platform.resources.ResourceInstallRecoveryCoordinator
+import com.kite.app.platform.resources.ResourceInstallCandidateCoordinator
 import com.kite.app.platform.resources.AndroidResourceActionGateway
 import com.kite.app.platform.resources.AndroidResourceVersionGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
@@ -147,6 +148,9 @@ internal class KiteAppGraph private constructor(context: Context) {
         KiteResourceInstallStore(appContext)
     }
     val resourceManifestLoader: KiteResourceManifestLoader by lazy { KiteResourceManifestLoader(appContext) }
+    val resourceInstallCandidateCoordinator: ResourceInstallCandidateCoordinator by lazy {
+        ResourceInstallCandidateCoordinator()
+    }
     val resourceInstallRecoveryCoordinator: ResourceInstallRecoveryCoordinator by lazy {
         ResourceInstallRecoveryCoordinator(
             context = appContext,
@@ -271,9 +275,10 @@ internal class KiteAppGraph private constructor(context: Context) {
             appContext,
             bridgeClient,
             diagnostics,
-            // 普通卡片、终端与资源运行固定走原生 PRoot。View 环境只能由更新事务等
-            // 显式调用方逐次注入，不能因运行实例带有 environmentId 就全局回到 View。
-            RunExecutionEnvironmentProvider.None,
+            // 只有资源安装运行实例获得资源级候选绑定；普通卡片和 Agent 不受影响。
+            RunExecutionEnvironmentProvider { request ->
+                resourceInstallCandidateCoordinator.environmentForRun(request.instanceId)
+            },
             agentRuntime = com.kite.app.platform.runs.AndroidAgentRecipeRuntime(
                 context = appContext,
                 agentRegistry = agentRegistry,
@@ -372,6 +377,7 @@ internal class KiteAppGraph private constructor(context: Context) {
                 installStore = resourceInstallStore,
                 manifestLoader = resourceManifestLoader,
                 recipeFactory = resourceRecipeFactory,
+                candidateCoordinator = resourceInstallCandidateCoordinator,
                 diagnostics = diagnostics
             ),
             runOrchestrator = runOrchestrator,

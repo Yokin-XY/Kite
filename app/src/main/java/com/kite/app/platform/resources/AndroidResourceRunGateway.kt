@@ -5,6 +5,7 @@ import com.kite.app.application.resources.ResourceRunGateway
 import com.kite.app.application.resources.ResourceRunLaunchRequest
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
+import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifestLoader
@@ -15,6 +16,7 @@ import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
 import com.kite.app.run.CardRunSurface
 import org.json.JSONObject
+import java.io.File
 import java.util.UUID
 import kotlin.concurrent.thread
 
@@ -23,6 +25,8 @@ internal class AndroidResourceRunGateway(
     private val installStore: KiteResourceInstallStore,
     private val manifestLoader: KiteResourceManifestLoader,
     private val recipeFactory: AndroidResourceRecipeFactory,
+    private val candidateCoordinator: ResourceInstallCandidateCoordinator,
+    private val capacityGuard: ResourceInstallCapacityGuard = ResourceInstallCapacityGuard(),
     private val diagnostics: KiteDiagnostics
 ) : ResourceRunGateway {
     private val appContext = context.applicationContext
@@ -81,7 +85,8 @@ internal class AndroidResourceRunGateway(
         instanceId: String,
         callback: (Result<Unit>) -> Unit
     ) {
-        if (!request.stageBundledResource) {
+        val needsTransaction = request.operation in TRANSACTION_OPERATIONS
+        if (!request.stageBundledResource && !needsTransaction) {
             callback(Result.success(Unit))
             return
         }
@@ -91,11 +96,53 @@ internal class AndroidResourceRunGateway(
                     if (request.stageBundledResource) {
                         stageBundledResource(request.resourceId)
                     }
+                    if (needsTransaction) {
+                        val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(appContext)
+                        capacityGuard.requireCapacity(
+                            workspaceDirectory = File(container.workspacePath),
+                            resourceId = request.resourceId,
+                            declaredWorkingBytes = recipeFactory.declaredWorkingBytes(
+                                request.resourceId,
+                                request.operation,
+                                request.targetVersion,
+                            ),
+                        )
+                        val manifest = manifestLoader.requestManifest(request.resourceId)
+                            ?: error("resource_manifest_missing:${request.resourceId}")
+                        candidateCoordinator.begin(
+                            workspaceDirectory = File(container.workspacePath),
+                            resourceId = request.resourceId,
+                            runInstanceId = instanceId,
+                            guestInstallRoot = manifest.installRoot,
+                            preservePaths = manifest.management.preservePaths,
+                        ).getOrThrow()
+                    }
                     Unit
                 }
             )
         }
     }
+
+    override fun commitMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        if (request.operation in TRANSACTION_OPERATIONS) {
+            candidateCoordinator.commit(request.resourceId, instanceId)
+        } else {
+            Result.success(Unit)
+        }
+
+    override fun finalizeMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        if (request.operation in TRANSACTION_OPERATIONS) {
+            candidateCoordinator.finalize(request.resourceId, instanceId)
+        } else {
+            Result.success(Unit)
+        }
+
+    override fun rollbackMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        if (request.operation in TRANSACTION_OPERATIONS) {
+            candidateCoordinator.rollback(request.resourceId, instanceId)
+        } else {
+            Result.success(Unit)
+        }
 
     override fun failRunPreparation(
         request: ResourceRunLaunchRequest,
@@ -264,5 +311,10 @@ internal class AndroidResourceRunGateway(
     companion object {
         private const val TOOLCHAIN_PACK_ASSET = "toolchain/ai-dev-pack"
         private const val INSTALLED_VERSION_MARKER = "KITE_RESOURCE_INSTALLED_VERSION "
+        private val TRANSACTION_OPERATIONS = setOf(
+            KiteResourceInstallRecipes.OP_INSTALL,
+            KiteResourceInstallRecipes.OP_UPDATE,
+            KiteResourceInstallRecipes.OP_REINSTALL,
+        )
     }
 }
