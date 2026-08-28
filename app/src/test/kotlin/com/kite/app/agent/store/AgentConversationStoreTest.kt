@@ -396,4 +396,40 @@ class AgentConversationStoreTest {
         assertTrue(restored.turns.all { it.durationMillis == null })
         assertEquals(listOf(1L, 1L, 2L, 2L), restored.timeline.map { it.turnOrdinal })
     }
+
+    @Test
+    fun `历史回放完成后的新回合恢复实时状态`() {
+        AgentConversationStore.beginHistoryReplay("run-1", key)
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                AgentMessageRole.User,
+                AgentContent.Text("历史问题"),
+                "history-user",
+            )
+        )
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                AgentMessageRole.Assistant,
+                AgentContent.Text("历史回答"),
+                "history-answer",
+            )
+        )
+        AgentConversationStore.completeHistoryReplay(key)
+
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                AgentMessageRole.User,
+                AgentContent.Text("实时问题"),
+                "live-user",
+            )
+        )
+
+        val snapshot = AgentConversationStore.snapshot(key)!!
+        assertEquals(AgentConversationTurnState.Historical, snapshot.turns.first().state)
+        assertEquals(AgentConversationTurnState.Running, snapshot.turns.last().state)
+        assertTrue(snapshot.turns.last().startedAtMillis != null)
+    }
 }

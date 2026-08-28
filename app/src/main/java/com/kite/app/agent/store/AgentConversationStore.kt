@@ -413,7 +413,7 @@ object AgentConversationStore {
         var key: AgentConversationKey,
         val instanceId: String,
         var phase: AgentSessionPhase,
-        private val recordsLiveTiming: Boolean = true,
+        private var recordsLiveTiming: Boolean = true,
     ) {
         val timeline = mutableListOf<MutableTimelineItem>()
         var plan: List<AgentPlanEntry> = emptyList()
@@ -648,6 +648,7 @@ object AgentConversationStore {
 
         fun finishHistoryReplay() {
             finishTurn(AgentConversationTurnState.Historical)
+            recordsLiveTiming = true
         }
 
         fun discardMessage(messageId: String): Boolean {

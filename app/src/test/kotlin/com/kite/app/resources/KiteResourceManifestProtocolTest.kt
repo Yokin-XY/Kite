@@ -494,15 +494,38 @@ class KiteResourceManifestProtocolTest {
             launcher.indexOf("if [ \"\\${'$'}{1:-}\" = \"acp\" ]; then") <
                 launcher.indexOf("export HERMES_DISABLE_LAZY_INSTALLS=1")
         )
+        val providerCompatibility = hermes.installActions.single().installSteps.single {
+            it.id == "patch-hermes-acp-provider-identity"
+        }.cmd
+        assertTrue(providerCompatibility.contains("canonical_custom_identity"))
+        assertTrue(
+            providerCompatibility.contains(
+                "from hermes_cli.runtime_provider import canonical_custom_identity"
+            )
+        )
+        assertTrue(providerCompatibility.contains("runtime_provider = requested_provider or config_provider"))
+        assertTrue(providerCompatibility.contains("os.replace(temporary, target)"))
         assertTrue(hermes.installActions.single().installSteps.none { it.id == "run-hermes-installer" })
         assertTrue(hermes.installActions.single().verifications.any { it.cmd.contains("hermes acp --help") })
+        assertTrue(
+            hermes.installActions.single().verifications.any {
+                it.id == "hermes-acp-provider-identity"
+            }
+        )
         assertEquals("v2026.8.27.2", hermes.version)
         assertEquals(1, hermes.updateActions.size)
         assertTrue(hermes.management.versionProbe?.command.orEmpty().contains(".kite-version"))
         assertTrue(hermes.management.latestVersionProbe?.command.orEmpty().contains("v2026.8.27.2"))
         val lightweightUpdate = hermes.updateActions.single()
         assertFalse(lightweightUpdate.cleanInstallRoot)
-        assertTrue(lightweightUpdate.installSteps.single().cmd.contains("HERMES_DISABLE_LAZY_INSTALLS=1"))
+        assertTrue(
+            lightweightUpdate.installSteps.single { it.id == "update-hermes-launcher" }
+                .cmd.contains("HERMES_DISABLE_LAZY_INSTALLS=1")
+        )
+        assertTrue(
+            lightweightUpdate.installSteps.single { it.id == "patch-hermes-acp-provider-identity" }
+                .cmd.contains("canonical_custom_identity")
+        )
         assertTrue(lightweightUpdate.installSteps.none { it.type == "git" || it.type == "script" })
     }
 
