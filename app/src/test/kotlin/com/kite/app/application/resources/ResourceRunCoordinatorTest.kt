@@ -28,6 +28,42 @@ import org.junit.Test
 
 class ResourceRunCoordinatorTest {
     @Test
+    fun `写入范围冲突被拒绝且释放后可以重新启动`() {
+        val gateway = FakeResourceRunGateway().apply {
+            writeScopesByResource["left"] = setOf("command:shared")
+            writeScopesByResource["right"] = setOf("command:shared")
+            writeScopesByResource["independent"] = setOf("command:other")
+        }
+        val hub = RunLifecycleEventHub()
+        val coordinator = coordinator(gateway, hub)
+        val leftRequest = launch("left", KiteResourceInstallRecipes.OP_INSTALL)
+        val left = coordinator.start(leftRequest) as ResourceRunLaunchResult.Accepted
+
+        val conflicting = coordinator.start(launch("right", KiteResourceInstallRecipes.OP_INSTALL))
+        val independent = coordinator.start(launch("independent", KiteResourceInstallRecipes.OP_INSTALL))
+
+        assertTrue(conflicting is ResourceRunLaunchResult.Rejected)
+        assertTrue(independent is ResourceRunLaunchResult.Accepted)
+        hub.onStateCommitted(
+            RunLifecycleEvent(
+                leftRequest.recipe,
+                left.state.copy(status = CardRunStatus.Completed),
+            ),
+        )
+        var restarted: ResourceRunLaunchResult.Accepted? = null
+        waitUntil {
+            if (restarted != null) {
+                true
+            } else {
+                (coordinator.start(launch("right", KiteResourceInstallRecipes.OP_INSTALL))
+                    as? ResourceRunLaunchResult.Accepted)
+                    ?.also { restarted = it } != null
+            }
+        }
+        assertTrue(restarted != null)
+    }
+
+    @Test
     fun `安装完成登记快照并推进下一资源`() {
         val gateway = FakeResourceRunGateway()
         val hub = RunLifecycleEventHub()
@@ -382,6 +418,7 @@ private class FakeResourceRunGateway : ResourceRunGateway {
     val plannedInstalls = ConcurrentHashMap<String, ResourceRunLaunchRequest>()
     val pendingResources = CopyOnWriteArrayList<String>()
     val installedFacts = ConcurrentHashMap.newKeySet<String>()
+    val writeScopesByResource = ConcurrentHashMap<String, Set<String>>()
     @Volatile var activeEnvironmentId: String = "default"
     private val generation = AtomicLong(100L)
 
@@ -389,6 +426,9 @@ private class FakeResourceRunGateway : ResourceRunGateway {
         plannedInstalls[resourceId]?.recipe
 
     override fun isBundled(resourceId: String): Boolean = false
+
+    override fun writeScopes(request: ResourceRunLaunchRequest): Set<String> =
+        writeScopesByResource[request.resourceId] ?: setOf("resource:${request.resourceId}")
 
     override fun currentEnvironmentId(): String = activeEnvironmentId
 

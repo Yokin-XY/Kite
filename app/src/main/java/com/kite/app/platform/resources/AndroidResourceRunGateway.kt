@@ -33,6 +33,9 @@ internal class AndroidResourceRunGateway(
     override fun isBundled(resourceId: String): Boolean =
         recipeFactory.isBundled(resourceId)
 
+    override fun writeScopes(request: ResourceRunLaunchRequest): Set<String> =
+        recipeFactory.writeScopes(request.resourceId, request.operation, request.targetVersion)
+
     override fun currentEnvironmentId(): String = installStore.currentEnvironmentId()
 
     override fun beginRun(request: ResourceRunLaunchRequest): CardRunState {

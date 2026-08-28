@@ -345,6 +345,7 @@ object ToolchainPackInstaller {
                     DependencyBatchTask(
                         key = resource.resourceId,
                         dependencies = resource.dependencies,
+                        writeScopes = resource.writeScopes,
                     ) {
                         val stepIndex = index + 1
                         if (reportBootstrapProgress) {
@@ -507,6 +508,7 @@ object ToolchainPackInstaller {
         val resourceId: String,
         val mode: String,
         val dependencies: Set<String>,
+        val writeScopes: Set<String>,
     )
 
     /** 首次运行报告读取的稳定组件目录；安装结果仍以资源登记表为事实源。 */
@@ -531,6 +533,7 @@ object ToolchainPackInstaller {
                 resourceId = resource.resourceId,
                 mode = resource.mode,
                 dependencies = resource.dependencies,
+                writeScopes = resource.writeScopes,
             )
         }
 
@@ -542,7 +545,16 @@ object ToolchainPackInstaller {
         val dependencies: Set<String> = emptySet(),
         val requiredPaths: List<String>,
         val anyRuntimePaths: List<String> = emptyList()
-    )
+    ) {
+        val writeScopes: Set<String> = buildSet {
+            add("resource:$resourceId")
+            requiredPaths
+                .filter { path -> path.startsWith(".kf/bin/") }
+                .map { path -> path.substringAfterLast('/') }
+                .filter(String::isNotBlank)
+                .forEach { command -> add("command:$command") }
+        }
+    }
 
     private fun isBootstrapResourceReady(context: Context, resource: BootstrapResource): Boolean {
         val workspaceDir = workspaceDirOrNull(context) ?: return false

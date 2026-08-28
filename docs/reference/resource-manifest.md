@@ -109,6 +109,7 @@ assets/resources/<resource-id>/
     }
   ],
   "managedCommands": ["example"],
+  "writeScopes": ["global:package-index"],
   "cleanInstallRoot": true,
   "verify": [
     {
@@ -119,6 +120,10 @@ assets/resources/<resource-id>/
   "timeoutMs": 600000
 }
 ```
+
+`writeScopes` 用于声明安装动作除自身资源目录和 `managedCommands` 之外还会修改的共享事实。
+相同作用域的动作不会并发执行；以 `global:` 开头的作用域跨环境互斥，其他作用域只在同一环境内互斥。
+资源自身目录和已声明命令会自动形成作用域，因此普通独立资源不需要重复填写。
 
 旧 `type: shell` 仍能加载，但新资源不应把下载、安装、验证和成功登记压成一条自由 Shell。
 

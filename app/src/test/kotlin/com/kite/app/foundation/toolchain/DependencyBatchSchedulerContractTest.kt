@@ -113,6 +113,50 @@ class DependencyBatchSchedulerContractTest {
         assertTrue((report.outcomes.last() as DependencyBatchTaskOutcome.Executed).successful)
     }
 
+    @Test
+    fun `conflicting writes never overlap while independent work remains concurrent`() {
+        val sharedActive = AtomicInteger(0)
+        val maximumSharedActive = AtomicInteger(0)
+        val allActive = AtomicInteger(0)
+        val maximumAllActive = AtomicInteger(0)
+        val tasks = listOf(
+            scopedTask("left", "command:shared", sharedActive, maximumSharedActive, allActive, maximumAllActive),
+            scopedTask("right", "command:shared", sharedActive, maximumSharedActive, allActive, maximumAllActive),
+            scopedTask("independent", "command:other", null, null, allActive, maximumAllActive),
+        )
+
+        val decision = DependencyBatchScheduler.executeOrdered(tasks, 3, String::isNotBlank)
+        val report = (decision as DependencyBatchDecision.Completed).report
+
+        assertTrue(report.outcomes.all { it is DependencyBatchTaskOutcome.Executed && it.successful })
+        assertEquals(1, maximumSharedActive.get())
+        assertTrue(maximumAllActive.get() >= 2)
+    }
+
+    private fun scopedTask(
+        key: String,
+        scope: String,
+        scopedActive: AtomicInteger?,
+        maximumScopedActive: AtomicInteger?,
+        allActive: AtomicInteger,
+        maximumAllActive: AtomicInteger,
+    ): DependencyBatchTask<String, String> = DependencyBatchTask(
+        key = key,
+        writeScopes = setOf(scope),
+    ) {
+        val nowScoped = scopedActive?.incrementAndGet()
+        if (nowScoped != null) maximumScopedActive?.updateAndGet { current -> maxOf(current, nowScoped) }
+        val nowAll = allActive.incrementAndGet()
+        maximumAllActive.updateAndGet { current -> maxOf(current, nowAll) }
+        try {
+            Thread.sleep(60L)
+            key
+        } finally {
+            allActive.decrementAndGet()
+            scopedActive?.decrementAndGet()
+        }
+    }
+
     private fun task(
         key: String,
         delayMs: Long,

@@ -134,6 +134,7 @@ data class KiteResourceShellAction(
     val managedCommands: List<String>,
     val cleanInstallRoot: Boolean,
     val npmUninstallPackages: List<String>,
+    val writeScopes: List<String> = emptyList(),
     val installSteps: List<KiteResourceInstallStep> = emptyList(),
     val verifications: List<KiteResourceInstallVerification> = emptyList()
 )
@@ -1076,6 +1077,10 @@ class KiteResourceManifestLoader private constructor(
             managedCommands = managedCommands,
             cleanInstallRoot = action.optBoolean("cleanInstallRoot", false),
             npmUninstallPackages = npmUninstallPackages,
+            writeScopes = action.optJSONArray("writeScopes").toStringList()
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .distinct(),
             installSteps = installSteps,
             verifications = parseInstallVerifications(action.optJSONArray("verify"))
         )

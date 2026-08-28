@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
-  "revision": 11,
+  "revision": 16,
   "taskKey": "install-reliability",
   "objective": "Build a general reliable software installation pipeline covering shared artifact publication, conflict-aware scheduling, transactional recovery, and failed-item retry.",
   "status": "active",
   "activeTasks": [
     {
-      "id": "T002",
-      "title": "Conflict-aware write scheduling",
+      "id": "T003",
+      "title": "Install transaction and interruption recovery",
       "status": "in_progress",
-      "objective": "Schedule resource work by declared write scopes and reject duplicate resource mutation.",
+      "objective": "Wire candidate install, verification, commit, rollback, and restart recovery into the real resource run path.",
       "dependsOn": [
-        "T001"
+        "T002"
       ],
       "acceptance": [
-        "Independent resources can run concurrently while conflicting writes never overlap.",
+        "An interrupted install preserves the previous usable version and is settled on next startup.",
         "Debug cold start shows no crash evidence."
       ],
       "invariants": [
-        "Preserve safe concurrency."
+        "Do not duplicate durable state ownership."
       ],
-      "nextAction": "Define the resource writeScopes contract and enforce it in the scheduler.",
+      "nextAction": "Align ResourceTransactionCoordinator with the production gateway contract.",
       "owner": "root"
     }
   ],
@@ -32,19 +32,19 @@
     "Validation is limited to crash evidence and one concrete result of the active change. No full suites or unrelated regression runs.",
     "Do not hide faults by disabling concurrency or adding software/device special cases."
   ],
-  "nextAction": "Implement T002 conflict-aware write scheduling and duplicate mutation protection.",
+  "nextAction": "Implement T003 production transaction wiring and interruption recovery.",
   "lastValidation": {
-    "taskId": "T001",
+    "taskId": "T002",
     "name": "debug cold-start crash evidence",
     "status": "passed",
-    "summary": "Debug APK installed on MEIZU 18, cold start reached MainActivity, process 27435 remained alive, and AndroidRuntime/ActivityManager emitted no error.",
+    "summary": "Debug APK installed on MEIZU 18, cold start reached MainActivity, process 28066 remained alive, and AndroidRuntime/ActivityManager emitted no error.",
     "evidenceRefs": [
-      "adb:181QGEYH222B9:2026-08-28T18:18+08:00"
+      "adb:181QGEYH222B9:2026-08-28T18:28+08:00"
     ],
-    "at": "2026-08-28T10:19:27Z"
+    "at": "2026-08-28T10:28:28Z"
   },
   "lastBatch": null,
-  "ledgerCursor": 11,
+  "ledgerCursor": 16,
   "legacyRefs": [],
-  "updatedAt": "2026-08-28T10:19:28Z"
+  "updatedAt": "2026-08-28T10:28:30Z"
 }

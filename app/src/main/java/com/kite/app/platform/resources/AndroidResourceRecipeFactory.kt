@@ -49,6 +49,29 @@ internal class AndroidResourceRecipeFactory(
     fun isBundled(resourceId: String): Boolean =
         manifestLoader.requestManifest(resourceId)?.sourceType == "bundled"
 
+    fun writeScopes(resourceId: String, operation: String, targetVersion: String? = null): Set<String> {
+        val manifest = manifestLoader.requestManifest(resourceId)
+            ?: return setOf("resource:${KiteResourceInstallRecipes.safeId(resourceId)}")
+        val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest, targetVersion)
+        val actions = when (operation) {
+            KiteResourceInstallRecipes.OP_INSTALL,
+            KiteResourceInstallRecipes.OP_UPDATE,
+            KiteResourceInstallRecipes.OP_REINSTALL -> sourcePlan.installActions
+            KiteResourceInstallRecipes.OP_UNINSTALL -> sourcePlan.uninstallActions
+            else -> emptyList()
+        }
+        return buildSet {
+            add("resource:${KiteResourceInstallRecipes.safeId(manifest.id)}")
+            actions.flatMap(KiteResourceShellAction::writeScopes).forEach(::add)
+            val managedCommands = actions.flatMap(KiteResourceShellAction::managedCommands)
+                .map(KiteResourceInstallRecipes::safeId)
+                .filter(String::isNotBlank)
+                .distinct()
+            managedCommands.forEach { command -> add("command:$command") }
+            if (managedCommands.isEmpty()) add("command:auto-discovery")
+        }
+    }
+
     private fun actionSteps(
         manifest: KiteResourceManifest,
         operation: String,
