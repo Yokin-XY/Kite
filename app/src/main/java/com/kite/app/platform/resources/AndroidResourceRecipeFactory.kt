@@ -182,7 +182,8 @@ internal class AndroidResourceRecipeFactory(
                 preservePaths = manifest.management.preservePaths,
                 recordOwnership = operation != KiteResourceInstallRecipes.OP_UPDATE,
                 protectExistingInstall = operation == KiteResourceInstallRecipes.OP_UPDATE ||
-                    operation == KiteResourceInstallRecipes.OP_REINSTALL
+                    operation == KiteResourceInstallRecipes.OP_REINSTALL,
+                operation = operation,
             )
         }
         KiteResourceInstallRecipes.OP_UNINSTALL -> KiteResourceInstallRecipes.manifestUninstallCommand(

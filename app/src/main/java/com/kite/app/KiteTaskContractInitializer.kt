@@ -10,6 +10,7 @@ import com.kite.app.foundation.terminal.BrowserEnvironmentProvider
 import com.kite.app.foundation.terminal.BrowserEnvironmentProviderHost
 import com.kite.app.foundation.toolchain.ToolchainResourcePort
 import com.kite.app.foundation.toolchain.ToolchainResourcePortHost
+import com.kite.app.foundation.toolchain.ResourceInstallRecoverySummary
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.shell.KiteAppGraph
 
@@ -47,6 +48,9 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
                 KiteBrowserProxyInstaller.defaultEnvironment(context, source)
         })
         ToolchainResourcePortHost.install(object : ToolchainResourcePort {
+            override fun recoverInterruptedInstalls(context: android.content.Context): ResourceInstallRecoverySummary =
+                KiteAppGraph.from(context.applicationContext).resourceInstallRecoveryCoordinator.recover()
+
             override fun currentEnvironmentId(context: android.content.Context): String =
                 KiteAppGraph.from(context.applicationContext).resourceInstallStore.currentEnvironmentId()
 

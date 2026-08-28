@@ -1,29 +1,10 @@
 {
   "schemaVersion": 2,
-  "revision": 16,
+  "revision": 23,
   "taskKey": "install-reliability",
   "objective": "Build a general reliable software installation pipeline covering shared artifact publication, conflict-aware scheduling, transactional recovery, and failed-item retry.",
   "status": "active",
-  "activeTasks": [
-    {
-      "id": "T003",
-      "title": "Install transaction and interruption recovery",
-      "status": "in_progress",
-      "objective": "Wire candidate install, verification, commit, rollback, and restart recovery into the real resource run path.",
-      "dependsOn": [
-        "T002"
-      ],
-      "acceptance": [
-        "An interrupted install preserves the previous usable version and is settled on next startup.",
-        "Debug cold start shows no crash evidence."
-      ],
-      "invariants": [
-        "Do not duplicate durable state ownership."
-      ],
-      "nextAction": "Align ResourceTransactionCoordinator with the production gateway contract.",
-      "owner": "root"
-    }
-  ],
+  "activeTasks": [],
   "ready": [],
   "blocked": [],
   "phaseGates": [],
@@ -32,19 +13,19 @@
     "Validation is limited to crash evidence and one concrete result of the active change. No full suites or unrelated regression runs.",
     "Do not hide faults by disabling concurrency or adding software/device special cases."
   ],
-  "nextAction": "Implement T003 production transaction wiring and interruption recovery.",
+  "nextAction": "select_next_task",
   "lastValidation": {
-    "taskId": "T002",
+    "taskId": "T003",
     "name": "debug cold-start crash evidence",
     "status": "passed",
-    "summary": "Debug APK installed on MEIZU 18, cold start reached MainActivity, process 28066 remained alive, and AndroidRuntime/ActivityManager emitted no error.",
+    "summary": "Debug APK installed on MEIZU 18, cold start reached MainActivity, process 30742 remained alive, and AndroidRuntime/ActivityManager emitted no error.",
     "evidenceRefs": [
-      "adb:181QGEYH222B9:2026-08-28T18:28+08:00"
+      "adb:181QGEYH222B9:2026-08-28"
     ],
-    "at": "2026-08-28T10:28:28Z"
+    "at": "2026-08-28T10:50:21Z"
   },
   "lastBatch": null,
-  "ledgerCursor": 16,
+  "ledgerCursor": 23,
   "legacyRefs": [],
-  "updatedAt": "2026-08-28T10:28:30Z"
+  "updatedAt": "2026-08-28T10:50:21Z"
 }

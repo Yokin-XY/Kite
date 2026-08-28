@@ -69,6 +69,7 @@ import com.kite.app.platform.packages.AndroidInstallApkGateway
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.platform.resources.AndroidResourceRecipeFactory
 import com.kite.app.platform.resources.AndroidResourceRunGateway
+import com.kite.app.platform.resources.ResourceInstallRecoveryCoordinator
 import com.kite.app.platform.resources.AndroidResourceActionGateway
 import com.kite.app.platform.resources.AndroidResourceVersionGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
@@ -146,6 +147,13 @@ internal class KiteAppGraph private constructor(context: Context) {
         KiteResourceInstallStore(appContext)
     }
     val resourceManifestLoader: KiteResourceManifestLoader by lazy { KiteResourceManifestLoader(appContext) }
+    val resourceInstallRecoveryCoordinator: ResourceInstallRecoveryCoordinator by lazy {
+        ResourceInstallRecoveryCoordinator(
+            context = appContext,
+            installStore = resourceInstallStore,
+            manifestLoader = resourceManifestLoader,
+        )
+    }
     val customAgentRegistrationStore: KiteCustomAgentRegistrationStore by lazy {
         KiteCustomAgentRegistrationStore(appContext)
     }

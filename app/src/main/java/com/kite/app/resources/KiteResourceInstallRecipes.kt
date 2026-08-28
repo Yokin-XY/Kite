@@ -179,12 +179,16 @@ SH
         expectedVersion: String? = null,
         preservePaths: List<String> = emptyList(),
         recordOwnership: Boolean = true,
-        protectExistingInstall: Boolean = false
+        protectExistingInstall: Boolean = false,
+        operation: String = OP_INSTALL,
     ): String {
         val safeCommands = managedCommands.map(::safeCommandName).filter { it.isNotBlank() }.distinct()
         val commandList = safeCommands.joinToString(" ")
         val cleanInstallRootFlag = if (cleanInstallRoot) "1" else "0"
         val transactionalClean = if (cleanInstallRoot && protectExistingInstall) "1" else "0"
+        val transactionResourceId = safeId(resourceId)
+        val transactionOperation = transactionStateValue(operation)
+        val transactionTargetVersion = transactionStateValue(expectedVersion.orEmpty())
         val versionEvidence = versionEvidenceCommand(versionProbeCommand, expectedVersion)
         val restorePreservedPaths = restorePreservedPathsCommand(preservePaths)
         val clearRetainedPaths = clearRetainedPathsCommand(preservePaths)
@@ -205,6 +209,11 @@ SH
             old_ledger_snapshot="${'$'}install_root.kite-old-commands.${'$'}${'$'}"
             failed_ledger_snapshot="${'$'}install_root.kite-failed-commands.${'$'}${'$'}"
             update_lock="${'$'}install_root.kite-update-lock"
+            transaction_state="${'$'}install_root.kite-transaction"
+            transaction_state_tmp="${'$'}transaction_state.tmp.${'$'}${'$'}"
+            transaction_resource_id="$transactionResourceId"
+            transaction_operation="$transactionOperation"
+            transaction_target_version="$transactionTargetVersion"
             transactional_clean="$transactionalClean"
             clean_install_root="$cleanInstallRootFlag"
             transaction_committed=0
@@ -283,6 +292,35 @@ SH
                   ln -s "${'$'}target_path" "${'$'}link_path"
                 fi
               done < "${'$'}ledger_path"
+            }
+            write_transaction_state() {
+              transaction_phase="${'$'}1"
+              {
+                printf 'schema=1\n'
+                printf 'phase=%s\n' "${'$'}transaction_phase"
+                printf 'resource_id=%s\n' "${'$'}transaction_resource_id"
+                printf 'operation=%s\n' "${'$'}transaction_operation"
+                printf 'target_version=%s\n' "${'$'}transaction_target_version"
+              } > "${'$'}transaction_state_tmp"
+              mv -f "${'$'}transaction_state_tmp" "${'$'}transaction_state"
+            }
+            recover_interrupted_install() {
+              [ "${'$'}transactional_clean" = "1" ] || return 0
+              if [ -e "${'$'}backup_root" ] || [ -L "${'$'}backup_root" ]; then
+                recovered_phase="${'$'}(sed -n 's/^phase=//p' "${'$'}transaction_state" 2>/dev/null | sed -n '1p')"
+                if [ "${'$'}recovered_phase" = "committed" ] &&
+                   { [ -e "${'$'}install_root" ] || [ -L "${'$'}install_root" ]; }; then
+                  echo "KITE_RESOURCE_STEP finish-committed-install $transactionResourceId"
+                  rm -rf "${'$'}backup_root"
+                else
+                  echo "KITE_RESOURCE_STEP recover-interrupted-install $transactionResourceId"
+                  remove_ledger_links "${'$'}command_ledger"
+                  rm -rf "${'$'}install_root"
+                  mv "${'$'}backup_root" "${'$'}install_root"
+                  restore_ledger_links "${'$'}command_ledger"
+                fi
+              fi
+              rm -f "${'$'}transaction_state" "${'$'}transaction_state_tmp"
             }
             restore_preserved_source() {
               preserved_source="${'$'}1"
@@ -371,6 +409,7 @@ SH
                   mv "${'$'}backup_root" "${'$'}install_root"
                 fi
                 restore_ledger_links "${'$'}old_ledger_snapshot"
+                rm -f "${'$'}transaction_state" "${'$'}transaction_state_tmp"
               fi
               rm -f "${'$'}old_ledger_snapshot" "${'$'}failed_ledger_snapshot"
               release_update_lock
@@ -425,16 +464,13 @@ SH
             }
             echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}install_root"
             acquire_update_lock || exit ${'$'}?
-            if [ -e "${'$'}backup_root" ] || [ -L "${'$'}backup_root" ]; then
-              echo "KITE_RESOURCE_STEP recover-interrupted-install ${safeId(resourceId)}"
-              rm -rf "${'$'}install_root"
-              mv "${'$'}backup_root" "${'$'}install_root"
-            fi
+            recover_interrupted_install
             if [ -f "${'$'}command_ledger" ]; then
               cp "${'$'}command_ledger" "${'$'}old_ledger_snapshot"
             fi
             if [ "${'$'}transactional_clean" = "1" ]; then
               rm -rf "${'$'}backup_root"
+              write_transaction_state active
               if [ -e "${'$'}install_root" ] || [ -L "${'$'}install_root" ]; then
                 mv "${'$'}install_root" "${'$'}backup_root"
               fi
@@ -554,8 +590,13 @@ SH
             echo "KITE_RESOURCE_STEP commit-install ${safeId(resourceId)}"
             $ownershipCommit
             $clearRetainedPaths
+            if [ "${'$'}transactional_clean" = "1" ]; then
+              write_transaction_state committed
+            fi
             transaction_committed=1
-            rm -rf "${'$'}backup_root" 2>/dev/null || true
+            if rm -rf "${'$'}backup_root" 2>/dev/null; then
+              rm -f "${'$'}transaction_state" "${'$'}transaction_state_tmp"
+            fi
             rm -f "${'$'}old_ledger_snapshot" "${'$'}failed_ledger_snapshot"
             release_update_lock
             trap - EXIT
@@ -1120,6 +1161,9 @@ PY
 
     private fun safeCommandName(value: String): String =
         value.trim().replace(Regex("[^A-Za-z0-9._-]+"), "").take(80)
+
+    private fun transactionStateValue(value: String): String =
+        value.trim().replace(Regex("[^A-Za-z0-9._:+-]+"), "").take(128)
 
     private fun safeNpmPackage(value: String): String =
         value.trim().replace(Regex("[^A-Za-z0-9@/._-]+"), "").take(160)

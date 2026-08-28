@@ -2,6 +2,14 @@ package com.kite.app.foundation.toolchain
 
 import android.content.Context
 
+data class ResourceInstallRecoverySummary(
+    val examined: Int = 0,
+    val restored: Int = 0,
+    val committed: Int = 0,
+    val active: Int = 0,
+    val failed: Int = 0,
+)
+
 /**
  * foundation 层(toolchain)对"资源安装登记"的依赖反转契约。
  *
@@ -17,6 +25,10 @@ import android.content.Context
  * 使 foundation 不依赖业务层常量。
  */
 interface ToolchainResourcePort {
+    /** 在启动工具链前恢复资源目录留下的轻量更新事务。 */
+    fun recoverInterruptedInstalls(context: Context): ResourceInstallRecoverySummary =
+        ResourceInstallRecoverySummary()
+
     fun currentEnvironmentId(context: Context): String
 
     /** 查询指定资源的登记状态(STATUS_* 之一),不存在返回空串。 */
