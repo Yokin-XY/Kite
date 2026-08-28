@@ -256,7 +256,7 @@ internal class AndroidNativeCapabilityRecipeRuntime(
         )
         when (result) {
             is NativeDownloadExecutionResult.Success -> {
-                val summary = "原生下载完成：${result.bytesWritten} 字节，SHA-256 ${result.actualSha256}"
+                val summary = "原生下载完成：${result.bytesWritten} 字节，来源 ${result.source.host}，SHA-256 ${result.actualSha256}"
                 callback(
                     RecipeExecutionEvent.Completed(
                         request.instanceId,

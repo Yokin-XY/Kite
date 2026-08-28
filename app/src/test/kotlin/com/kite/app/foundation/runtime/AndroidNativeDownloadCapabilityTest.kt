@@ -63,6 +63,48 @@ class AndroidNativeDownloadCapabilityTest {
     }
 
     @Test
+    fun `unavailable primary source falls through to digest pinned mirror`() {
+        val root = Files.createTempDirectory("kite-native-download-mirror").toFile()
+        val bytes = "trusted-mirror-payload".toByteArray()
+        val primary = "https://official.example.test/payload"
+        val mirror = "https://mirror.example.test/payload"
+        val context = AndroidNativeCapabilityContext(
+            listOf(NativeCapabilityDestinationRoot("/workspace", root)),
+        )
+        val request = RuntimeExecutionRequest(
+            payload = RuntimeExecutionPayload.NativeCapability(
+                AndroidNativeDownloadCapabilityProvider.CAPABILITY_ID,
+                mapOf(
+                    AndroidNativeDownloadCapabilityProvider.PARAM_URLS to
+                        listOf(primary, mirror).joinToString("\n"),
+                    AndroidNativeDownloadCapabilityProvider.PARAM_DESTINATION to "/workspace/payload.bin",
+                    AndroidNativeDownloadCapabilityProvider.PARAM_EXPECTED_SHA256 to bytes.sha256(),
+                    AndroidNativeDownloadCapabilityProvider.PARAM_MAX_BYTES to "1048576",
+                    AndroidNativeDownloadCapabilityProvider.PARAM_MAX_ATTEMPTS to "1",
+                ),
+            ),
+            requirements = setOf(RuntimeExecutionRequirement.ANDROID_NATIVE),
+        )
+        val ready = AndroidNativeDownloadCapabilityProvider.prepare(context, request) as RuntimeProviderDecision.Ready
+        val attemptedHosts = mutableListOf<String>()
+        val result = AndroidNativeDownloadExecutor(
+            NativeDownloadConnectionFactory { url, _, _ ->
+                attemptedHosts += url.host
+                if (url.host == "official.example.test") throw IOException("network unreachable")
+                Response(200, bytes)
+            },
+        ).execute(ready.plan)
+
+        result as NativeDownloadExecutionResult.Success
+        assertEquals(listOf("official.example.test", "mirror.example.test"), attemptedHosts)
+        assertEquals("mirror.example.test", result.source.host)
+        assertEquals(2, result.attempts)
+        assertEquals(bytes.toList(), result.destination.readBytes().toList())
+        assertEquals(bytes.sha256(), result.actualSha256)
+        assertFalse(ready.plan.temporaryFile.exists())
+    }
+
+    @Test
     fun `digest mismatch never replaces existing target and cleans temporary file`() {
         val root = Files.createTempDirectory("kite-native-download-mismatch").toFile()
         val plan = plan(root, expectedSha256 = ByteArray(32).sha256(), replaceExisting = true)

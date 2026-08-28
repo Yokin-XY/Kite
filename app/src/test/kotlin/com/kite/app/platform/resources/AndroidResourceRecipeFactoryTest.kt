@@ -165,6 +165,10 @@ class AndroidResourceRecipeFactoryTest {
         val shell = steps.single { it.type == KiteRecipe.STEP_SHELL }.cmd.orEmpty()
 
         assertEquals("https://hermes-agent.nousresearch.com/install.sh", native.params?.getString("url"))
+        assertEquals(
+            "4b5839eb4f7cf4775108bcda6345a8de7766898ac4b4bbcafb5b0374f65603e3",
+            native.params?.getString(AndroidNativeDownloadCapabilityProvider.PARAM_EXPECTED_SHA256),
+        )
         assertTrue(shell.contains("transactional_clean=\"0\""))
         assertTrue(shell.contains("run-hermes-installer"))
         assertTrue(shell.contains("verify hermes-command"))
@@ -204,6 +208,58 @@ class AndroidResourceRecipeFactoryTest {
 
         assertTrue(steps.all { it.type == KiteRecipe.STEP_SHELL })
         assertTrue(steps.single().cmd.orEmpty().contains("kite_resource_download"))
+    }
+
+    @Test
+    fun `多下载源和摘要被编译为单个可信原生下载步骤`() {
+        val resourceId = "demo.trusted-mirror"
+        val digest = "1".repeat(64)
+        val source = object : KiteResourceDefinitionSource {
+            override fun snapshot(): KiteResourceDefinitionSnapshot = KiteResourceDefinitionSnapshot(
+                revision = "trusted-mirror",
+                manifests = mapOf(
+                    resourceId to """
+                        {
+                          "schemaVersion":1,
+                          "id":"$resourceId",
+                          "base":{"name":"Demo","description":"Demo","version":"1.0.0"},
+                          "management":{"mode":"managed_extension","managedCommands":["demo"]},
+                          "display":{"sections":["more"],"category":"开发验证"},
+                          "relations":{"base":[],"defaults":[],"extensions":[]},
+                          "source":{"type":"official_script","url":"https://official.example.test/install.sh"},
+                          "paths":{"installRoot":"/workspace/.kf/software/$resourceId"},
+                          "actions":{"install":[{"type":"managed","steps":[
+                            {"id":"download","type":"download","urls":[
+                              "https://official.example.test/install.sh",
+                              "https://mirror.example.test/install.sh"
+                            ],"destination":"${'$'}install_root/.downloads/install.sh","maxBytes":1048576,"sha256":"$digest"},
+                            {"id":"run","type":"script","path":"${'$'}install_root/.downloads/install.sh"}
+                          ]}]}
+                        }
+                    """.trimIndent()
+                ),
+                homeLayoutJson = """{"schemaVersion":1,"sections":[]}""",
+            )
+
+            override fun invalidate() = Unit
+        }
+        val loader = KiteResourceManifestLoader(isDebugBuild = true, definitionSources = listOf(source))
+        val steps = AndroidResourceRecipeFactory(loader)
+            .recipe(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
+            ?.steps.orEmpty()
+        val native = steps.single { it.type == KiteRecipe.STEP_NATIVE_CAPABILITY }
+        val urls = native.params
+            ?.getString(AndroidNativeDownloadCapabilityProvider.PARAM_URLS)
+            .orEmpty()
+            .lineSequence()
+            .toList()
+        val shell = steps.single { it.type == KiteRecipe.STEP_SHELL }.cmd.orEmpty()
+
+        assertEquals(2, urls.size)
+        assertEquals("https://official.example.test/install.sh", urls[0])
+        assertEquals("https://mirror.example.test/install.sh", urls[1])
+        assertEquals(digest, native.params?.getString(AndroidNativeDownloadCapabilityProvider.PARAM_EXPECTED_SHA256))
+        assertFalse(shell.contains("kite_resource_download"))
     }
 
     @Test

@@ -90,16 +90,25 @@ object KiteResourceInstallPlanCompiler {
     private fun compileDownload(step: KiteResourceInstallStep): String {
         require(step.urls.isNotEmpty()) { "Download step ${step.id} has no URL" }
         require(step.destination.isNotBlank()) { "Download step ${step.id} has no destination" }
+        val expectedSha256 = step.sha256.trim().lowercase()
+        require(expectedSha256.isBlank() || SHA256.matches(expectedSha256)) {
+            "Download step ${step.id} has an invalid SHA-256"
+        }
+        require(step.urls.size == 1 || expectedSha256.isNotBlank()) {
+            "Download step ${step.id} requires SHA-256 when mirrors are declared"
+        }
         val args = buildList {
             add(shellLiteral(safeId(step.id)))
             add(shellExpression(step.destination))
-            add(shellLiteral(step.sha256))
+            add(shellLiteral(expectedSha256))
             add(step.retryAttempts.toString())
             add(step.retryDelaySeconds.toString())
             step.urls.forEach { add(shellExpression(it)) }
         }
         return "kite_resource_download ${args.joinToString(" ")}"
     }
+
+    private val SHA256 = Regex("[a-f0-9]{64}")
 
     private fun compileScript(step: KiteResourceInstallStep): String {
         require(step.path.isNotBlank()) { "Script step ${step.id} has no path" }

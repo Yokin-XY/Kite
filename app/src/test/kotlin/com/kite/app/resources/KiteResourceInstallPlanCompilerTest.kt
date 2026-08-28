@@ -39,6 +39,30 @@ class KiteResourceInstallPlanCompilerTest {
     }
 
     @Test
+    fun multipleDownloadSourcesRequirePinnedDigest() {
+        val failure = runCatching {
+            KiteResourceInstallPlanCompiler.compile(
+                managedAction(
+                    steps = listOf(
+                        KiteResourceInstallStep(
+                            id = "untrusted-mirrors",
+                            type = KiteResourceInstallPlanCompiler.STEP_DOWNLOAD,
+                            urls = listOf(
+                                "https://official.example.test/payload",
+                                "https://mirror.example.test/payload",
+                            ),
+                            destination = "${'$'}install_root/payload",
+                        )
+                    )
+                )
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(failure?.message.orEmpty().contains("requires SHA-256"))
+    }
+
+    @Test
     fun packageAndGitStepsUseChannelSpecificRecoveryPolicies() {
         val action = managedAction(
             steps = listOf(

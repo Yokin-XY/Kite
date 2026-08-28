@@ -120,7 +120,7 @@ internal class AndroidResourceRecipeFactory(
     }
 
     /**
-     * 只提升能够完整静态表达的前置下载。动态 URL、动态目标、多镜像或无尺寸上限时保留原 PRoot 编译器。
+     * 只提升能够完整静态表达的前置下载。动态 URL、动态目标或无尺寸上限时保留原 PRoot 编译器。
      * 下载发生在资源缓存；活动安装根仍只在后续资源事务持锁期间修改。
      */
     private fun nativeDownloadPlan(
@@ -134,7 +134,10 @@ internal class AndroidResourceRecipeFactory(
         }
         if (leadingDownloads.isEmpty()) return null
         val compiled = leadingDownloads.mapIndexed { index, step ->
-            val url = step.urls.singleOrNull()?.takeIf(::isStaticHttpsUrl) ?: return null
+            val urls = step.urls.takeIf { values ->
+                values.isNotEmpty() && values.all(::isStaticHttpsUrl)
+            } ?: return null
+            if (urls.size > 1 && step.sha256.isBlank()) return null
             val installRelativePath = installRelativePath(step.destination) ?: return null
             if (step.maxBytes <= 0L) return null
             val safeStepId = KiteResourceInstallRecipes.safeId(step.id)
@@ -142,7 +145,6 @@ internal class AndroidResourceRecipeFactory(
                 "${KiteResourceInstallRecipes.resourceCachePath(resourceId)}/native-downloads/" +
                     "${recipeStepId}_${index + 1}_$safeStepId.payload"
             val params = JSONObject()
-                .put(AndroidNativeDownloadCapabilityProvider.PARAM_URL, url)
                 .put(AndroidNativeDownloadCapabilityProvider.PARAM_DESTINATION, cacheDestination)
                 .put(AndroidNativeDownloadCapabilityProvider.PARAM_MAX_BYTES, step.maxBytes.toString())
                 .put(AndroidNativeDownloadCapabilityProvider.PARAM_MAX_ATTEMPTS, step.retryAttempts.toString())
@@ -151,6 +153,11 @@ internal class AndroidResourceRecipeFactory(
                     (step.retryDelaySeconds * 1_000L).toString(),
                 )
                 .put(AndroidNativeDownloadCapabilityProvider.PARAM_REPLACE_EXISTING, "true")
+            if (urls.size == 1) {
+                params.put(AndroidNativeDownloadCapabilityProvider.PARAM_URL, urls.single())
+            } else {
+                params.put(AndroidNativeDownloadCapabilityProvider.PARAM_URLS, urls.joinToString("\n"))
+            }
             if (step.sha256.isNotBlank()) {
                 params.put(AndroidNativeDownloadCapabilityProvider.PARAM_EXPECTED_SHA256, step.sha256)
             }
