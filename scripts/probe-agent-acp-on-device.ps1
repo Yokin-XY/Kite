@@ -4,6 +4,7 @@ param(
     [string]$PackageName = "com.kite.app",
     [string]$EnvironmentId = "ubuntu-main",
     [string]$AgentCommand = "/workspace/.kf/bin/hermes",
+    [string[]]$AgentArguments = @("acp"),
     [int]$TimeoutSeconds = 20,
     [bool]$DisableLazyInstalls = $true
 )
@@ -61,7 +62,8 @@ $adbArguments.Add("/usr/bin/env")
     "PATH=/workspace/.kf/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ) | ForEach-Object { $adbArguments.Add($_) }
 if ($DisableLazyInstalls) { $adbArguments.Add("HERMES_DISABLE_LAZY_INSTALLS=1") }
-@($AgentCommand, "acp") | ForEach-Object { $adbArguments.Add($_) }
+$adbArguments.Add($AgentCommand)
+$AgentArguments | ForEach-Object { $adbArguments.Add($_) }
 
 $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $startInfo.FileName = $AdbPath

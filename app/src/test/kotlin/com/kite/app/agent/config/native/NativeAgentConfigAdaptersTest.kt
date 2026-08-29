@@ -410,6 +410,57 @@ class NativeAgentConfigAdaptersTest {
     }
 
     @Test
+    fun codeBuddyUsesOfficialUserMcpPathAndDollarReferences() = runTest {
+        val codeBuddyFile = nativeFile("root/.codebuddy/.mcp.json").apply {
+            writeText(
+                """{
+                  "mcpServers": {
+                    "codebuddy-demo": {
+                      "type": "http",
+                      "url": "https://mcp.example.com/mcp",
+                      "headers": {"Authorization": "Bearer ${'$'}{CODEBUDDY_MCP_TOKEN}"},
+                      "defer_loading": true
+                    }
+                  }
+                }""",
+            )
+        }
+        val adapter = CodeBuddyCodeAgentConfigAdapter(context, ::container)
+
+        val before = (adapter.readLive("codebuddy") as AgentConfigReadResult.Ready).snapshot
+
+        assertEquals(AgentMcpTransport.StreamableHttp, before.mcpServers.single().transport)
+        assertEquals(
+            "CODEBUDDY_MCP_TOKEN",
+            before.mcpServers.single().headerReferences.single().environmentVariable,
+        )
+        val applied = adapter.apply(
+            AgentConfigApplyRequest(
+                "codebuddy",
+                before.revision,
+                listOf(
+                    AgentPersistentConfigChange.ConfigureMcpServer(
+                        AgentMcpDraft(
+                            id = "codebuddy-demo",
+                            transport = AgentMcpTransport.StreamableHttp,
+                            url = "https://mcp.example.com/mcp",
+                            headerReferences = listOf(
+                                AgentMcpEnvironmentReference("Authorization", "ROTATED_CODEBUDDY_TOKEN"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ) as AgentConfigApplyResult.Applied
+        assertEquals(
+            "ROTATED_CODEBUDDY_TOKEN",
+            applied.snapshot.mcpServers.single().headerReferences.single().environmentVariable,
+        )
+        assertTrue(codeBuddyFile.readText().contains("Bearer ${'$'}{ROTATED_CODEBUDDY_TOKEN}"))
+        assertTrue(codeBuddyFile.readText().contains("\"defer_loading\": true"))
+    }
+
+    @Test
     fun openClawDoesNotFallBackWhenWorkspaceConfigIsMalformed() = runTest {
         nativeFile("root/.openclaw/openclaw.json").writeText("{ agents:")
         val adapter = OpenClawAgentConfigAdapter(context, ::container)

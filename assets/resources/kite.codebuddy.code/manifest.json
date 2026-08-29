@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.codebuddy.code",
+  "base": {
+    "name": "CodeBuddy Code",
+    "description": "腾讯 CodeBuddy 的终端编码 Agent",
+    "version": "npm",
+    "icon": {
+      "type": "text",
+      "value": "CB"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["codebuddy", "cbc", "codebuddy-code", "cbc-prewarm"],
+    "versionProbe": {
+      "command": "codebuddy --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
+  },
+  "display": {
+    "sections": ["ai-vendor"],
+    "tabs": ["angel-cli"],
+    "order": 107,
+    "category": "AI",
+    "accent": "blue",
+    "sizeLabel": "下载约 50 MB，安装约 220 MB",
+    "longDescription": "CodeBuddy Code 是腾讯官方跨平台终端编码 Agent。Kite 通过官方 npm 包安装 Linux ARM64 运行核心，并使用原生 ACP 接入会话、历史、流式消息、工具审批、实时模型和推理档；六种执行权限、MCP、Skill 与认证仍遵循 CodeBuddy 自己的协议和用户目录。",
+    "recommendations": [
+      {"resourceId": "kite.nodejs", "label": "运行时"},
+      {"resourceId": "kite.git", "label": "源码工具"},
+      {"resourceId": "kite.qoder.cli", "label": "同类 Agent"},
+      {"resourceId": "kite.qwen.code", "label": "同类 Agent"}
+    ],
+    "tags": ["codebuddy", "tencent", "coding-agent", "terminal", "ai", "acp", "mcp", "skills"]
+  },
+  "relations": {
+    "provides": ["cli.codebuddy", "agent.codebuddy.code"],
+    "base": ["kite.nodejs", "kite.git"],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "npm",
+    "package": "@tencent-ai/codebuddy-code",
+    "repository": "https://www.codebuddy.ai/docs/cli/quickstart",
+    "registries": [
+      "https://registry.npmmirror.com",
+      "https://registry.npmjs.org"
+    ]
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.codebuddy.code",
+    "installRoot": "/workspace/.kf/software/kite.codebuddy.code",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "codebuddy",
+      "name": "CodeBuddy Code",
+      "description": "CodeBuddy Code 原生 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "codebuddy-code"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "codebuddy",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["codebuddy", "--acp"],
+        "initializeTimeoutMs": 90000,
+        "title": "CodeBuddy Code"
+      }
+    }
+  ],
+  "actions": {
+    "install": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-codebuddy-package",
+            "type": "npm",
+            "packages": ["@tencent-ai/codebuddy-code@latest"],
+            "registries": [
+              "https://registry.npmmirror.com",
+              "https://registry.npmjs.org"
+            ],
+            "args": ["--no-audit", "--no-fund"]
+          }
+        ],
+        "managedCommands": ["codebuddy", "cbc", "codebuddy-code", "cbc-prewarm"],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "codebuddy-command",
+            "cmd": "command -v codebuddy >/dev/null 2>&1 && codebuddy --version"
+          }
+        ],
+        "timeoutMs": 900000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "CodeBuddy Code",
+          "description": "启动 CodeBuddy Code Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "codebuddy", "workdir": "/workspace"}]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": ["codebuddy", "cbc", "codebuddy-code", "cbc-prewarm"],
+        "npmUninstallPackage": "@tencent-ai/codebuddy-code",
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "CodeBuddy Code",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "CodeBuddy Code",
+          "description": "启动 CodeBuddy Code Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "codebuddy", "workdir": "/workspace"}]
+      }
+    }
+  ]
+}

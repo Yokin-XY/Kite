@@ -203,4 +203,38 @@ class ProtocolSessionAgentConfigAdaptersTest {
             ).map { it.id },
         )
     }
+
+    @Test
+    fun `CodeBuddy 使用官方六档权限并从工作模式中移除`() {
+        val adapter = CodeBuddyCodeAgentConfigAdapter(context)
+        val control = requireNotNull(adapter.sessionPermissionControl())
+
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.ReadOnly,
+                AgentPermissionLevel.Restricted,
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Lenient,
+                AgentPermissionLevel.Smart,
+                AgentPermissionLevel.Full,
+            ),
+            control.option().choices.map { it.permission },
+        )
+        assertEquals("default", control.initialProfileId)
+        assertEquals("bypassPermissions", control.nativeModeId("bypassPermissions"))
+        assertEquals(
+            listOf("custom"),
+            adapter.normalizeSessionModes(
+                listOf(
+                    AgentMode("default", "Default"),
+                    AgentMode("acceptEdits", "Accept Edits"),
+                    AgentMode("auto", "Auto"),
+                    AgentMode("dontAsk", "Don't Ask"),
+                    AgentMode("plan", "Plan"),
+                    AgentMode("bypassPermissions", "Bypass"),
+                    AgentMode("custom", "用户模式"),
+                ),
+            ).map { it.id },
+        )
+    }
 }

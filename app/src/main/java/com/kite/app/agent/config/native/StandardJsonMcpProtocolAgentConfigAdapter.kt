@@ -404,24 +404,35 @@ internal abstract class StandardJsonMcpProtocolAgentConfigAdapter protected cons
     private fun environmentReferences(section: JsonObject?): List<AgentMcpEnvironmentReference> =
         section?.entries.orEmpty().mapNotNull { (name, value) ->
             val raw = (value as? JsonPrimitive)?.getValue() as? String ?: return@mapNotNull null
-            val variable = parseReference(raw) ?: return@mapNotNull null
+            val variable = parseReference(name, raw) ?: return@mapNotNull null
             AgentMcpEnvironmentReference(name, variable)
         }.sortedBy(AgentMcpEnvironmentReference::name)
 
     private fun renderReference(name: String, variable: String, header: Boolean): String = when (schema.referenceStyle) {
-        StandardJsonMcpReferenceStyle.Dollar -> "\${$variable}"
+        StandardJsonMcpReferenceStyle.Dollar -> {
+            val rendered = "\${$variable}"
+            if (
+                header &&
+                schema.authorizationBearerPrefix &&
+                name.equals(AUTHORIZATION_HEADER, ignoreCase = true)
+            ) "Bearer $rendered" else rendered
+        }
         StandardJsonMcpReferenceStyle.CursorEnv -> {
             val rendered = "\${env:$variable}"
             if (header && name.equals(AUTHORIZATION_HEADER, ignoreCase = true)) "Bearer $rendered" else rendered
         }
     }
 
-    private fun parseReference(value: String): String? = when (schema.referenceStyle) {
-        StandardJsonMcpReferenceStyle.Dollar -> DOLLAR_ENV_REFERENCE.matchEntire(value)
+    private fun parseReference(name: String, value: String): String? = when (schema.referenceStyle) {
+        StandardJsonMcpReferenceStyle.Dollar -> dollarReferencePattern(name).matchEntire(value)
             ?.groupValues?.drop(1)?.firstOrNull(String::isNotBlank)
         StandardJsonMcpReferenceStyle.CursorEnv -> CURSOR_ENV_REFERENCE.matchEntire(value)
             ?.groupValues?.get(1)
     }
+
+    private fun dollarReferencePattern(name: String): Regex = if (
+        schema.authorizationBearerPrefix && name.equals(AUTHORIZATION_HEADER, ignoreCase = true)
+    ) DOLLAR_BEARER_ENV_REFERENCE else DOLLAR_ENV_REFERENCE
 
     private fun JsonObject.stringArray(key: String): List<String> = (get(key) as? JsonArray)
         ?.mapNotNull { (it as? JsonPrimitive)?.getValue() as? String }
@@ -451,6 +462,7 @@ internal abstract class StandardJsonMcpProtocolAgentConfigAdapter protected cons
         val sseTypeValues: List<String> = listOf(SSE_TYPE),
         val enablement: StandardJsonMcpEnablement = StandardJsonMcpEnablement.None,
         val referenceStyle: StandardJsonMcpReferenceStyle = StandardJsonMcpReferenceStyle.Dollar,
+        val authorizationBearerPrefix: Boolean = false,
     )
 
     protected enum class StandardJsonMcpEnablement {
@@ -489,6 +501,10 @@ internal abstract class StandardJsonMcpProtocolAgentConfigAdapter protected cons
         val SAFE_HEADER_NAME = Regex("[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
         val DOLLAR_ENV_REFERENCE = Regex(
             "(?:\\$([A-Za-z_][A-Za-z0-9_]{0,127})|\\$\\{([A-Za-z_][A-Za-z0-9_]{0,127})\\})",
+        )
+        val DOLLAR_BEARER_ENV_REFERENCE = Regex(
+            "(?:Bearer\\s+)?(?:\\$([A-Za-z_][A-Za-z0-9_]{0,127})|\\$\\{([A-Za-z_][A-Za-z0-9_]{0,127})\\})",
+            RegexOption.IGNORE_CASE,
         )
         val CURSOR_ENV_REFERENCE = Regex(
             "(?:Bearer\\s+)?\\$\\{env:([A-Za-z_][A-Za-z0-9_-]{0,127})\\}",
