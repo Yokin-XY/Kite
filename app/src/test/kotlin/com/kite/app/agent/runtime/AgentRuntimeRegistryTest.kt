@@ -39,6 +39,7 @@ import com.kite.app.agent.store.AgentConversationHistoryStatus
 import com.kite.app.agent.store.AgentConversationItem
 import com.kite.app.agent.store.AgentConversationStore
 import com.kite.app.agent.store.AgentConversationTurnState
+import com.kite.app.agent.store.AgentPersistedTurnTiming
 import com.kite.app.agent.sdk.skill.AgentPromptDraft
 import com.kite.app.agent.sdk.skill.AgentSelectedSkill
 import com.kite.app.agent.sdk.skill.AgentSkillPromptComposer
@@ -109,6 +110,44 @@ class AgentRuntimeRegistryTest {
             historicalDraft,
             AgentRuntimeRegistry.composerDraft("instance-composer-draft", 1L, "historical-1"),
         )
+    }
+
+    @Test
+    fun `Kite记录的回合用时会在原生历史载入后恢复`() = runTest {
+        var persisted = emptyList<AgentPersistedTurnTiming>()
+        val provider = FakeProvider(requestPermission = false)
+        start(
+            provider,
+            request("instance-turn-timing").copy(
+                onSessionTurnTimingsChanged = { _, timings -> persisted = timings },
+            ),
+        )
+        AgentRuntimeRegistry.prompt(
+            "instance-turn-timing",
+            1L,
+            listOf(AgentContent.Text("历史问题")),
+        )
+        assertTrue(persisted.single().durationMillis >= 0L)
+
+        AgentRuntimeRegistry.resetForTest()
+        AgentConversationStore.resetForTest()
+
+        val restoredProvider = FakeProvider(requestPermission = false)
+        start(
+            restoredProvider,
+            request(
+                instanceId = "instance-turn-timing-restored",
+                preferredSessionId = "session-1",
+            ).copy(
+                loadSessionTurnTimings = { persisted },
+            ),
+        )
+
+        val restored = requireNotNull(
+            AgentConversationStore.snapshot(AgentConversationKey("fake", "session-1"))
+        )
+        assertEquals(AgentConversationTurnState.Historical, restored.turns.single().state)
+        assertEquals(persisted.single().durationMillis, restored.turns.single().durationMillis)
     }
 
     @Test

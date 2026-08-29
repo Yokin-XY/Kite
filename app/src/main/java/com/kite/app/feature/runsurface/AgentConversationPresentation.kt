@@ -244,7 +244,8 @@ internal object AgentConversationPresentation {
 
                 val turn = turnsByOrdinal[turnOrdinal]
                 val shouldShowProcess = processEntries.isNotEmpty() ||
-                    turn?.state == AgentConversationTurnState.Running
+                    turn?.state == AgentConversationTurnState.Running ||
+                    turn?.durationMillis != null
                 val process = processEntries.takeIf { shouldShowProcess }?.let { entries ->
                     AgentConversationDisplayItem.Process(
                         id = "${turnItems.first().id}:turn:$turnOrdinal:process",

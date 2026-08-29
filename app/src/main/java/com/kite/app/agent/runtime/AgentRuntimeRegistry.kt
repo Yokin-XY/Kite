@@ -34,6 +34,7 @@ import com.kite.app.agent.sdk.skill.AgentPromptDraft
 import com.kite.app.agent.sdk.skill.AgentSkillPromptComposer
 import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationStore
+import com.kite.app.agent.store.AgentPersistedTurnTiming
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -66,6 +67,8 @@ data class AgentRuntimeStartRequest(
         preferences: AgentDraftPersistenceSnapshot,
         updateAgentDefault: Boolean,
     ) -> Unit = { _, _, _ -> },
+    val loadSessionTurnTimings: (String) -> List<AgentPersistedTurnTiming> = { emptyList() },
+    val onSessionTurnTimingsChanged: (String, List<AgentPersistedTurnTiming>) -> Unit = { _, _ -> },
     val composeSkillPrompt: (AgentPromptDraft) -> List<AgentContent> = AgentSkillPromptComposer::compose,
     val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {},
     val onDraftModeSelected: (String) -> Unit = {},
@@ -175,6 +178,12 @@ object AgentRuntimeRegistry {
     private const val MAX_COMPOSER_DRAFTS = 64
     private const val DRAFT_CONVERSATION_PREFIX = "kite-draft:"
     private const val COLD_COMPOSER_DRAFT_KEY = "kite-cold-draft"
+    private val PERSISTED_TURN_PHASES = setOf(
+        AgentSessionPhase.Ready,
+        AgentSessionPhase.Failed,
+        AgentSessionPhase.Cancelled,
+        AgentSessionPhase.Closed,
+    )
 
     private data class FailedLocalMessage(
         val key: AgentConversationKey,
@@ -219,6 +228,8 @@ object AgentRuntimeRegistry {
         val onDraftModeSelected: (String) -> Unit = {},
         val loadSessionDraftPreferences: (String) -> AgentDraftPersistenceSnapshot? = { null },
         val onDraftPreferencesChanged: (String?, AgentDraftPersistenceSnapshot, Boolean) -> Unit = { _, _, _ -> },
+        val loadSessionTurnTimings: (String) -> List<AgentPersistedTurnTiming> = { emptyList() },
+        val onSessionTurnTimingsChanged: (String, List<AgentPersistedTurnTiming>) -> Unit = { _, _ -> },
     )
 
     private data class PendingPermission(
@@ -322,6 +333,12 @@ object AgentRuntimeRegistry {
                     )
                     if (route.shouldPublish) {
                         statusSink.onStatus(route.sessionId, normalizedEvent.phase, normalizedEvent.message)
+                        if (normalizedEvent.phase in PERSISTED_TURN_PHASES) {
+                            val timings = AgentConversationStore.persistedTurnTimings(key)
+                            if (timings.isNotEmpty()) {
+                                request.onSessionTurnTimingsChanged(sessionId, timings)
+                            }
+                        }
                     }
                 }
             },
@@ -421,7 +438,8 @@ object AgentRuntimeRegistry {
                 providerId = request.providerId,
                 sessionId = preferredSessionId,
                 cwd = request.cwd,
-                additionalDirectories = additionalDirectories
+                additionalDirectories = additionalDirectories,
+                turnTimings = request.loadSessionTurnTimings(preferredSessionId),
             )
             val openedSnapshot = when (opened) {
                 is AgentOperationResult.Success -> opened.value.copy(
@@ -493,6 +511,8 @@ object AgentRuntimeRegistry {
             onDraftModeSelected = request.onDraftModeSelected,
             loadSessionDraftPreferences = request.loadSessionDraftPreferences,
             onDraftPreferencesChanged = request.onDraftPreferencesChanged,
+            loadSessionTurnTimings = request.loadSessionTurnTimings,
+            onSessionTurnTimingsChanged = request.onSessionTurnTimingsChanged,
         )
         val previous = synchronized(catalogLock) {
             runtime.draftCatalog = observedCatalog
@@ -911,6 +931,7 @@ object AgentRuntimeRegistry {
                         )
                     }
                     AgentConversationStore.failLocalTurn(failureKey, localMessageId, prepared.message)
+                    active.persistTurnTimings(failureKey)
                     active.rememberFailedLocalMessage(
                         active.session.sessionId,
                         FailedLocalMessage(failureKey, localMessageId, draft.immutableCopy()),
@@ -934,6 +955,7 @@ object AgentRuntimeRegistry {
                         localMessageId,
                         "Agent 不支持：${prepared.operation}",
                     )
+                    active.persistTurnTimings(failureKey)
                     active.rememberFailedLocalMessage(
                         active.session.sessionId,
                         FailedLocalMessage(failureKey, localMessageId, draft.immutableCopy()),
@@ -970,6 +992,7 @@ object AgentRuntimeRegistry {
                     active.composerDrafts.remove(composerDraftKey(sourceComposerSessionId))
                 }
             }
+            active.persistTurnTimings(key)
             result
         }
     }
@@ -1511,6 +1534,7 @@ object AgentRuntimeRegistry {
                     sessionId = sessionId,
                     cwd = session.cwd,
                     additionalDirectories = additionalDirectories,
+                    turnTimings = loadSessionTurnTimings(sessionId),
                 )
             }
         }
@@ -1559,6 +1583,12 @@ object AgentRuntimeRegistry {
             draftModeId = if (session.isDraft) defaultDraftModeId else null
         }
         updateDraftCatalog { normalized }
+    }
+
+    private fun ActiveRuntime.persistTurnTimings(key: AgentConversationKey) {
+        if (session.sessionId != key.sessionId) return
+        val timings = AgentConversationStore.persistedTurnTimings(key)
+        if (timings.isNotEmpty()) onSessionTurnTimingsChanged(key.sessionId, timings)
     }
 
     private fun ActiveRuntime.updateDraftCatalog(
@@ -1686,6 +1716,7 @@ object AgentRuntimeRegistry {
             sessionId = sessionId,
             cwd = cwd,
             additionalDirectories = additionalDirectories,
+            turnTimings = loadSessionTurnTimings(sessionId),
         )
 
         var loaded = restore(candidate)
@@ -1727,7 +1758,8 @@ object AgentRuntimeRegistry {
         providerId: String,
         sessionId: String,
         cwd: String,
-        additionalDirectories: List<String>
+        additionalDirectories: List<String>,
+        turnTimings: List<AgentPersistedTurnTiming> = emptyList(),
     ): AgentOperationResult<AgentSessionSnapshot> {
         val key = AgentConversationKey(providerId, sessionId)
         val request = AgentExistingSessionRequest(sessionId, cwd, additionalDirectories)
@@ -1738,6 +1770,7 @@ object AgentRuntimeRegistry {
             return when (val loaded = connection.loadSession(request)) {
                 is AgentOperationResult.Success -> {
                     AgentConversationStore.completeHistoryReplay(key)
+                    AgentConversationStore.restoreTurnTimings(key, turnTimings)
                     loaded
                 }
                 is AgentOperationResult.Failure -> {

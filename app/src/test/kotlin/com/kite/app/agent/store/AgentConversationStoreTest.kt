@@ -448,6 +448,42 @@ class AgentConversationStoreTest {
     }
 
     @Test
+    fun `历史回放只恢复Kite确认过的对应回合用时`() {
+        var now = 1_000L
+        AgentConversationStore.setNowMillisForTest { now }
+        AgentConversationStore.bind("run-1", key, AgentSessionPhase.Ready)
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.User, AgentContent.Text("检查项目"), "local-1"),
+        )
+        AgentConversationStore.applyEvent(key, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting))
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.Assistant, AgentContent.Text("检查完成"), "answer-1"),
+        )
+        now = 4_500L
+        AgentConversationStore.applyEvent(key, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready))
+        val timings = AgentConversationStore.persistedTurnTimings(key)
+        assertEquals(3_500L, timings.single().durationMillis)
+
+        AgentConversationStore.resetForTest()
+        AgentConversationStore.beginHistoryReplay("run-1", key)
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.User, AgentContent.Text("检查项目"), "history-user"),
+        )
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.Assistant, AgentContent.Text("检查完成"), "history-answer"),
+        )
+        AgentConversationStore.completeHistoryReplay(key)
+
+        val restored = AgentConversationStore.restoreTurnTimings(key, timings)!!
+        assertEquals(AgentConversationTurnState.Historical, restored.turns.single().state)
+        assertEquals(3_500L, restored.turns.single().durationMillis)
+    }
+
+    @Test
     fun `历史回放完成后的新回合恢复实时状态`() {
         AgentConversationStore.beginHistoryReplay("run-1", key)
         AgentConversationStore.applyEvent(

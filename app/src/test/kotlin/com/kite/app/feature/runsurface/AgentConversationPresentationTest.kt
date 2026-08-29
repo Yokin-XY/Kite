@@ -425,6 +425,39 @@ class AgentConversationPresentationTest {
     }
 
     @Test
+    fun `恢复历史后仅有持久用时也会保留折叠入口`() {
+        val source = listOf(
+            AgentConversationItem.Message(
+                id = "user",
+                role = AgentMessageRole.User,
+                content = listOf(AgentContent.Text("你好")),
+                turnOrdinal = 1L,
+            ),
+            AgentConversationItem.Message(
+                id = "answer",
+                role = AgentMessageRole.Assistant,
+                content = listOf(AgentContent.Text("你好呀")),
+                turnOrdinal = 1L,
+            ),
+        )
+
+        val items = AgentConversationPresentation.composeTurns(
+            source,
+            listOf(
+                AgentConversationTurn(
+                    ordinal = 1L,
+                    state = AgentConversationTurnState.Historical,
+                    persistedDurationMillis = 8_000L,
+                )
+            ),
+        )
+
+        val process = items.filterIsInstance<AgentConversationDisplayItem.Process>().single()
+        assertEquals(8_000L, process.durationMillis)
+        assertTrue(process.entries.isEmpty())
+    }
+
+    @Test
     fun `同一回合的中间说明不会切出第二个计时根节点`() {
         val source = listOf(
             AgentConversationItem.Message(

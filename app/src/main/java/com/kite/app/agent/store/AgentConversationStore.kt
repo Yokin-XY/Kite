@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -60,9 +61,10 @@ data class AgentConversationTurn(
     val startedAtMillis: Long? = null,
     val endedAtMillis: Long? = null,
     val errorMessage: String? = null,
+    val persistedDurationMillis: Long? = null,
 ) {
     val durationMillis: Long?
-        get() = if (startedAtMillis != null && endedAtMillis != null) {
+        get() = persistedDurationMillis ?: if (startedAtMillis != null && endedAtMillis != null) {
             (endedAtMillis - startedAtMillis).coerceAtLeast(0L)
         } else {
             null
@@ -277,6 +279,21 @@ object AgentConversationStore {
     @Synchronized
     fun snapshot(key: AgentConversationKey): AgentConversationSnapshot? =
         mutableConversations[key]?.freeze()
+
+    @Synchronized
+    fun persistedTurnTimings(key: AgentConversationKey): List<AgentPersistedTurnTiming> =
+        mutableConversations[key]?.persistedTurnTimings().orEmpty()
+
+    /** 只按“原生历史中的回合序号 + 用户内容摘要”恢复 Kite 自己记录的用时，无法确认则留空。 */
+    @Synchronized
+    fun restoreTurnTimings(
+        key: AgentConversationKey,
+        timings: List<AgentPersistedTurnTiming>,
+    ): AgentConversationSnapshot? {
+        val conversation = mutableConversations[key] ?: return null
+        if (conversation.restoreTurnTimings(timings)) publishNow(key)
+        return conversation.freeze()
+    }
 
     /**
      * 同一个 Kite 会话因底层配置切换而获得新原生 session id 时，迁移完整可见时间线。
@@ -725,8 +742,89 @@ object AgentConversationStore {
                         state = sourceTurn?.state ?: AgentConversationTurnState.Completed,
                         errorMessage = sourceTurn?.errorMessage,
                     )
+                    turns[turnOrdinal]?.persistedDurationMillis = sourceTurn?.durationMillis
                 }
             }
+        }
+
+        fun persistedTurnTimings(): List<AgentPersistedTurnTiming> = turns.values.mapNotNull { turn ->
+            val durationMillis = turn.durationMillis ?: return@mapNotNull null
+            val fingerprint = turnFingerprint(turn.ordinal) ?: return@mapNotNull null
+            AgentPersistedTurnTiming(turn.ordinal, fingerprint, durationMillis)
+        }
+
+        fun restoreTurnTimings(timings: List<AgentPersistedTurnTiming>): Boolean {
+            val byOrdinal = timings.associateBy(AgentPersistedTurnTiming::ordinal)
+            var changed = false
+            turns.values.forEach { turn ->
+                if (turn.state != AgentConversationTurnState.Historical) return@forEach
+                val timing = byOrdinal[turn.ordinal] ?: return@forEach
+                if (turnFingerprint(turn.ordinal) != timing.fingerprint) return@forEach
+                val duration = timing.durationMillis.coerceAtLeast(0L)
+                if (turn.persistedDurationMillis != duration) {
+                    turn.persistedDurationMillis = duration
+                    changed = true
+                }
+            }
+            if (changed) revision++
+            return changed
+        }
+
+        private fun turnFingerprint(ordinal: Long): String? {
+            val userMessages = timeline
+                .filterIsInstance<MutableMessage>()
+                .filter { it.turnOrdinal == ordinal && it.role == AgentMessageRole.User }
+            if (userMessages.isEmpty()) return null
+            val digest = MessageDigest.getInstance("SHA-256")
+            fun addToken(value: String) {
+                val bytes = value.toByteArray(Charsets.UTF_8)
+                digest.update(bytes.size.toString().toByteArray(Charsets.US_ASCII))
+                digest.update(0)
+                digest.update(bytes)
+                digest.update(0)
+            }
+            userMessages.forEach { message ->
+                message.freeze().content.forEach { content ->
+                    when (content) {
+                        is AgentContent.Text -> {
+                            addToken("text")
+                            addToken(content.text)
+                        }
+                        is AgentContent.SkillReference -> {
+                            addToken("skill")
+                            addToken(content.skillId)
+                            addToken(content.displayName)
+                        }
+                        is AgentContent.Image -> {
+                            addToken("image")
+                            addToken(content.mimeType)
+                            addToken(content.uri.orEmpty())
+                            addToken(content.data.length.toString())
+                        }
+                        is AgentContent.Audio -> {
+                            addToken("audio")
+                            addToken(content.mimeType)
+                            addToken(content.data.length.toString())
+                        }
+                        is AgentContent.ResourceLink -> {
+                            addToken("resource")
+                            addToken(content.uri)
+                            addToken(content.name)
+                        }
+                        is AgentContent.EmbeddedText -> {
+                            addToken("embedded-text")
+                            addToken(content.uri)
+                            addToken(content.text)
+                        }
+                        is AgentContent.EmbeddedBlob -> {
+                            addToken("embedded-blob")
+                            addToken(content.uri)
+                            addToken(content.data.length.toString())
+                        }
+                    }
+                }
+            }
+            return digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
         }
 
         fun discardMessage(messageId: String): Boolean {
@@ -767,6 +865,7 @@ object AgentConversationStore {
             turn.state = AgentConversationTurnState.Running
             turn.endedAtMillis = null
             turn.errorMessage = null
+            turn.persistedDurationMillis = null
             turnOrdinal = turn.ordinal
             turnActive = true
             currentTurnHasUser = true
@@ -952,13 +1051,27 @@ object AgentConversationStore {
         val startedAtMillis: Long?,
         var endedAtMillis: Long? = null,
         var errorMessage: String? = null,
+        var persistedDurationMillis: Long? = null,
     ) {
+        val durationMillis: Long?
+            get() {
+                persistedDurationMillis?.let { return it }
+                val startedAt = startedAtMillis
+                val endedAt = endedAtMillis
+                return if (startedAt != null && endedAt != null) {
+                    (endedAt - startedAt).coerceAtLeast(0L)
+                } else {
+                    null
+                }
+            }
+
         fun freeze(): AgentConversationTurn = AgentConversationTurn(
             ordinal = ordinal,
             state = state,
             startedAtMillis = startedAtMillis,
             endedAtMillis = endedAtMillis,
             errorMessage = errorMessage,
+            persistedDurationMillis = persistedDurationMillis,
         )
     }
 

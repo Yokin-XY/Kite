@@ -523,7 +523,10 @@ internal class ConversationAdapter(
             includeFontPadding = false
             setTextColor(tokens.textTertiary)
         }.also {
-            header.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            header.addView(it, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
         }
         private val chevron = ImageView(context).apply {
             setImageResource(R.drawable.ic_chevron_right_light)
@@ -531,13 +534,8 @@ internal class ConversationAdapter(
             scaleType = ImageView.ScaleType.CENTER_INSIDE
         }.also {
             header.addView(it, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)).apply {
-                marginStart = ui.dp(6)
+                marginStart = ui.dp(4)
             })
-        }
-        private val divider = View(context).apply {
-            setBackgroundColor(tokens.border)
-        }.also {
-            container.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(1)))
         }
         private val entries = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL

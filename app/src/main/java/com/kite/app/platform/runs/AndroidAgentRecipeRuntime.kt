@@ -829,6 +829,12 @@ internal class AndroidAgentRecipeRuntime(
                         )
                     }
                 },
+                loadSessionTurnTimings = { sessionId ->
+                    sessionMetadataStore.turnTimings(providerId, sessionId)
+                },
+                onSessionTurnTimingsChanged = { sessionId, timings ->
+                    sessionMetadataStore.saveTurnTimings(providerId, sessionId, timings)
+                },
                 onDraftCatalogChanged = { catalog ->
                     draftCapabilityCache.put(draftCatalogKey, catalog)
                     agentProviderCatalogApi.recordMappedControls(catalogTarget, catalog.configuration)
