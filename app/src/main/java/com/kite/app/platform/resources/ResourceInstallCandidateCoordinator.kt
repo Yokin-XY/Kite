@@ -186,6 +186,7 @@ internal class ResourceInstallCandidateCoordinator(
         val newLedger = readCommandLedger(File(record.candidateRoot, COMMAND_LEDGER))
         val commandNames = (oldLedger.keys + newLedger.keys).toSortedSet()
         record.commandNames = commandNames
+        rewriteCandidateInternalAbsoluteSymlinks(record)
         snapshotCommands(record, commandNames)
         updatePhase(record, Phase.COMMITTING)
 
@@ -607,6 +608,42 @@ internal class ResourceInstallCandidateCoordinator(
         }
     }
 
+    /**
+     * 某些安装器会先解析 PRoot 绑定，再把候选目录的宿主绝对路径写进软链接。
+     * 候选根原子切换到正式根后，这类链接会立即断开。提交前只重写仍位于本候选根内的
+     * 绝对目标，并改成相对链接；外部绝对链接和普通相对链接保持原样。
+     */
+    private fun rewriteCandidateInternalAbsoluteSymlinks(record: CandidateRecord) {
+        val candidateRoot = record.candidateRoot.toPath().toAbsolutePath().normalize()
+        Files.walkFileTree(candidateRoot, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                if (!Files.isSymbolicLink(file)) return FileVisitResult.CONTINUE
+                val originalTarget = Files.readSymbolicLink(file)
+                val relativeTarget = candidateRelativeSymlinkTarget(
+                    candidateRoot = candidateRoot,
+                    link = file,
+                    target = originalTarget,
+                ) ?: return FileVisitResult.CONTINUE
+                val replacement = file.resolveSibling(".${file.fileName}.kite-relocated-${System.nanoTime()}")
+                Files.deleteIfExists(replacement)
+                Files.createSymbolicLink(replacement, relativeTarget)
+                try {
+                    Files.move(
+                        replacement,
+                        file,
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING,
+                    )
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(replacement, file, StandardCopyOption.REPLACE_EXISTING)
+                } finally {
+                    Files.deleteIfExists(replacement)
+                }
+                return FileVisitResult.CONTINUE
+            }
+        })
+    }
+
     private fun deleteTree(path: Path) {
         if (!Files.exists(path) && !Files.isSymbolicLink(path)) return
         Files.walkFileTree(path, object : SimpleFileVisitor<Path>() {
@@ -681,4 +718,12 @@ internal class ResourceInstallCandidateCoordinator(
             KiteResourceInstallRecipes.OP_REPAIR,
         )
     }
+}
+
+internal fun candidateRelativeSymlinkTarget(candidateRoot: Path, link: Path, target: Path): Path? {
+    if (!target.isAbsolute) return null
+    val normalizedRoot = candidateRoot.toAbsolutePath().normalize()
+    val normalizedTarget = target.normalize()
+    if (!normalizedTarget.startsWith(normalizedRoot)) return null
+    return link.toAbsolutePath().normalize().parent.relativize(normalizedTarget)
 }
