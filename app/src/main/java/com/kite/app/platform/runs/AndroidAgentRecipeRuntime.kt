@@ -297,8 +297,6 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
 
 /** Host 已就绪时绝不构建第二条 PRoot 进程；Proot 计划也只物化一份配置。 */
 internal object ManagedAgentProcessLaunchSelector {
-    private const val DISABLE_PROJECTED_PROCFS = "PROOT_NO_KF_PROCFS"
-
     fun select(
         runtimePlan: ManagedRuntimeLaunchPlan,
         prootConfig: (com.kite.app.foundation.runtime.ProotCompatibilityPlan) -> ContainerExecConfig,
@@ -318,9 +316,7 @@ internal object ManagedAgentProcessLaunchSelector {
             ManagedAgentProcessLaunch(
                 process = AgentProcessLaunch(
                     command = config.command,
-                    // Agent runtimes resolve /proc/self/exe and /proc/self/cwd as symlinks.
-                    // The KF projection currently materializes those leaves as regular snapshots.
-                    environment = config.env + (DISABLE_PROJECTED_PROCFS to "1"),
+                    environment = config.env,
                 ),
                 runtimeLane = "proot_shell",
                 fallbackReason = runtimePlan.reason,

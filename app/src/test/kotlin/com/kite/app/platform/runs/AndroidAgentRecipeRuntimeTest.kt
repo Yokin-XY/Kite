@@ -362,7 +362,7 @@ class AndroidAgentRecipeRuntimeTest {
         assertEquals(listOf("openclaw", "acp"), selected.process.command)
         assertEquals("private", selected.process.environment["OPENCLAW_GATEWAY_TOKEN"])
         assertEquals("/usr/bin", selected.process.environment["PATH"])
-        assertEquals("1", selected.process.environment["PROOT_NO_KF_PROCFS"])
+        assertEquals(null, selected.process.environment["PROOT_NO_KF_PROCFS"])
         assertEquals(null, selected.process.workingDirectory)
     }
 

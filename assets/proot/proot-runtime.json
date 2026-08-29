@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "component": "proot",
-  "assetId": "kf-proot-arm64-d30b988-block-view-v23",
-  "activeRuntimeId": "kf-proot-block-view-v23",
+  "assetId": "kf-proot-arm64-d30b988-block-view-v24",
+  "activeRuntimeId": "kf-proot-block-view-v24",
   "selectionMode": "runtime_migration_standard_v1",
   "provider": "termux-proot-fork",
   "sourceKind": "local_kf_lifecycle_build",
@@ -23,8 +23,8 @@
   "ubuntuAuthority": "advisory_only",
   "availableRuntimes": [
     {
-      "runtimeId": "kf-proot-block-view-v23",
-      "assetId": "kf-proot-arm64-d30b988-block-view-v23",
+      "runtimeId": "kf-proot-block-view-v24",
+      "assetId": "kf-proot-arm64-d30b988-block-view-v24",
       "provider": "termux-proot-fork",
       "sourceKind": "local_kf_lifecycle_build",
       "sourceRepository": "https://github.com/termux/proot",
@@ -37,6 +37,7 @@
         "process_lifecycle_events",
         "active_process_registry",
         "procfs_projection",
+        "procfs_symlink_passthrough",
         "verified_process_signals",
         "protected_file_operation_journal",
         "file_protection_wire_v1",
@@ -60,9 +61,9 @@
         "filesystem_view_fail_closed_unsafe_mutation",
         "filesystem_view_dynamic_block_filters"
       ],
-      "sha256": "0A465CE2F5E3DCD80F801EF500478E4932248806EDC86CE5C9B0918D60C604BC",
+      "sha256": "9A599F91A089EF05AB774AC5272745A813285C791F62CFA72824BBDBABBF88F0",
       "binaryRole": "active_runtime",
-      "validationState": "validated_android_arm64_build_v23_normalized_upper_directory_traversal"
+      "validationState": "validated_android_arm64_build_v24_procfs_symlink_passthrough"
     },
     {
       "runtimeId": "stock-preexisting",
@@ -123,6 +124,7 @@
     "Lifecycle v21 keeps ordinary View processes on the existing PRoot seccomp fast path and installs fd plus mmap lifecycle filters only after a block-backed file is opened.",
     "Lifecycle v22 collapses descendant whiteouts into one ancestor marker when recursively deleting a lower directory, allowing rm -rf and same-path recreation without touching Base.",
     "Lifecycle v23 normalizes canonical host paths before View lookup, so directory-walking tools such as mkdir -p can enter a directory created in Upper and continue creating nested children without falling back to Base.",
+    "Lifecycle v24 keeps regular procfs facts projected while leaving exe and cwd on the kernel symlink view, preserving readlink and current-executable discovery for every PRoot workload.",
     "PRoot is a fact source only; Android/KF remains the policy and execution authority.",
     "Stock PRoot remains packaged as a no-telemetry fallback.",
     "Legacy termux-baseline remains packaged only as quarantined historical metadata.",

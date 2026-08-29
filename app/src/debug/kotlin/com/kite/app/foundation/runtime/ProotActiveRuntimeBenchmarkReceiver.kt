@@ -186,7 +186,7 @@ class ProotPatchAblationBenchmarkService : Service() {
 private object ProotActiveRuntimeBenchmark {
     private const val TOKEN = "KITE_PROOT_RF1420_OK"
     private const val STOCK_ASSET = "proot/proot-arm64"
-    private const val ACTIVE_SHA256 = "0A465CE2F5E3DCD80F801EF500478E4932248806EDC86CE5C9B0918D60C604BC"
+    private const val ACTIVE_SHA256 = "9A599F91A089EF05AB774AC5272745A813285C791F62CFA72824BBDBABBF88F0"
     private const val STOCK_SHA256 = "125DFF2415AE1DCB8B1AE97C51357DE73EF11F28268B86CD50A0F13AA1C3EA91"
     private const val ROUNDS = 3
     private const val HOTSPOT_ROUNDS = 9
