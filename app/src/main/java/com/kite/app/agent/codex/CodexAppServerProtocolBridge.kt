@@ -62,6 +62,7 @@ internal class CodexAppServerRpc(
 ) {
     private val sequence = AtomicLong(0L)
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JSONObject>>()
+    private val requestMethods = ConcurrentHashMap<Long, String>()
     private val closed = AtomicBoolean(false)
     var notificationHandler: suspend (String, JSONObject) -> Unit = { _, _ -> }
     var serverRequestHandler: suspend (String, JSONObject) -> JSONObject = { method, _ ->
@@ -82,6 +83,7 @@ internal class CodexAppServerRpc(
         val id = sequence.incrementAndGet()
         val response = CompletableDeferred<JSONObject>()
         pending[id] = response
+        requestMethods[id] = method
         try {
             process.writeLine(
                 JSONObject().put("method", method).put("id", id).put("params", params).toString()
@@ -89,6 +91,7 @@ internal class CodexAppServerRpc(
             return response.await()
         } finally {
             pending.remove(id, response)
+            requestMethods.remove(id)
         }
     }
 
@@ -102,6 +105,7 @@ internal class CodexAppServerRpc(
         val error = cause ?: CancellationException("Codex App Server 连接已关闭")
         pending.values.forEach { it.completeExceptionally(error) }
         pending.clear()
+        requestMethods.clear()
     }
 
     private fun handleLine(line: String) {
@@ -119,6 +123,19 @@ internal class CodexAppServerRpc(
             val deferred = pending.remove(responseId) ?: return
             val error = message.optJSONObject("error")
             if (error != null) {
+                diagnosticSink(
+                    buildString {
+                        append("Codex App Server 请求失败: method=")
+                        append(methodForResponse(responseId))
+                        append(", code=")
+                        append(error.optInt("code"))
+                        append(", message=")
+                        append(error.optString("message").ifBlank { "Codex App Server 请求失败" })
+                        error.opt("data")
+                            ?.takeUnless { it == JSONObject.NULL }
+                            ?.let { data -> append(", data=").append(data) }
+                    }
+                )
                 deferred.completeExceptionally(
                     IllegalStateException(error.optString("message").ifBlank { "Codex App Server 请求失败" })
                 )
@@ -148,6 +165,8 @@ internal class CodexAppServerRpc(
             scope.launch { notificationHandler(method, params) }
         }
     }
+
+    private fun methodForResponse(responseId: Long): String = requestMethods.remove(responseId).orEmpty()
 }
 
 internal fun codexReasoningSemantics(value: String): AgentReasoningSemantics? = when (value.lowercase()) {
