@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.zcode",
+  "base": {
+    "name": "ZCode",
+    "description": "ZCode 官方原生 Agent",
+    "version": "3.10.1",
+    "icon": {
+      "type": "text",
+      "value": "ZC"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["zcode"],
+    "versionProbe": {
+      "command": "zcode version",
+      "pattern": "zcode\\s+([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
+  },
+  "display": {
+    "sections": ["ai-vendor"],
+    "tabs": ["angel-cli"],
+    "order": 111,
+    "category": "AI",
+    "accent": "green",
+    "sizeLabel": "下载约 134 MB，安装约 13 MB",
+    "longDescription": "Kite 从 ZCode 官方 Linux ARM64 安装包中只提取原生 Agent 运行核心，不安装 Electron 图形界面。通过官方 app-server 协议提供会话创建、列表、恢复、历史加载、消息流、工具审批、实时模型、推理强度和四种执行权限；MCP、Skill、命令和登录数据仍由 ZCode 自己管理。",
+    "recommendations": [
+      {"resourceId": "kite.nodejs", "label": "运行时"},
+      {"resourceId": "kite.zai.coding.helper", "label": "Z.AI 配置助手"},
+      {"resourceId": "kite.codex.cli", "label": "同类 Agent"},
+      {"resourceId": "kite.opencode", "label": "同类 Agent"}
+    ],
+    "tags": ["zcode", "zai", "glm", "coding-agent", "app-server", "mcp", "skills"]
+  },
+  "relations": {
+    "provides": ["cli.zcode", "agent.zcode"],
+    "base": ["kite.nodejs"],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "official_release_archive",
+    "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.10.1/linux-arm64/ZCode-3.10.1-linux-arm64.deb",
+    "repository": "https://zcode.z.ai/en/docs/install",
+    "tag": "3.10.1",
+    "archiveType": "deb",
+    "binaryPath": "opt/ZCode/resources/glm/zcode.cjs",
+    "maxBytes": 167772160
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.zcode",
+    "installRoot": "/workspace/.kf/software/kite.zcode",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "zcode",
+      "name": "ZCode",
+      "description": "ZCode 官方原生 app-server 会话",
+      "configuration": {
+        "required": false
+      },
+      "accounts": [
+        {
+          "id": "zai",
+          "name": "Z.AI 官方账号",
+          "modelGroupIds": ["zai", "bigmodel"],
+          "login": {
+            "argv": ["zcode", "login", "--no-browser"],
+            "timeoutMs": 300000
+          },
+          "logout": {
+            "argv": ["zcode", "logout"],
+            "timeoutMs": 30000
+          }
+        }
+      ],
+      "launch": {
+        "mode": "managed",
+        "providerId": "zcode",
+        "protocol": "zcode-app-server",
+        "transport": "stdio",
+        "argv": ["zcode", "app-server", "--surface", "desktop"],
+        "initializeTimeoutMs": 60000,
+        "title": "ZCode"
+      }
+    }
+  ],
+  "actions": {
+    "install": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "download-zcode-linux-arm64",
+            "type": "download",
+            "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.10.1/linux-arm64/ZCode-3.10.1-linux-arm64.deb",
+            "destination": "$install_root/.kite-downloads/ZCode-3.10.1-linux-arm64.deb",
+            "sha256": "22b79babe3b00fb6fbfcf7dcc033b7564a734f53df4f28998c18556071286b2c",
+            "retryAttempts": 4,
+            "retryDelaySeconds": 2,
+            "maxBytes": 167772160
+          },
+          {
+            "id": "extract-zcode-native-runtime",
+            "type": "shell",
+            "cmd": "set -eu\narchive=\"$install_root/.kite-downloads/ZCode-3.10.1-linux-arm64.deb\"\nextract_root=\"$install_root/.kite-zcode-extract\"\nruntime_root=\"$install_root/runtime\"\ncommand -v dpkg-deb >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=install step=extract-zcode-native-runtime reason=dpkg-deb-missing'; exit 127; }\nrm -rf \"$extract_root\"\nmkdir -p \"$extract_root\" \"$runtime_root\" \"$install_root/bin\" \"$install_root/user-home\"\ndpkg-deb --fsys-tarfile \"$archive\" | tar -xf - -C \"$extract_root\" ./opt/ZCode/resources/glm/zcode.cjs ./opt/ZCode/resources/glm/.node-bundle-meta.json\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/zcode.cjs\" \"$runtime_root/zcode.cjs\"\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/.node-bundle-meta.json\" \"$runtime_root/.node-bundle-meta.json\"\ncat > \"$install_root/bin/zcode\" <<EOF\n#!/usr/bin/env bash\nset -eu\nexport ZCODE_HOME=\"$install_root/user-home\"\nexport ZCODE_DATA_BASE_DIR=\"$install_root/user-home\"\nexec node \"$install_root/runtime/zcode.cjs\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/zcode\"\nprintf '%s\\n' '3.10.1' > \"$install_root/.kite-version\"\nrm -rf \"$extract_root\"\nrm -f \"$archive\""
+          }
+        ],
+        "managedCommands": ["zcode"],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "zcode-command",
+            "cmd": "command -v zcode >/dev/null 2>&1 && zcode version"
+          },
+          {
+            "id": "zcode-arm64-runtime",
+            "cmd": "test \"$(cat \"$install_root/.kite-version\")\" = '3.10.1' && grep -q '\"platform\": \"linux-arm64\"' \"$install_root/runtime/.node-bundle-meta.json\""
+          },
+          {
+            "id": "zcode-doctor",
+            "cmd": "zcode doctor --json"
+          }
+        ],
+        "timeoutMs": 900000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "ZCode",
+          "description": "启动 ZCode 原生 Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "zcode", "workdir": "/workspace"}]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": ["zcode"],
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "ZCode",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "ZCode",
+          "description": "启动 ZCode 原生 Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "zcode", "workdir": "/workspace"}]
+      }
+    }
+  ]
+}
