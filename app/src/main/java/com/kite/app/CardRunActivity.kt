@@ -122,6 +122,16 @@ class CardRunActivity : AppCompatActivity() {
     ) { uris ->
         agentSurfaceBinding?.addAttachments(uris)
     }
+    private val agentSkillArchivePicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { agentSurfaceBinding?.importSkillArchive(it) }
+    }
+    private val agentMcpConfigPicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { agentSurfaceBinding?.importMcpConfig(it) }
+    }
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
             if (chrome?.handleBack() == true) return
@@ -415,6 +425,12 @@ class CardRunActivity : AppCompatActivity() {
                 agentAttachmentPicker.launch(
                     arrayOf("text/*", "application/pdf", "application/octet-stream")
                 )
+            },
+            onPickSkillArchive = {
+                agentSkillArchivePicker.launch(arrayOf("application/zip", "application/octet-stream"))
+            },
+            onPickMcpConfig = {
+                agentMcpConfigPicker.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
             },
             agentRegistry = graph.agentRegistry,
             officialAccountManager = graph.agentOfficialAccountManager,
