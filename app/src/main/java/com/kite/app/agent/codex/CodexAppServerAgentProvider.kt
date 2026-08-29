@@ -53,6 +53,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -375,7 +376,7 @@ private class CodexAppServerConnection(
                         id = id,
                         cwd = thread.optString("cwd"),
                         title = thread.nullableString("name") ?: thread.nullableString("preview"),
-                        updatedAt = thread.opt("updatedAt")?.takeUnless { it == JSONObject.NULL }?.toString(),
+                        updatedAt = thread.sessionUpdatedAt(),
                     )
                 },
                 nextCursor = response.nullableString("nextCursor"),
@@ -1032,6 +1033,19 @@ private class CodexAppServerConnection(
         override ?: return@apply
         put("modelProvider", override.providerId)
         put("model", override.modelId)
+    }
+
+    private fun JSONObject.sessionUpdatedAt(): String? {
+        val raw = opt("updatedAt")?.takeUnless { it == JSONObject.NULL } ?: return null
+        val epochSeconds = when (raw) {
+            is Number -> raw.toLong()
+            is String -> raw.trim().toLongOrNull()
+            else -> null
+        }
+        if (epochSeconds != null) {
+            return runCatching { Instant.ofEpochSecond(epochSeconds).toString() }.getOrNull()
+        }
+        return (raw as? String)?.trim()?.takeIf(String::isNotBlank)
     }
 
     private fun CodexPermission.applyTo(

@@ -16,6 +16,7 @@ import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentPromptRequest
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentSessionEvent
+import com.kite.app.agent.contract.AgentSessionListRequest
 import com.kite.app.agent.contract.AgentStopReason
 import com.kite.app.agent.contract.AgentToolContent
 import com.kite.app.agent.process.AgentProcessChannel
@@ -43,6 +44,17 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class CodexAppServerAgentProviderTest {
+    @Test
+    fun `会话列表将Codex秒级时间统一为SDK时间格式`() = runBlocking {
+        val fixture = CodexAppServerFixture(modelProvider = "openai", selectedModel = "gpt-5.6-sol")
+        val connection = connect(fixture, mutableListOf())
+
+        val listed = connection.listSessions(AgentSessionListRequest()) as AgentOperationResult.Success
+
+        assertEquals("2026-08-29T12:00:00Z", listed.value.sessions.single().updatedAt)
+        connection.disconnect()
+    }
+
     @Test
     fun `本地文件引用转换为Codex可读取路径而远程链接不冒充文件`() {
         val input = listOf(
@@ -487,6 +499,21 @@ class CodexAppServerAgentProviderTest {
                     threadResumeParams += JSONObject(params.toString())
                     respond(id, threadResponse())
                 }
+                "thread/list" -> respond(
+                    id,
+                    JSONObject()
+                        .put(
+                            "data",
+                            JSONArray().put(
+                                JSONObject()
+                                    .put("id", "thread-1")
+                                    .put("cwd", "/workspace")
+                                    .put("name", "测试会话")
+                                    .put("updatedAt", 1_788_004_800L),
+                            ),
+                        )
+                        .put("nextCursor", JSONObject.NULL),
+                )
                 "thread/settings/update" -> {
                     settingsUpdates += JSONObject(params.toString())
                     respond(id, JSONObject())
