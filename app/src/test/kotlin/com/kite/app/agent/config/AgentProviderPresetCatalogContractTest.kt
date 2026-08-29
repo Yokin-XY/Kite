@@ -16,6 +16,11 @@ class AgentProviderPresetCatalogContractTest {
         assertNotEquals(general.providerId, coding.providerId)
         assertNotEquals(general.baseUrl.trimEnd('/'), coding.baseUrl.trimEnd('/'))
         assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", coding.baseUrl)
+        assertEquals("zhipu", general.vendorId)
+        assertEquals(general.vendorId, coding.vendorId)
+        assertEquals(AgentProviderCategory.ChinaOfficial, coding.category)
+        assertEquals(AgentProviderAccessChannel.Api, general.accessChannel)
+        assertEquals(AgentProviderAccessChannel.CodingPlan, coding.accessChannel)
         assertEquals(
             listOf("glm-5.2", "glm-5-turbo", "glm-4.7"),
             coding.models.map { it.id },

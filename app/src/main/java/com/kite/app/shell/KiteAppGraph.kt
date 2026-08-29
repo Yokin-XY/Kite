@@ -12,6 +12,7 @@ import com.kite.app.agent.auth.AgentOfficialAccountManager
 import com.kite.app.agent.auth.AndroidAgentOfficialAccountVault
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.AdapterBackedAgentConfigurationApi
+import com.kite.app.agent.config.ModelsDevProviderPresetRepository
 import com.kite.app.agent.config.defaultAgentConfigAdapters
 import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
 import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
@@ -478,7 +479,10 @@ internal class KiteAppGraph private constructor(context: Context) {
         )
     }
     val agentConfigurationApi: AgentConfigurationApi by lazy {
-        AdapterBackedAgentConfigurationApi(agentConfigAdapterRegistry)
+        AdapterBackedAgentConfigurationApi(
+            adapters = agentConfigAdapterRegistry,
+            providerPresetRepository = ModelsDevProviderPresetRepository(appContext),
+        )
     }
     val agentSessionControlApi: AgentSessionControlApi by lazy {
         RuntimeBackedAgentSessionControlApi()

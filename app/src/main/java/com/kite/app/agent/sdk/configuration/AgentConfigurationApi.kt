@@ -12,6 +12,7 @@ import com.kite.app.agent.config.AgentMcpDraft
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderPreset
+import com.kite.app.agent.config.AgentProviderPresetSource
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillDocumentReadResult
 import com.kite.app.agent.config.AgentSkillDocumentWriteRequest
@@ -56,9 +57,23 @@ data class AgentConfigurationMutation(
     val current: AgentConfigReadResult,
 )
 
+data class AgentProviderPresetRefreshResult(
+    val presets: List<AgentProviderPreset>,
+    val source: AgentProviderPresetSource,
+    val refreshed: Boolean,
+    val warning: String? = null,
+)
+
 interface AgentConfigurationApi {
     fun capabilities(target: AgentConfigurationTarget): AgentConfigCapabilities?
     fun providerPresets(target: AgentConfigurationTarget): List<AgentProviderPreset> = emptyList()
+    /** 只由用户打开供应商配对页时调用；普通页面绘制不得触发网络。 */
+    suspend fun refreshProviderPresets(target: AgentConfigurationTarget): AgentProviderPresetRefreshResult =
+        AgentProviderPresetRefreshResult(
+            presets = providerPresets(target),
+            source = AgentProviderPresetSource.Bundled,
+            refreshed = false,
+        )
     suspend fun read(target: AgentConfigurationTarget): AgentConfigReadResult
     suspend fun apply(
         target: AgentConfigurationTarget,

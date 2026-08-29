@@ -5,10 +5,12 @@ import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
 import com.kite.app.agent.sdk.configuration.AgentConfigurationIntent
 import com.kite.app.agent.sdk.configuration.AgentConfigurationMutation
 import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
+import com.kite.app.agent.sdk.configuration.AgentProviderPresetRefreshResult
 
 /** Adapter SPI 到固定 Kite Agent SDK 配置端口的唯一桥接实现。 */
 class AdapterBackedAgentConfigurationApi(
     private val adapters: AgentConfigAdapterRegistry,
+    private val providerPresetRepository: AgentProviderPresetRepository = BundledAgentProviderPresetRepository,
 ) : AgentConfigurationApi {
     override fun capabilities(target: AgentConfigurationTarget): AgentConfigCapabilities? =
         adapters.adapter(target.adapterId)?.capabilities()
@@ -16,7 +18,28 @@ class AdapterBackedAgentConfigurationApi(
     override fun providerPresets(target: AgentConfigurationTarget): List<AgentProviderPreset> {
         val adapter = adapters.adapter(target.adapterId) ?: return emptyList()
         if (AgentPersistentConfigCapability.Provider !in adapter.capabilities().supported) return emptyList()
-        return AgentProviderPresetCatalog.presetsFor(adapter.adapterId)
+        return providerPresetRepository.cachedPresets(adapter.adapterId)
+    }
+
+    override suspend fun refreshProviderPresets(
+        target: AgentConfigurationTarget,
+    ): AgentProviderPresetRefreshResult {
+        val adapter = adapters.adapter(target.adapterId)
+            ?: return AgentProviderPresetRefreshResult(
+                presets = emptyList(),
+                source = AgentProviderPresetSource.Bundled,
+                refreshed = false,
+                warning = "当前 Agent 没有可用的配置 Adapter",
+            )
+        if (AgentPersistentConfigCapability.Provider !in adapter.capabilities().supported) {
+            return AgentProviderPresetRefreshResult(
+                presets = emptyList(),
+                source = AgentProviderPresetSource.Bundled,
+                refreshed = false,
+                warning = "当前 Agent 不支持供应商配置",
+            )
+        }
+        return providerPresetRepository.refresh(adapter.adapterId)
     }
 
     override suspend fun read(target: AgentConfigurationTarget): AgentConfigReadResult =
