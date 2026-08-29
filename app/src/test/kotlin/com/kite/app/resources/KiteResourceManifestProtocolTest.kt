@@ -673,6 +673,7 @@ class KiteResourceManifestProtocolTest {
             listOf(
                 "kite.codex.cli",
                 "kite.claude.code",
+                "kite.github.copilot",
                 "kite.kimi.code",
                 "kite.gemini.cli",
                 "kite.qwen.code",
@@ -703,6 +704,7 @@ class KiteResourceManifestProtocolTest {
                 "kite.hermes.core",
                 "kite.codex.cli",
                 "kite.claude.code",
+                "kite.github.copilot",
                 "kite.kimi.code",
                 "kite.gemini.cli",
                 "kite.qwen.code",
@@ -728,7 +730,7 @@ class KiteResourceManifestProtocolTest {
             .filter { it.isFile }
             .sortedBy { it.parentFile?.name }
 
-        assertEquals(20, manifests.size)
+        assertEquals(21, manifests.size)
         manifests.forEach { manifestFile ->
             val resourceId = manifestFile.parentFile?.name.orEmpty()
             val loaded = loader.parseManifestJson(manifestFile.readText())

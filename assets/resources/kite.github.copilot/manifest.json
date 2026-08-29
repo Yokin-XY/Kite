@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.github.copilot",
+  "base": {
+    "name": "GitHub Copilot CLI",
+    "description": "GitHub 的终端编码 Agent",
+    "version": "npm",
+    "icon": {
+      "type": "text",
+      "value": "Co"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["copilot", "kite-copilot-acp"],
+    "versionProbe": {
+      "command": "copilot --version",
+      "pattern": "v?([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
+  },
+  "display": {
+    "sections": ["ai-vendor"],
+    "tabs": ["angel-cli"],
+    "order": 80,
+    "category": "AI",
+    "accent": "purple",
+    "sizeLabel": "网络包",
+    "longDescription": "GitHub Copilot CLI 是 GitHub 官方终端编码 Agent。Kite 使用官方 npm 包安装 Linux arm64 版本，并通过 Copilot 原生 ACP stdio 服务建立统一会话。它既可使用 GitHub Copilot 账号，也支持通过 COPILOT_PROVIDER_* 环境变量连接 OpenAI-compatible、Azure OpenAI 或 Anthropic 模型供应商。",
+    "recommendations": [
+      {
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.git",
+        "label": "源码工具"
+      },
+      {
+        "resourceId": "kite.codex.cli",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.opencode",
+        "label": "同类 Agent"
+      }
+    ],
+    "tags": [
+      "github",
+      "copilot",
+      "coding-agent",
+      "terminal",
+      "ai",
+      "acp",
+      "byok"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.github.copilot",
+      "agent.github.copilot"
+    ],
+    "base": [
+      "kite.nodejs",
+      "kite.git"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "npm",
+    "package": "@github/copilot",
+    "repository": "https://github.com/github/copilot-cli"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.github.copilot",
+    "installRoot": "/workspace/.kf/software/kite.github.copilot",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot CLI",
+      "description": "GitHub Copilot CLI 原生 ACP 会话",
+      "configuration": {
+        "required": false
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "copilot",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["kite-copilot-acp"],
+        "title": "GitHub Copilot CLI"
+      }
+    }
+  ],
+  "actions": {
+    "install": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-copilot-package",
+            "type": "npm",
+            "packages": [
+              "@github/copilot@latest"
+            ]
+          },
+          {
+            "id": "install-kite-copilot-launcher",
+            "type": "shell",
+            "cmd": "cat > \"$install_root/bin/kite-copilot-acp\" <<'KITE_COPILOT_ACP'\n#!/usr/bin/env bash\nset -eu\nsecret_root='/workspace/.kf/secrets'\nread_optional() {\n  variable_name=\"$1\"\n  file_name=\"$2\"\n  file_path=\"$secret_root/$file_name\"\n  if [ -s \"$file_path\" ]; then\n    value=\"$(tr -d '\\r\\n' < \"$file_path\")\"\n    if [ -n \"$value\" ]; then export \"$variable_name=$value\"; fi\n  fi\n}\nread_optional COPILOT_PROVIDER_BASE_URL kite.copilot-provider-base-url\nread_optional COPILOT_PROVIDER_API_KEY kite.copilot-provider-api-key\nread_optional COPILOT_PROVIDER_TYPE kite.copilot-provider-type\nread_optional COPILOT_MODEL kite.copilot-model\nexec copilot --acp --stdio \"$@\"\nKITE_COPILOT_ACP\nchmod 755 \"$install_root/bin/kite-copilot-acp\""
+          }
+        ],
+        "managedCommands": [
+          "copilot",
+          "kite-copilot-acp"
+        ],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "copilot-commands",
+            "cmd": "command -v copilot >/dev/null 2>&1 && command -v kite-copilot-acp >/dev/null 2>&1 && copilot --version"
+          }
+        ],
+        "timeoutMs": 600000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "GitHub Copilot CLI",
+          "description": "启动 GitHub Copilot CLI Agent 会话",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "agent",
+            "agentId": "copilot",
+            "workdir": "/workspace"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": [
+          "copilot",
+          "kite-copilot-acp"
+        ],
+        "npmUninstallPackage": "@github/copilot",
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "GitHub Copilot CLI",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "GitHub Copilot CLI",
+          "description": "启动 GitHub Copilot CLI Agent 会话",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "agent",
+            "agentId": "copilot",
+            "workdir": "/workspace"
+          }
+        ]
+      }
+    }
+  ]
+}
