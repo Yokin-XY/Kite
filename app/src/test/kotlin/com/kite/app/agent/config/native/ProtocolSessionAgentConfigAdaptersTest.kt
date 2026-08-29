@@ -2,6 +2,8 @@ package com.kite.app.agent.config.native
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.kite.app.agent.codex.CodexPermission
+import com.kite.app.agent.config.AgentSessionPermissionHandling
 import com.kite.app.agent.config.normalizePublishedSessionConfiguration
 import com.kite.app.agent.config.SESSION_PERMISSION_CONFIG_ID
 import com.kite.app.agent.contract.AgentConfigCategory
@@ -11,7 +13,9 @@ import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.agent.contract.AgentReasoningMode
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentMode
+import com.kite.app.agent.sdk.configuration.AgentControlCatalogProjector
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -19,6 +23,28 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class ProtocolSessionAgentConfigAdaptersTest {
     private val context by lazy { ApplicationProvider.getApplicationContext<Context>() }
+
+    @Test
+    fun `Codex 冷草稿持续公布原生会话权限目录`() {
+        val control = requireNotNull(CodexAgentConfigAdapter(context).sessionPermissionControl())
+        val option = control.option()
+        val projected = AgentControlCatalogProjector.project(listOf(option)).permission
+
+        assertEquals(SESSION_PERMISSION_CONFIG_ID, option.id)
+        assertEquals(CodexPermission.entries.map { it.id }, control.profiles.map { it.id })
+        assertEquals(CodexPermission.Custom.id, option.currentValue)
+        assertEquals(
+            listOf(
+                AgentSessionPermissionHandling.AskUser,
+                AgentSessionPermissionHandling.PreserveAgentDecision,
+                AgentSessionPermissionHandling.AllowRequest,
+                AgentSessionPermissionHandling.PreserveAgentDecision,
+            ),
+            control.profiles.map { it.handling },
+        )
+        assertNotNull(projected)
+        assertEquals(CodexPermission.Custom.id, projected?.currentProfileId)
+    }
 
     @Test
     fun `Gemini CLI 保留 ACP 原生模式 ID 并只翻译显示语义`() {

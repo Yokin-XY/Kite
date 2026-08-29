@@ -25,6 +25,9 @@ import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentReasoningControl
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
+import com.kite.app.agent.config.AgentSessionPermissionControl
+import com.kite.app.agent.config.AgentSessionPermissionHandling
+import com.kite.app.agent.config.AgentSessionPermissionProfile
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentUserProviderImport
@@ -73,6 +76,24 @@ internal class CodexAgentConfigAdapter(
     override fun officialAccountAdapter() = officialAccountAdapter
 
     override fun reasoningControl(): AgentReasoningControl = codexReasoningControl
+
+    /** App Server 创建 thread 后会发布同一目录；这里保证冷草稿阶段也有稳定的权限入口。 */
+    override fun sessionPermissionControl(): AgentSessionPermissionControl =
+        AgentSessionPermissionControl(
+            profiles = CodexPermission.entries.map { permission ->
+                AgentSessionPermissionProfile(
+                    id = permission.id,
+                    level = permission.level,
+                    handling = when (permission) {
+                        CodexPermission.Ask -> AgentSessionPermissionHandling.AskUser
+                        CodexPermission.AutoReview,
+                        CodexPermission.Custom -> AgentSessionPermissionHandling.PreserveAgentDecision
+                        CodexPermission.FullAccess -> AgentSessionPermissionHandling.AllowRequest
+                    },
+                )
+            },
+            initialProfileId = CodexPermission.Custom.id,
+        )
 
     override fun providerConfigurationEffect(): AgentSessionConfigurationEffect =
         AgentSessionConfigurationEffect.Reconnect
