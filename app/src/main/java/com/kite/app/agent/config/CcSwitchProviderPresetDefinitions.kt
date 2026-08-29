@@ -178,10 +178,10 @@ internal object CcSwitchProviderPresetDefinitions {
             market = AgentProviderMarket.China,
             routes = openAiRoutes(
                 "https://api.minimaxi.com/v1",
-                model("MiniMax-M2.7", "MiniMax M2.7"),
+                *minimaxModels(),
             ) + claudeRoute(
                 "https://api.minimaxi.com/anthropic",
-                model("MiniMax-M2.7", "MiniMax M2.7"),
+                *minimaxModels(),
             ),
         ),
         definition(
@@ -193,10 +193,10 @@ internal object CcSwitchProviderPresetDefinitions {
             market = AgentProviderMarket.Global,
             routes = openAiRoutes(
                 "https://api.minimax.io/v1",
-                model("MiniMax-M2.7", "MiniMax M2.7"),
+                *minimaxModels(),
             ) + claudeRoute(
                 "https://api.minimax.io/anthropic",
-                model("MiniMax-M2.7", "MiniMax M2.7"),
+                *minimaxModels(),
             ),
         ),
         definition(
@@ -316,6 +316,16 @@ internal object CcSwitchProviderPresetDefinitions {
     )
 
     private fun model(id: String, displayName: String) = AgentProviderModelSummary(id, displayName)
+
+    private fun minimaxModels() = arrayOf(
+        model("MiniMax-M3", "MiniMax M3"),
+        model("MiniMax-M2.7", "MiniMax M2.7"),
+        model("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
+        model("MiniMax-M2.5-highspeed", "MiniMax M2.5 Highspeed"),
+        model("MiniMax-M2.5", "MiniMax M2.5"),
+        model("MiniMax-M2.1", "MiniMax M2.1"),
+        model("MiniMax-M2", "MiniMax M2"),
+    )
 
     private data class ProviderDefinition(
         val id: String,

@@ -73,15 +73,25 @@ internal class ModelsDevProviderPresetRepository(
                     }
                 }
                 if (livePayload != null) {
-                    val dynamic = runCatching {
-                        ModelsDevProviderPresetParser.presetsFor(livePayload, adapterId)
+                    val resolution = runCatching {
+                        ModelsDevProviderPresetParser.resolve(livePayload, adapterId)
                     }.getOrNull()
-                    if (!dynamic.isNullOrEmpty()) {
+                    if (resolution != null && resolution.modelCatalogs.isNotEmpty()) {
+                        val merged = mergePresets(
+                            dynamic = resolution.compatiblePresets,
+                            bundled = bundled,
+                            modelCatalogs = resolution.modelCatalogs,
+                        )
+                        if (merged.isEmpty()) return@withLock AgentProviderPresetRefreshResult(
+                            presets = bundled,
+                            source = AgentProviderPresetSource.Bundled,
+                            refreshed = false,
+                            warning = "在线目录与当前 Agent 不兼容，已使用随应用目录",
+                        )
                         val result = fetched.getOrNull()
                         if (result is ModelsDevFetchResult.Updated) {
                             persist(result.payload, result.etag)
                         }
-                        val merged = mergePresets(dynamic, bundled)
                         memory[adapterId] = merged
                         return@withLock AgentProviderPresetRefreshResult(
                             presets = merged,
@@ -93,12 +103,23 @@ internal class ModelsDevProviderPresetRepository(
 
                 if (cachedPayload != null) {
                     val cached = runCatching {
-                        ModelsDevProviderPresetParser.presetsFor(cachedPayload, adapterId)
+                        ModelsDevProviderPresetParser.resolve(cachedPayload, adapterId)
                     }.getOrNull()
-                    if (!cached.isNullOrEmpty()) {
+                    if (cached != null && cached.modelCatalogs.isNotEmpty()) {
                         val merged = mergePresets(
-                            cached.map { it.copy(source = AgentProviderPresetSource.ModelsDevCache) },
-                            bundled,
+                            dynamic = cached.compatiblePresets.map {
+                                it.copy(source = AgentProviderPresetSource.ModelsDevCache)
+                            },
+                            bundled = bundled,
+                            modelCatalogs = cached.modelCatalogs.map {
+                                it.copy(source = AgentProviderPresetSource.ModelsDevCache)
+                            },
+                        )
+                        if (merged.isEmpty()) return@withLock AgentProviderPresetRefreshResult(
+                            presets = bundled,
+                            source = AgentProviderPresetSource.Bundled,
+                            refreshed = false,
+                            warning = "缓存目录与当前 Agent 不兼容，已使用随应用目录",
                         )
                         memory[adapterId] = merged
                         return@withLock AgentProviderPresetRefreshResult(
@@ -160,12 +181,22 @@ internal class ModelsDevProviderPresetRepository(
     private fun mergePresets(
         dynamic: List<AgentProviderPreset>,
         bundled: List<AgentProviderPreset>,
+        modelCatalogs: List<AgentProviderPreset>,
     ): List<AgentProviderPreset> {
-        val dynamicIds = dynamic.mapTo(hashSetOf(), AgentProviderPreset::id)
-        val dynamicEndpoints = dynamic.mapTo(hashSetOf()) { normalizedEndpoint(it.baseUrl) }
-        return (dynamic + bundled.filterNot {
-            it.id in dynamicIds || normalizedEndpoint(it.baseUrl) in dynamicEndpoints
-        }).distinctBy(AgentProviderPreset::id).sortedWith(
+        val enrichedBundled = bundled.map { preset ->
+            val catalog = modelCatalogs.firstOrNull { candidate ->
+                candidate.catalogIdentity() == preset.catalogIdentity()
+            } ?: return@map preset
+            preset.copy(
+                models = catalog.models,
+                source = catalog.source,
+                documentationUrl = catalog.documentationUrl ?: preset.documentationUrl,
+                catalogModelCount = catalog.catalogModelCount,
+            )
+        }
+        val adapterIdentities = bundled.mapTo(hashSetOf()) { it.catalogIdentity() }
+        val dynamicWithoutAdapterRoute = dynamic.filterNot { it.catalogIdentity() in adapterIdentities }
+        return (dynamicWithoutAdapterRoute + enrichedBundled).distinctBy(AgentProviderPreset::id).sortedWith(
             compareBy<AgentProviderPreset>(
                 { it.category.ordinal },
                 { it.vendorId.lowercase() },
@@ -175,7 +206,17 @@ internal class ModelsDevProviderPresetRepository(
         )
     }
 
-    private fun normalizedEndpoint(value: String): String = value.trim().trimEnd('/').lowercase()
+    private fun AgentProviderPreset.catalogIdentity() = ProviderCatalogIdentity(
+        vendorId = vendorId.lowercase(),
+        market = market,
+        accessChannel = accessChannel,
+    )
+
+    private data class ProviderCatalogIdentity(
+        val vendorId: String,
+        val market: AgentProviderMarket,
+        val accessChannel: AgentProviderAccessChannel,
+    )
 
     private companion object {
         const val CACHE_DIRECTORY = "agent-provider-catalog"
@@ -245,6 +286,11 @@ internal class HttpModelsDevCatalogRemote : ModelsDevCatalogRemote {
     }
 }
 
+internal data class ModelsDevProviderPresetResolution(
+    val compatiblePresets: List<AgentProviderPreset>,
+    val modelCatalogs: List<AgentProviderPreset>,
+)
+
 internal object ModelsDevProviderPresetParser {
     private enum class ProtocolFamily { OpenAiCompatible, Anthropic }
 
@@ -253,16 +299,23 @@ internal object ModelsDevProviderPresetParser {
         val releaseDate: String,
     )
 
-    fun presetsFor(payload: String, adapterId: String): List<AgentProviderPreset> {
+    private data class ParsedProvider(
+        val preset: AgentProviderPreset,
+        val protocol: ProtocolFamily,
+    )
+
+    fun presetsFor(payload: String, adapterId: String): List<AgentProviderPreset> =
+        resolve(payload, adapterId).compatiblePresets
+
+    fun resolve(payload: String, adapterId: String): ModelsDevProviderPresetResolution {
         val root = JSONObject(payload)
-        return root.keys().asSequence().mapNotNull { key ->
+        val providers = root.keys().asSequence().mapNotNull { key ->
             val provider = root.optJSONObject(key) ?: return@mapNotNull null
             val registryId = provider.optString("id", key).trim().ifBlank { key }
             if (!SAFE_ID.matches(registryId)) return@mapNotNull null
             val baseUrl = provider.optString("api").trim().trimEnd('/')
             if (!isSafeEndpoint(baseUrl)) return@mapNotNull null
             val protocol = protocolFamily(registryId, provider.optString("npm")) ?: return@mapNotNull null
-            if (!supports(adapterId, protocol)) return@mapNotNull null
             val modelsObject = provider.optJSONObject("models") ?: return@mapNotNull null
             val allModels = modelsObject.keys().asSequence().mapNotNull { modelId ->
                 parseModel(modelId, modelsObject.optJSONObject(modelId))
@@ -274,29 +327,40 @@ internal object ModelsDevProviderPresetParser {
             if (allModels.isEmpty()) return@mapNotNull null
             val displayName = provider.optString("name", registryId).trim().ifBlank { registryId }
             val canonicalVendorId = vendorId(registryId)
-            AgentProviderPreset(
-                id = registryId,
-                providerId = registryId,
-                displayName = displayName,
-                baseUrl = baseUrl,
-                models = allModels.take(MAX_PREFILLED_MODELS).map(ParsedModel::summary),
-                vendorId = canonicalVendorId,
-                vendorDisplayName = vendorDisplayName(canonicalVendorId, displayName),
-                category = category(registryId),
-                accessChannel = accessChannel(registryId, displayName),
-                market = market(registryId, displayName, baseUrl),
-                source = AgentProviderPresetSource.ModelsDev,
-                documentationUrl = provider.optString("doc").trim().takeIf(::isSafeEndpoint),
-                catalogModelCount = allModels.size,
+            ParsedProvider(
+                preset = AgentProviderPreset(
+                    id = registryId,
+                    providerId = registryId,
+                    displayName = displayName,
+                    baseUrl = baseUrl,
+                    models = allModels.take(MAX_PREFILLED_MODELS).map(ParsedModel::summary),
+                    vendorId = canonicalVendorId,
+                    vendorDisplayName = vendorDisplayName(canonicalVendorId, displayName),
+                    category = category(registryId),
+                    accessChannel = accessChannel(registryId, displayName),
+                    market = market(registryId, displayName, baseUrl),
+                    source = AgentProviderPresetSource.ModelsDev,
+                    routeSource = AgentProviderPresetRouteSource.ModelsDev,
+                    documentationUrl = provider.optString("doc").trim().takeIf(::isSafeEndpoint),
+                    catalogModelCount = allModels.size,
+                ),
+                protocol = protocol,
             )
-        }.sortedWith(
-            compareBy<AgentProviderPreset>(
-                { it.category.ordinal },
-                { it.vendorId.lowercase() },
-                { it.accessChannel.ordinal },
-                { it.displayName.lowercase() },
-            )
-        ).toList()
+        }.toList()
+        val ordering = compareBy<AgentProviderPreset>(
+            { it.category.ordinal },
+            { it.vendorId.lowercase() },
+            { it.accessChannel.ordinal },
+            { it.displayName.lowercase() },
+        )
+        return ModelsDevProviderPresetResolution(
+            compatiblePresets = providers.asSequence()
+                .filter { supports(adapterId, it.protocol) }
+                .map(ParsedProvider::preset)
+                .sortedWith(ordering)
+                .toList(),
+            modelCatalogs = providers.map(ParsedProvider::preset).sortedWith(ordering),
+        )
     }
 
     private fun parseModel(modelId: String, value: JSONObject?): ParsedModel? {
@@ -361,8 +425,8 @@ internal object ModelsDevProviderPresetParser {
     private fun accessChannel(providerId: String, displayName: String): AgentProviderAccessChannel {
         val value = "$providerId $displayName".lowercase()
         return when {
-            "coding-plan" in value || "coding plan" in value -> AgentProviderAccessChannel.CodingPlan
             "token-plan" in value || "token plan" in value -> AgentProviderAccessChannel.TokenPlan
+            "coding-plan" in value || "coding plan" in value -> AgentProviderAccessChannel.CodingPlan
             "oauth" in value -> AgentProviderAccessChannel.OfficialLogin
             else -> AgentProviderAccessChannel.Api
         }

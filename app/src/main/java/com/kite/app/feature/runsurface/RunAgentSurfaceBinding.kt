@@ -91,6 +91,7 @@ import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderMarket
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderPreset
+import com.kite.app.agent.config.AgentProviderPresetRouteSource
 import com.kite.app.agent.config.AgentProviderPresetSource
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentSkillActivation
@@ -5429,7 +5430,8 @@ internal class RunAgentSurfaceBinding(
                 addView(providerPresetDetailRow("完整名称", preset.displayName))
                 addView(providerPresetDetailRow("请求地址", preset.baseUrl, selectable = true))
                 addView(providerPresetDetailRow("模型目录", providerPresetDetailedModelCountLabel(preset)))
-                addView(providerPresetDetailRow("目录来源", providerPresetSourceLabel(preset.source)))
+                addView(providerPresetDetailRow("模型目录来源", providerPresetSourceLabel(preset.source)))
+                addView(providerPresetDetailRow("请求路线来源", providerPresetRouteSourceLabel(preset.routeSource)))
                 preset.documentationUrl?.let { url ->
                     addView(providerPresetDetailRow("官方文档", url, selectable = true))
                 }
@@ -5511,6 +5513,11 @@ internal class RunAgentSurfaceBinding(
         AgentProviderPresetSource.ModelsDev -> "models.dev 最新目录"
         AgentProviderPresetSource.ModelsDevCache -> "上次成功获取的 models.dev 目录"
         AgentProviderPresetSource.Bundled -> "随应用目录"
+    }
+
+    private fun providerPresetRouteSourceLabel(source: AgentProviderPresetRouteSource): String = when (source) {
+        AgentProviderPresetRouteSource.ModelsDev -> "models.dev 声明路线"
+        AgentProviderPresetRouteSource.AdapterCatalog -> "当前 Agent 适配路线"
     }
 
     private fun pushProviderEditorOverlay(view: View, screen: AgentNavigationScreen) {

@@ -40,6 +40,9 @@ class AgentProviderPresetCatalogContractTest {
         assertEquals(china.vendorDisplayName, global.vendorDisplayName)
         assertEquals(AgentProviderMarket.China, china.market)
         assertEquals(AgentProviderMarket.Global, global.market)
+        assertEquals(7, china.models.size)
+        assertEquals("MiniMax-M3", china.models.first().id)
+        assertEquals(china.models.map { it.id }, global.models.map { it.id })
     }
 
     @Test

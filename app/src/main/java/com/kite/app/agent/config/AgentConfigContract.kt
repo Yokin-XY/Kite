@@ -340,11 +340,17 @@ enum class AgentProviderMarket {
     Unspecified,
 }
 
-/** 预置目录的数据新鲜度来源。 */
+/** 预置中模型目录的数据新鲜度来源。 */
 enum class AgentProviderPresetSource {
     ModelsDev,
     ModelsDevCache,
     Bundled,
+}
+
+/** 请求路线的事实来源；模型目录和 Agent 可用协议可以来自不同来源。 */
+enum class AgentProviderPresetRouteSource {
+    ModelsDev,
+    AdapterCatalog,
 }
 
 /** 预置只是可编辑的起点，保存后仍写入对应 Agent 的原生配置。 */
@@ -362,6 +368,7 @@ data class AgentProviderPreset(
     val accessChannel: AgentProviderAccessChannel = AgentProviderAccessChannel.Api,
     val market: AgentProviderMarket = AgentProviderMarket.Unspecified,
     val source: AgentProviderPresetSource = AgentProviderPresetSource.Bundled,
+    val routeSource: AgentProviderPresetRouteSource = AgentProviderPresetRouteSource.AdapterCatalog,
     val documentationUrl: String? = null,
     /** models.dev 可能有数百个模型；表单只预填最近一批，但这里保留完整数量用于明确提示。 */
     val catalogModelCount: Int = models.size,

@@ -41,7 +41,42 @@ class ModelsDevProviderPresetRepositoryTest {
         val claude = ModelsDevProviderPresetParser.presetsFor(MODELS_DEV_PAYLOAD, "claude-code")
 
         assertFalse(hermes.any { it.id == "anthropic" })
-        assertEquals(listOf("anthropic"), claude.map { it.id })
+        assertFalse(hermes.any { it.vendorId == "minimax" })
+        assertEquals(
+            setOf("anthropic", "minimax", "minimax-cn"),
+            claude.map { it.id }.toSet(),
+        )
+    }
+
+    @Test
+    fun `cross protocol catalog enriches every model without replacing hermes routes`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.filesDir.resolve("agent-provider-catalog").deleteRecursively()
+        val repository = ModelsDevProviderPresetRepository(context) {
+            ModelsDevFetchResult.Updated(MODELS_DEV_PAYLOAD, "minimax-m3-etag")
+        }
+
+        val result = repository.refresh("hermes")
+        val china = result.presets.single { it.id == "minimax" }
+        val global = result.presets.single { it.id == "minimax-global" }
+        val expectedModels = listOf(
+            "MiniMax-M3",
+            "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
+            "MiniMax-M2.5-highspeed",
+            "MiniMax-M2.5",
+            "MiniMax-M2.1",
+            "MiniMax-M2",
+        )
+
+        assertEquals("https://api.minimaxi.com/v1", china.baseUrl)
+        assertEquals("https://api.minimax.io/v1", global.baseUrl)
+        assertEquals(expectedModels, china.models.map { it.id })
+        assertEquals(expectedModels, global.models.map { it.id })
+        assertEquals(7, china.catalogModelCount)
+        assertEquals(7, global.catalogModelCount)
+        assertEquals(AgentProviderPresetSource.ModelsDev, china.source)
+        assertEquals(AgentProviderPresetRouteSource.AdapterCatalog, china.routeSource)
     }
 
     @Test
@@ -61,7 +96,11 @@ class ModelsDevProviderPresetRepositoryTest {
 
         assertEquals(AgentProviderPresetSource.ModelsDev, live.source)
         assertEquals(AgentProviderPresetSource.ModelsDevCache, cached.source)
-        assertTrue(cached.presets.any { it.id == "zhipuai-coding-plan" })
+        assertTrue(cached.presets.any { it.id == "zhipu-coding-plan" })
+        assertEquals(
+            AgentProviderPresetSource.ModelsDevCache,
+            cached.presets.single { it.id == "minimax" }.source,
+        )
         assertTrue(cached.warning?.contains("上次成功目录") == true)
     }
 
@@ -111,6 +150,36 @@ class ModelsDevProviderPresetRepositoryTest {
                     "release_date": "2026-08-20",
                     "modalities": {"output": ["text"]}
                   }
+                }
+              },
+              "minimax-cn": {
+                "id": "minimax-cn",
+                "name": "MiniMax (minimaxi.com)",
+                "api": "https://api.minimaxi.com/anthropic/v1",
+                "npm": "@ai-sdk/anthropic",
+                "models": {
+                  "MiniMax-M3": {"name": "MiniMax-M3", "release_date": "2026-06-01", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2.7": {"name": "MiniMax-M2.7", "release_date": "2026-03-18", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2.7-highspeed": {"name": "MiniMax-M2.7-highspeed", "release_date": "2026-03-18", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2.5-highspeed": {"name": "MiniMax-M2.5-highspeed", "release_date": "2026-02-13", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2.5": {"name": "MiniMax-M2.5", "release_date": "2026-02-12", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2.1": {"name": "MiniMax-M2.1", "release_date": "2025-12-23", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2": {"name": "MiniMax-M2", "release_date": "2025-10-27", "modalities": {"output": ["text"]}}
+                }
+              },
+              "minimax": {
+                "id": "minimax",
+                "name": "MiniMax (minimax.io)",
+                "api": "https://api.minimax.io/anthropic/v1",
+                "npm": "@ai-sdk/anthropic",
+                "models": {
+                  "MiniMax-M3": {"name": "MiniMax-M3", "release_date": "2026-06-01", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2.7": {"name": "MiniMax-M2.7", "release_date": "2026-03-18", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2.7-highspeed": {"name": "MiniMax-M2.7-highspeed", "release_date": "2026-03-18", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2.5-highspeed": {"name": "MiniMax-M2.5-highspeed", "release_date": "2026-02-13", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2.5": {"name": "MiniMax-M2.5", "release_date": "2026-02-12", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2.1": {"name": "MiniMax-M2.1", "release_date": "2025-12-23", "modalities": {"output": ["text"]}},
+                  "MiniMax-M2": {"name": "MiniMax-M2", "release_date": "2025-10-27", "modalities": {"output": ["text"]}}
                 }
               },
               "anthropic": {
