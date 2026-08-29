@@ -333,6 +333,13 @@ enum class AgentProviderAccessChannel {
     Custom,
 }
 
+/** 访问入口所面向的市场；未得到明确事实时保持未声明，不能按公司国别猜测。 */
+enum class AgentProviderMarket {
+    China,
+    Global,
+    Unspecified,
+}
+
 /** 预置目录的数据新鲜度来源。 */
 enum class AgentProviderPresetSource {
     ModelsDev,
@@ -349,9 +356,13 @@ data class AgentProviderPreset(
     val models: List<AgentProviderModelSummary>,
     /** 同一厂商的 API、Coding Plan 和国内/国际入口共用稳定厂商 ID。 */
     val vendorId: String = providerId,
+    /** 卡片第一行只显示稳定厂商品牌；完整渠道名称仍由 [displayName] 保留。 */
+    val vendorDisplayName: String = displayName,
     val category: AgentProviderCategory = AgentProviderCategory.ThirdParty,
     val accessChannel: AgentProviderAccessChannel = AgentProviderAccessChannel.Api,
+    val market: AgentProviderMarket = AgentProviderMarket.Unspecified,
     val source: AgentProviderPresetSource = AgentProviderPresetSource.Bundled,
+    val documentationUrl: String? = null,
     /** models.dev 可能有数百个模型；表单只预填最近一批，但这里保留完整数量用于明确提示。 */
     val catalogModelCount: Int = models.size,
 )

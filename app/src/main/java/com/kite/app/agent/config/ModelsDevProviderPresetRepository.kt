@@ -273,16 +273,20 @@ internal object ModelsDevProviderPresetParser {
             ).toList()
             if (allModels.isEmpty()) return@mapNotNull null
             val displayName = provider.optString("name", registryId).trim().ifBlank { registryId }
+            val canonicalVendorId = vendorId(registryId)
             AgentProviderPreset(
                 id = registryId,
                 providerId = registryId,
                 displayName = displayName,
                 baseUrl = baseUrl,
                 models = allModels.take(MAX_PREFILLED_MODELS).map(ParsedModel::summary),
-                vendorId = vendorId(registryId),
+                vendorId = canonicalVendorId,
+                vendorDisplayName = vendorDisplayName(canonicalVendorId, displayName),
                 category = category(registryId),
                 accessChannel = accessChannel(registryId, displayName),
+                market = market(registryId, displayName, baseUrl),
                 source = AgentProviderPresetSource.ModelsDev,
+                documentationUrl = provider.optString("doc").trim().takeIf(::isSafeEndpoint),
                 catalogModelCount = allModels.size,
             )
         }.sortedWith(
@@ -364,6 +368,27 @@ internal object ModelsDevProviderPresetParser {
         }
     }
 
+    private fun market(
+        providerId: String,
+        displayName: String,
+        baseUrl: String,
+    ): AgentProviderMarket {
+        EXPLICIT_MARKETS[providerId]?.let { return it }
+        val value = "$providerId $displayName $baseUrl".lowercase()
+        return when {
+            providerId.endsWith("-cn") || "(china)" in value || "（中国）" in value ||
+                ".cn/" in value || "-cn." in value -> AgentProviderMarket.China
+            else -> AgentProviderMarket.Unspecified
+        }
+    }
+
+    private fun vendorDisplayName(vendorId: String, providerDisplayName: String): String =
+        VENDOR_DISPLAY_NAMES[vendorId] ?: providerDisplayName
+            .replace(PARENTHETICAL_MARKET, "")
+            .replace(CHANNEL_MARKERS, "")
+            .trim()
+            .ifBlank { providerDisplayName }
+
     private val OPEN_AI_COMPATIBLE_ADAPTERS = setOf(
         CodexAgentConfigAdapter.ADAPTER_ID,
         OpenCodeAgentConfigAdapter.ADAPTER_ID,
@@ -381,6 +406,34 @@ internal object ModelsDevProviderPresetParser {
         "minimax-cn-coding-plan" to "minimax",
         "minimax-coding-plan" to "minimax",
         "siliconflow-cn" to "siliconflow",
+    )
+    private val VENDOR_DISPLAY_NAMES = mapOf(
+        "alibaba" to "Alibaba",
+        "baidu" to "Baidu",
+        "deepseek" to "DeepSeek",
+        "longcat" to "LongCat",
+        "minimax" to "MiniMax",
+        "moonshotai" to "Moonshot AI",
+        "siliconflow" to "SiliconFlow",
+        "stepfun" to "StepFun",
+        "tencent" to "Tencent",
+        "volcengine" to "Volcengine",
+        "xiaomi" to "Xiaomi",
+        "zhipu" to "Zhipu AI",
+    )
+    private val EXPLICIT_MARKETS = mapOf(
+        "minimax" to AgentProviderMarket.Global,
+        "minimax-coding-plan" to AgentProviderMarket.Global,
+        "minimax-cn" to AgentProviderMarket.China,
+        "minimax-cn-coding-plan" to AgentProviderMarket.China,
+        "moonshotai" to AgentProviderMarket.Global,
+        "moonshotai-cn" to AgentProviderMarket.China,
+        "siliconflow" to AgentProviderMarket.Global,
+        "siliconflow-cn" to AgentProviderMarket.China,
+        "zai" to AgentProviderMarket.Global,
+        "zai-coding-plan" to AgentProviderMarket.Global,
+        "zhipuai" to AgentProviderMarket.China,
+        "zhipuai-coding-plan" to AgentProviderMarket.China,
     )
     private val CHINA_OFFICIAL_VENDORS = setOf(
         "alibaba",
@@ -424,5 +477,7 @@ internal object ModelsDevProviderPresetParser {
         "video-generation",
     )
     private val SAFE_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+    private val PARENTHETICAL_MARKET = Regex("\\s*[（(](?:China|中国|[^)）]*\\.(?:com|io|cn))[）)]\\s*", RegexOption.IGNORE_CASE)
+    private val CHANNEL_MARKERS = Regex("\\s+(?:Coding Plan|Token Plan|OAuth)\\s*", RegexOption.IGNORE_CASE)
     private const val MAX_PREFILLED_MODELS = 60
 }

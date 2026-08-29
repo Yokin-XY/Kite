@@ -88,6 +88,7 @@ import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderAccessChannel
 import com.kite.app.agent.config.AgentProviderCategory
 import com.kite.app.agent.config.AgentProviderDraft
+import com.kite.app.agent.config.AgentProviderMarket
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderPreset
 import com.kite.app.agent.config.AgentProviderPresetSource
@@ -510,6 +511,10 @@ internal class RunAgentSurfaceBinding(
         AgentNavigationScreen.ProviderPresetPicker,
         AgentNavigationScreen.ProviderModelEditor -> {
             closeProviderEditorOverlay()
+            true
+        }
+        AgentNavigationScreen.ProviderPresetDetails -> {
+            closeProviderPresetDetails()
             true
         }
         AgentNavigationScreen.ProviderList -> {
@@ -5169,8 +5174,10 @@ internal class RunAgentSurfaceBinding(
             val matchingPresets = presets.filter { preset ->
                 normalized.isEmpty() ||
                     preset.displayName.lowercase().contains(normalized) ||
+                    preset.vendorDisplayName.lowercase().contains(normalized) ||
                     preset.providerId.lowercase().contains(normalized) ||
                     preset.vendorId.lowercase().contains(normalized) ||
+                    providerPresetRouteLabel(preset).lowercase().contains(normalized) ||
                     preset.models.any { model ->
                         model.id.lowercase().contains(normalized) ||
                             model.displayName.lowercase().contains(normalized)
@@ -5231,7 +5238,10 @@ internal class RunAgentSurfaceBinding(
                 withContext(Dispatchers.IO) { agentConfigurationApi.refreshProviderPresets(target) }
             }.getOrNull()
             if (
-                navigationScreen != AgentNavigationScreen.ProviderPresetPicker ||
+                navigationScreen !in setOf(
+                    AgentNavigationScreen.ProviderPresetPicker,
+                    AgentNavigationScreen.ProviderPresetDetails,
+                ) ||
                 page.parent !== navigationHost
             ) return@launch
             if (result == null) {
@@ -5267,22 +5277,31 @@ internal class RunAgentSurfaceBinding(
         entries: List<AgentProviderPreset?>,
         onSelected: (AgentProviderPreset?) -> Unit,
     ): View = GridLayout(context).apply {
-        columnCount = 2
+        val columns = if (context.resources.configuration.fontScale >= 1.15f) 1 else 2
+        columnCount = columns
         alignmentMode = GridLayout.ALIGN_BOUNDS
         useDefaultMargins = false
         entries.forEachIndexed { index, preset ->
-            val row = index / 2
-            val column = index % 2
-            val title = preset?.displayName ?: "自定义"
-            val subtitle = preset?.let(::providerPresetSubtitle) ?: "手动填写地址与模型"
+            val row = index / columns
+            val column = index % columns
+            val title = preset?.vendorDisplayName ?: "自定义"
+            val route = preset?.let(::providerPresetRouteLabel) ?: "手动填写"
+            val modelCount = preset?.let(::providerPresetModelCountLabel) ?: "名称、地址和模型"
             addView(
                 providerPresetCard(
                     title = title,
-                    subtitle = subtitle,
-                    icon = if (preset == null) R.drawable.ic_material_settings else R.drawable.ic_bridge,
+                    route = route,
+                    modelCount = modelCount,
+                    description = preset?.let {
+                        "查看 ${it.displayName} 详情，${providerPresetRouteLabel(it)}，${providerPresetModelCountLabel(it)}"
+                    } ?: "使用自定义供应商配置",
                 ) {
-                    onSelected(preset)
-                    closeProviderEditorOverlay()
+                    if (preset == null) {
+                        onSelected(null)
+                        closeProviderEditorOverlay()
+                    } else {
+                        showProviderPresetDetails(preset, onSelected)
+                    }
                 },
                 GridLayout.LayoutParams(
                     GridLayout.spec(row, 1f),
@@ -5291,9 +5310,9 @@ internal class RunAgentSurfaceBinding(
                     width = 0
                     height = ui.dp(82)
                     setMargins(
-                        if (column == 0) 0 else ui.dp(5),
+                        if (columns == 1 || column == 0) 0 else ui.dp(5),
                         ui.dp(5),
-                        if (column == 0) ui.dp(5) else 0,
+                        if (columns == 1 || column != 0) 0 else ui.dp(5),
                         ui.dp(5),
                     )
                 },
@@ -5301,7 +5320,12 @@ internal class RunAgentSurfaceBinding(
         }
     }
 
-    private fun providerPresetSubtitle(preset: AgentProviderPreset): String {
+    private fun providerPresetRouteLabel(preset: AgentProviderPreset): String {
+        val market = when (preset.market) {
+            AgentProviderMarket.China -> "国内"
+            AgentProviderMarket.Global -> "国际"
+            AgentProviderMarket.Unspecified -> null
+        }
         val channel = when (preset.accessChannel) {
             AgentProviderAccessChannel.Api -> "API"
             AgentProviderAccessChannel.CodingPlan -> "Coding Plan"
@@ -5309,56 +5333,185 @@ internal class RunAgentSurfaceBinding(
             AgentProviderAccessChannel.OfficialLogin -> "官方登录"
             AgentProviderAccessChannel.Custom -> "自定义"
         }
+        return listOfNotNull(market, channel).joinToString(" · ")
+    }
+
+    private fun providerPresetModelCountLabel(preset: AgentProviderPreset): String =
+        "${preset.catalogModelCount} 个模型"
+
+    private fun providerPresetDetailedModelCountLabel(preset: AgentProviderPreset): String {
         val visibleCount = preset.models.size
-        val modelCount = if (preset.catalogModelCount > visibleCount) {
-            "$visibleCount/${preset.catalogModelCount} 个近期模型"
+        return if (preset.catalogModelCount > visibleCount) {
+            "目录共 ${preset.catalogModelCount} 个，将预填近期 $visibleCount 个"
         } else {
-            "${preset.catalogModelCount} 个模型"
+            "目录共 ${preset.catalogModelCount} 个"
         }
-        return "$channel · $modelCount"
     }
 
     private fun providerPresetCard(
         title: String,
-        subtitle: String,
-        icon: Int,
+        route: String,
+        modelCount: String,
+        description: String,
         onClick: () -> Unit,
     ): View =
         LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(12), ui.dp(8), ui.dp(10), ui.dp(8))
+            setPadding(ui.dp(14), ui.dp(8), ui.dp(12), ui.dp(8))
             background = ui.roundedBox(agentSettingsSurface, android.graphics.Color.TRANSPARENT, ui.dp(18).toFloat())
-            addView(ImageView(context).apply {
-                setImageResource(icon)
-                imageTintList = ColorStateList.valueOf(tokens.textPrimary)
-                setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6))
-            }, LinearLayout.LayoutParams(ui.dp(34), ui.dp(34)))
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(ui.dp(7), 0, 0, 0)
-                addView(TextView(context).apply {
-                    text = title
-                    textSize = 13.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(tokens.textPrimary)
-                })
-                addView(TextView(context).apply {
-                    text = subtitle
-                    textSize = 11f
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, ui.dp(3), 0, 0)
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            contentDescription = "使用 $title 预设"
+            addView(TextView(context).apply {
+                text = title
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = route
+                textSize = 11.5f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(tokens.textSecondary)
+                setPadding(0, ui.dp(3), 0, 0)
+            })
+            addView(TextView(context).apply {
+                text = modelCount
+                textSize = 10.5f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(tokens.textTertiary)
+                setPadding(0, ui.dp(2), 0, 0)
+            })
+            contentDescription = description
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
         }
+
+    private fun showProviderPresetDetails(
+        preset: AgentProviderPreset,
+        onSelected: (AgentProviderPreset?) -> Unit,
+    ) {
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(16), ui.dp(12), ui.dp(16), ui.dp(28))
+            addView(TextView(context).apply {
+                text = preset.vendorDisplayName
+                textSize = 22f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            if (preset.displayName != preset.vendorDisplayName) {
+                addView(TextView(context).apply {
+                    text = preset.displayName
+                    textSize = 13f
+                    setTextColor(tokens.textSecondary)
+                    setPadding(0, ui.dp(4), 0, 0)
+                })
+            }
+            addView(TextView(context).apply {
+                text = providerPresetRouteLabel(preset)
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+                setPadding(0, ui.dp(12), 0, ui.dp(12))
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(ui.dp(15), ui.dp(4), ui.dp(15), ui.dp(4))
+                background = ui.roundedBox(
+                    agentSettingsSurface,
+                    android.graphics.Color.TRANSPARENT,
+                    ui.dp(20).toFloat(),
+                )
+                addView(providerPresetDetailRow("完整名称", preset.displayName))
+                addView(providerPresetDetailRow("请求地址", preset.baseUrl, selectable = true))
+                addView(providerPresetDetailRow("模型目录", providerPresetDetailedModelCountLabel(preset)))
+                addView(providerPresetDetailRow("目录来源", providerPresetSourceLabel(preset.source)))
+                preset.documentationUrl?.let { url ->
+                    addView(providerPresetDetailRow("官方文档", url, selectable = true))
+                }
+            })
+            if (preset.models.isNotEmpty()) {
+                addView(sectionTitle(
+                    "近期模型",
+                    "选择后会写入新供应商表单，保存前仍可增删。",
+                ), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { setMargins(0, ui.dp(22), 0, ui.dp(8)) })
+                addView(TextView(context).apply {
+                    val visibleModels = preset.models.take(8)
+                    text = buildString {
+                        append(visibleModels.joinToString("\n") { it.displayName })
+                        if (preset.models.size > visibleModels.size) {
+                            append("\n…另有 ${preset.models.size - visibleModels.size} 个近期模型")
+                        }
+                    }
+                    textSize = 13f
+                    setTextColor(tokens.textPrimary)
+                    setLineSpacing(ui.dp(3).toFloat(), 1f)
+                    setPadding(ui.dp(15), ui.dp(13), ui.dp(15), ui.dp(13))
+                    background = ui.roundedBox(
+                        agentSettingsSurface,
+                        android.graphics.Color.TRANSPARENT,
+                        ui.dp(20).toFloat(),
+                    )
+                })
+            }
+        }
+        val page = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(agentPageBackground)
+            addView(buildAgentSubpageHeader(
+                title = "供应商详情",
+                backDescription = "返回供应商预设",
+                onBack = ::closeProviderPresetDetails,
+            ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
+            addView(ScrollView(context).apply {
+                overScrollMode = View.OVER_SCROLL_NEVER
+                addView(content, ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(actionTextButton("使用此预设") {
+                completeProviderPresetSelection(preset, onSelected)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(54)).apply {
+                setMargins(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(16))
+            })
+        }
+        pushProviderEditorOverlay(page, AgentNavigationScreen.ProviderPresetDetails)
+    }
+
+    private fun providerPresetDetailRow(
+        label: String,
+        value: String,
+        selectable: Boolean = false,
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, ui.dp(11), 0, ui.dp(11))
+        addView(TextView(context).apply {
+            text = label
+            textSize = 11.5f
+            setTextColor(tokens.textSecondary)
+        })
+        addView(TextView(context).apply {
+            text = value
+            textSize = 13.5f
+            setTextColor(tokens.textPrimary)
+            setPadding(0, ui.dp(3), 0, 0)
+            setTextIsSelectable(selectable)
+        })
+    }
+
+    private fun providerPresetSourceLabel(source: AgentProviderPresetSource): String = when (source) {
+        AgentProviderPresetSource.ModelsDev -> "models.dev 最新目录"
+        AgentProviderPresetSource.ModelsDevCache -> "上次成功获取的 models.dev 目录"
+        AgentProviderPresetSource.Bundled -> "随应用目录"
+    }
 
     private fun pushProviderEditorOverlay(view: View, screen: AgentNavigationScreen) {
         navigationScreen = screen
@@ -5366,6 +5519,26 @@ internal class RunAgentSurfaceBinding(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
+    }
+
+    private fun closeProviderPresetDetails() {
+        if (navigationHost.childCount > 1) {
+            navigationHost.removeViewAt(navigationHost.childCount - 1)
+        }
+        navigationScreen = AgentNavigationScreen.ProviderPresetPicker
+    }
+
+    private fun completeProviderPresetSelection(
+        preset: AgentProviderPreset,
+        onSelected: (AgentProviderPreset?) -> Unit,
+    ) {
+        providerPresetRefreshJob?.cancel()
+        providerPresetRefreshJob = null
+        while (navigationHost.childCount > 1) {
+            navigationHost.removeViewAt(navigationHost.childCount - 1)
+        }
+        navigationScreen = AgentNavigationScreen.ProviderEditor
+        onSelected(preset)
     }
 
     private fun closeProviderEditorOverlay() {

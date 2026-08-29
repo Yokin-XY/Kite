@@ -30,6 +30,7 @@ internal enum class AgentNavigationScreen {
     ProviderList,
     ProviderEditor,
     ProviderPresetPicker,
+    ProviderPresetDetails,
     ProviderModelEditor,
     SkillList,
     SkillDocumentEditor,

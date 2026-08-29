@@ -18,13 +18,19 @@ class ModelsDevProviderPresetRepositoryTest {
         val presets = ModelsDevProviderPresetParser.presetsFor(MODELS_DEV_PAYLOAD, "hermes")
         val api = presets.single { it.id == "zhipuai" }
         val codingPlan = presets.single { it.id == "zhipuai-coding-plan" }
+        val globalCodingPlan = presets.single { it.id == "zai-coding-plan" }
 
         assertEquals("zhipu", api.vendorId)
         assertEquals(api.vendorId, codingPlan.vendorId)
+        assertEquals(api.vendorId, globalCodingPlan.vendorId)
+        assertEquals("Zhipu AI", codingPlan.vendorDisplayName)
         assertEquals(AgentProviderCategory.ChinaOfficial, api.category)
         assertEquals(AgentProviderAccessChannel.Api, api.accessChannel)
         assertEquals(AgentProviderAccessChannel.CodingPlan, codingPlan.accessChannel)
+        assertEquals(AgentProviderMarket.China, codingPlan.market)
+        assertEquals(AgentProviderMarket.Global, globalCodingPlan.market)
         assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", codingPlan.baseUrl)
+        assertEquals("https://docs.bigmodel.cn/cn/guide/start/model-overview", codingPlan.documentationUrl)
         assertTrue(codingPlan.models.any { it.id == "glm-5.3-flash" })
         assertFalse(codingPlan.models.any { it.id == "embedding-3" })
     }
@@ -80,6 +86,7 @@ class ModelsDevProviderPresetRepositoryTest {
                 "name": "Zhipu Coding Plan",
                 "api": "https://open.bigmodel.cn/api/coding/paas/v4",
                 "npm": "@ai-sdk/openai-compatible",
+                "doc": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
                 "models": {
                   "glm-5.3-flash": {
                     "name": "GLM-5.3 Flash",
@@ -89,6 +96,19 @@ class ModelsDevProviderPresetRepositoryTest {
                   "embedding-3": {
                     "name": "Embedding 3",
                     "release_date": "2026-08-10",
+                    "modalities": {"output": ["text"]}
+                  }
+                }
+              },
+              "zai-coding-plan": {
+                "id": "zai-coding-plan",
+                "name": "Z.AI Coding Plan",
+                "api": "https://api.z.ai/api/coding/paas/v4",
+                "npm": "@ai-sdk/openai-compatible",
+                "models": {
+                  "glm-5.3-flash": {
+                    "name": "GLM-5.3 Flash",
+                    "release_date": "2026-08-20",
                     "modalities": {"output": ["text"]}
                   }
                 }

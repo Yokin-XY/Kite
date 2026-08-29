@@ -27,7 +27,9 @@ internal object CcSwitchProviderPresetDefinitions {
             id = "zhipu",
             displayName = "智谱 GLM",
             vendorId = "zhipu",
+            vendorDisplayName = "智谱 GLM",
             category = AgentProviderCategory.ChinaOfficial,
+            market = AgentProviderMarket.China,
             routes = openAiRoutes(
                 "https://open.bigmodel.cn/api/paas/v4/",
                 model("glm-5.2", "GLM-5.2"),
@@ -37,8 +39,10 @@ internal object CcSwitchProviderPresetDefinitions {
             id = "zhipu-coding-plan",
             displayName = "智谱 GLM Coding Plan",
             vendorId = "zhipu",
+            vendorDisplayName = "智谱 GLM",
             category = AgentProviderCategory.ChinaOfficial,
             accessChannel = AgentProviderAccessChannel.CodingPlan,
+            market = AgentProviderMarket.China,
             routes = openAiAndCodexRoutes(
                 "https://open.bigmodel.cn/api/coding/paas/v4",
                 model("glm-5.2", "GLM-5.2"),
@@ -55,7 +59,9 @@ internal object CcSwitchProviderPresetDefinitions {
             id = "kimi",
             displayName = "Kimi",
             vendorId = "kimi",
+            vendorDisplayName = "Kimi",
             category = AgentProviderCategory.ChinaOfficial,
+            market = AgentProviderMarket.China,
             routes = openAiAndCodexRoutes(
                 "https://api.moonshot.cn/v1",
                 model("kimi-k2.7-code", "Kimi K2.7 Code"),
@@ -70,6 +76,7 @@ internal object CcSwitchProviderPresetDefinitions {
             id = "kimi-coding",
             displayName = "Kimi For Coding",
             vendorId = "kimi",
+            vendorDisplayName = "Kimi",
             category = AgentProviderCategory.ChinaOfficial,
             accessChannel = AgentProviderAccessChannel.CodingPlan,
             routes = codexRoute(
@@ -83,6 +90,7 @@ internal object CcSwitchProviderPresetDefinitions {
         definition(
             id = "deepseek",
             displayName = "DeepSeek",
+            vendorDisplayName = "DeepSeek",
             category = AgentProviderCategory.ChinaOfficial,
             routes = openAiRoutes(
                 "https://api.deepseek.com/v1",
@@ -98,6 +106,7 @@ internal object CcSwitchProviderPresetDefinitions {
             id = "volcengine-agentplan",
             displayName = "火山 Agent Plan",
             vendorId = "volcengine",
+            vendorDisplayName = "火山引擎",
             category = AgentProviderCategory.ChinaOfficial,
             accessChannel = AgentProviderAccessChannel.CodingPlan,
             routes = openAiRoutes(
@@ -108,6 +117,7 @@ internal object CcSwitchProviderPresetDefinitions {
         definition(
             id = "bailian",
             displayName = "阿里云百炼",
+            vendorDisplayName = "阿里云百炼",
             category = AgentProviderCategory.ChinaOfficial,
             routes = openAiRoutes(
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -117,6 +127,7 @@ internal object CcSwitchProviderPresetDefinitions {
         definition(
             id = "stepfun",
             displayName = "阶跃星辰 StepFun",
+            vendorDisplayName = "阶跃星辰",
             category = AgentProviderCategory.ChinaOfficial,
             accessChannel = AgentProviderAccessChannel.TokenPlan,
             routes = openAiRoutes(
@@ -137,7 +148,9 @@ internal object CcSwitchProviderPresetDefinitions {
         definition(
             id = "modelscope",
             displayName = "魔搭 ModelScope",
+            vendorDisplayName = "ModelScope",
             category = AgentProviderCategory.Aggregator,
+            market = AgentProviderMarket.China,
             routes = openAiAndCodexRoutes(
                 "https://api-inference.modelscope.cn/v1",
                 model("ZhipuAI/GLM-5.1", "GLM-5.1"),
@@ -146,6 +159,7 @@ internal object CcSwitchProviderPresetDefinitions {
         definition(
             id = "longcat",
             displayName = "美团 LongCat",
+            vendorDisplayName = "LongCat",
             category = AgentProviderCategory.ChinaOfficial,
             routes = openAiRoutes(
                 "https://api.longcat.chat/openai/v1",
@@ -159,7 +173,9 @@ internal object CcSwitchProviderPresetDefinitions {
             id = "minimax",
             displayName = "MiniMax（中国）",
             vendorId = "minimax",
+            vendorDisplayName = "MiniMax",
             category = AgentProviderCategory.ChinaOfficial,
+            market = AgentProviderMarket.China,
             routes = openAiRoutes(
                 "https://api.minimaxi.com/v1",
                 model("MiniMax-M2.7", "MiniMax M2.7"),
@@ -172,7 +188,9 @@ internal object CcSwitchProviderPresetDefinitions {
             id = "minimax-global",
             displayName = "MiniMax（国际）",
             vendorId = "minimax",
+            vendorDisplayName = "MiniMax",
             category = AgentProviderCategory.ChinaOfficial,
+            market = AgentProviderMarket.Global,
             routes = openAiRoutes(
                 "https://api.minimax.io/v1",
                 model("MiniMax-M2.7", "MiniMax M2.7"),
@@ -185,6 +203,7 @@ internal object CcSwitchProviderPresetDefinitions {
             id = "xiaomi-mimo",
             displayName = "小米 MiMo",
             vendorId = "xiaomi-mimo",
+            vendorDisplayName = "小米 MiMo",
             category = AgentProviderCategory.ChinaOfficial,
             routes = openAiRoutes(
                 "https://api.xiaomimimo.com/v1",
@@ -200,8 +219,10 @@ internal object CcSwitchProviderPresetDefinitions {
             id = "xiaomi-mimo-token-plan",
             displayName = "小米 MiMo Token Plan",
             vendorId = "xiaomi-mimo",
+            vendorDisplayName = "小米 MiMo",
             category = AgentProviderCategory.ChinaOfficial,
             accessChannel = AgentProviderAccessChannel.TokenPlan,
+            market = AgentProviderMarket.China,
             routes = openAiRoutes(
                 "https://token-plan-cn.xiaomimimo.com/v1",
                 model("mimo-v2.5-pro", "MiMo V2.5 Pro"),
@@ -215,7 +236,9 @@ internal object CcSwitchProviderPresetDefinitions {
         definition(
             id = "siliconflow",
             displayName = "硅基流动 SiliconFlow",
+            vendorDisplayName = "SiliconFlow",
             category = AgentProviderCategory.Aggregator,
+            market = AgentProviderMarket.China,
             routes = openAiAndCodexRoutes(
                 "https://api.siliconflow.cn/v1",
                 model("Pro/MiniMaxAI/MiniMax-M2.7", "Pro / MiniMax M2.7"),
@@ -224,6 +247,7 @@ internal object CcSwitchProviderPresetDefinitions {
         definition(
             id = "nvidia",
             displayName = "NVIDIA NIM",
+            vendorDisplayName = "NVIDIA NIM",
             category = AgentProviderCategory.Aggregator,
             routes = openAiAndCodexRoutes(
                 "https://integrate.api.nvidia.com/v1",
@@ -234,6 +258,7 @@ internal object CcSwitchProviderPresetDefinitions {
             id = "opencode-go",
             displayName = "OpenCode Go",
             vendorId = "opencode",
+            vendorDisplayName = "OpenCode",
             category = AgentProviderCategory.Aggregator,
             accessChannel = AgentProviderAccessChannel.CodingPlan,
             routes = openAiAndCodexRoutes(
@@ -256,8 +281,10 @@ internal object CcSwitchProviderPresetDefinitions {
             baseUrl = route.baseUrl,
             models = route.models,
             vendorId = definition.vendorId,
+            vendorDisplayName = definition.vendorDisplayName,
             category = definition.category,
             accessChannel = definition.accessChannel,
+            market = definition.market,
         )
     }
 
@@ -265,10 +292,12 @@ internal object CcSwitchProviderPresetDefinitions {
         id: String,
         displayName: String,
         vendorId: String = id,
+        vendorDisplayName: String = displayName,
         category: AgentProviderCategory = AgentProviderCategory.ThirdParty,
         accessChannel: AgentProviderAccessChannel = AgentProviderAccessChannel.Api,
+        market: AgentProviderMarket = AgentProviderMarket.Unspecified,
         routes: Map<String, ProviderRoute>,
-    ) = ProviderDefinition(id, displayName, vendorId, category, accessChannel, routes)
+    ) = ProviderDefinition(id, displayName, vendorId, vendorDisplayName, category, accessChannel, market, routes)
 
     private fun openAiRoutes(baseUrl: String, vararg models: AgentProviderModelSummary): Map<String, ProviderRoute> =
         openAiCompatibleAdapters.associateWith { ProviderRoute(baseUrl, models.toList()) }
@@ -292,8 +321,10 @@ internal object CcSwitchProviderPresetDefinitions {
         val id: String,
         val displayName: String,
         val vendorId: String,
+        val vendorDisplayName: String,
         val category: AgentProviderCategory,
         val accessChannel: AgentProviderAccessChannel,
+        val market: AgentProviderMarket,
         val routes: Map<String, ProviderRoute>,
     )
 

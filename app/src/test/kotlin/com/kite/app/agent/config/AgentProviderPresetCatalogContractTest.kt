@@ -18,7 +18,9 @@ class AgentProviderPresetCatalogContractTest {
         assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", coding.baseUrl)
         assertEquals("zhipu", general.vendorId)
         assertEquals(general.vendorId, coding.vendorId)
+        assertEquals("智谱 GLM", coding.vendorDisplayName)
         assertEquals(AgentProviderCategory.ChinaOfficial, coding.category)
+        assertEquals(AgentProviderMarket.China, coding.market)
         assertEquals(AgentProviderAccessChannel.Api, general.accessChannel)
         assertEquals(AgentProviderAccessChannel.CodingPlan, coding.accessChannel)
         assertEquals(
@@ -26,6 +28,18 @@ class AgentProviderPresetCatalogContractTest {
             coding.models.map { it.id },
         )
         assertUniqueAndComplete(presets)
+    }
+
+    @Test
+    fun domesticAndInternationalRoutesShareBrandButKeepExplicitMarkets() {
+        val presets = AgentProviderPresetCatalog.presetsFor("hermes")
+        val china = presets.single { it.id == "minimax" }
+        val global = presets.single { it.id == "minimax-global" }
+
+        assertEquals("MiniMax", china.vendorDisplayName)
+        assertEquals(china.vendorDisplayName, global.vendorDisplayName)
+        assertEquals(AgentProviderMarket.China, china.market)
+        assertEquals(AgentProviderMarket.Global, global.market)
     }
 
     @Test
