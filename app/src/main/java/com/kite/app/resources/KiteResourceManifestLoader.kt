@@ -5,6 +5,7 @@ import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
+import com.kite.app.foundation.runtime.RuntimeHardLinkMode
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -66,6 +67,7 @@ data class KiteResourceAgentProfile(
     val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
     val environmentFiles: Map<String, String> = emptyMap(),
     val runtimeDependencies: List<KiteResourceAgentRuntimeDependency> = emptyList(),
+    val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
     val initializeTimeoutMs: Long = DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
     val connectionReference: String = "",
     val configurationRequired: Boolean = false,
@@ -97,6 +99,7 @@ data class KiteResourceAgentAccountCommand(
     val loggedOutPatterns: List<String> = emptyList(),
     val successPatterns: List<String> = emptyList(),
     val timeoutMs: Long = 30_000L,
+    val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
 )
 
 /**
@@ -755,6 +758,9 @@ class KiteResourceManifestLoader private constructor(
         val runtimeDependencies = parseAgentRuntimeDependencies(
             launch.optJSONArray("runtimeDependencies")
         ) ?: return null
+        val hardLinkMode = RuntimeHardLinkMode.fromWireValue(
+            launch.optString("hardLinkMode", RuntimeHardLinkMode.EMULATED.wireValue)
+        ) ?: return null
         val connectionReference = launch.optString("connectionReference").trim()
         val agentId = if (legacy) providerId else json.optString("id").trim()
         val validLaunch = when (launchMode) {
@@ -783,6 +789,7 @@ class KiteResourceManifestLoader private constructor(
             runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
             environmentFiles = launch.optJSONObject("environmentFiles").toStringMap(),
             runtimeDependencies = runtimeDependencies,
+            hardLinkMode = hardLinkMode,
             initializeTimeoutMs = launch.optLong(
                 "initializeTimeoutMs",
                 DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
@@ -827,12 +834,16 @@ class KiteResourceManifestLoader private constructor(
         if (command == null) return null
         val argv = command.optJSONArray("argv").toStringList()
         if (argv.isEmpty()) return null
+        val hardLinkMode = RuntimeHardLinkMode.fromWireValue(
+            command.optString("hardLinkMode", RuntimeHardLinkMode.EMULATED.wireValue)
+        ) ?: return null
         return KiteResourceAgentAccountCommand(
             argv = argv,
             loggedInPatterns = command.optJSONArray("loggedInPatterns").toStringList(),
             loggedOutPatterns = command.optJSONArray("loggedOutPatterns").toStringList(),
             successPatterns = command.optJSONArray("successPatterns").toStringList(),
             timeoutMs = command.optLong("timeoutMs", 30_000L).coerceIn(1_000L, 300_000L),
+            hardLinkMode = hardLinkMode,
         )
     }
 

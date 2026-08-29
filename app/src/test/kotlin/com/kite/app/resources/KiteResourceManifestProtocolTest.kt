@@ -452,6 +452,7 @@ class KiteResourceManifestProtocolTest {
             Expected("kite.openclaw", "openclaw", "OpenClaw", listOf("openclaw", "acp"), "openclaw"),
             Expected("kite.opencode", "opencode", "OpenCode", listOf("opencode", "acp"), "opencode"),
             Expected("kite.qwen.code", "qwen", "Qwen Code", listOf("qwen", "--acp"), "qwen-code"),
+            Expected("kite.trae.code", "trae", "TraeCode CLI", listOf("traecli", "acp", "serve"), "trae-code"),
             Expected("kite.codebuddy.code", "codebuddy", "CodeBuddy Code", listOf("codebuddy", "--acp"), "codebuddy-code"),
             Expected("kite.gemini.cli", "gemini", "Gemini CLI", listOf("gemini", "--acp"), "gemini-cli"),
             Expected("kite.reasonix", "reasonix", "Reasonix", listOf("reasonix", "acp"), "reasonix"),
@@ -708,6 +709,7 @@ class KiteResourceManifestProtocolTest {
                 "kite.qwen.code",
                 "kite.google.antigravity",
                 "kite.qoder.cli",
+                "kite.trae.code",
                 "kite.codebuddy.code",
                 "kite.cursor.cli",
                 "kite.zai.coding.helper",
@@ -744,6 +746,7 @@ class KiteResourceManifestProtocolTest {
                 "kite.qwen.code",
                 "kite.google.antigravity",
                 "kite.qoder.cli",
+                "kite.trae.code",
                 "kite.codebuddy.code",
                 "kite.cursor.cli",
                 "kite.zai.coding.helper",
@@ -769,7 +772,7 @@ class KiteResourceManifestProtocolTest {
             .filter { it.isFile }
             .sortedBy { it.parentFile?.name }
 
-        assertEquals(26, manifests.size)
+        assertEquals(27, manifests.size)
         manifests.forEach { manifestFile ->
             val resourceId = manifestFile.parentFile?.name.orEmpty()
             val loaded = loader.parseManifestJson(manifestFile.readText())

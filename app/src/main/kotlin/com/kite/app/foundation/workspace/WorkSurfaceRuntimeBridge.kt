@@ -15,6 +15,7 @@ import com.kite.app.foundation.runtime.ProotCompatibilityRuntimeProvider
 import com.kite.app.foundation.runtime.ProotBindMount
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.applyToProotCommand
 import com.kite.app.foundation.runtime.ProotViewStore
 import com.kite.app.foundation.contracts.RuntimeActionKind
 import com.kite.app.foundation.runtime.RuntimeBoundary
@@ -358,7 +359,8 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
             )
             is RuntimeExecutionPayload.NativeCapability -> error("proot_native_capability_plan_forbidden")
         }
-        return config.copy(env = config.env + plan.environment)
+        val command = plan.hardLinkMode.applyToProotCommand(config.command)
+        return config.copy(command = command, env = config.env + plan.environment)
     }
 
     /** 显式兼容入口的统一短路径：先经最终 Provider，再交给同一个物理构造器。 */

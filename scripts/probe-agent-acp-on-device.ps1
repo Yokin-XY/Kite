@@ -6,7 +6,8 @@ param(
     [string]$AgentCommand = "/workspace/.kf/bin/hermes",
     [string[]]$AgentArguments = @("acp"),
     [int]$TimeoutSeconds = 20,
-    [bool]$DisableLazyInstalls = $true
+    [bool]$DisableLazyInstalls = $true,
+    [bool]$SkipLink2Symlink = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,7 +40,11 @@ if ([string]::IsNullOrWhiteSpace($prootLibDir)) {
 $adbArguments.Add("LD_LIBRARY_PATH=$prootLibDir")
 $adbArguments.Add("PROOT_TMP_DIR=$($contract.runtime.tmpDirPath)")
 $adbArguments.Add([string]$contract.executablePath)
-$contract.flags | ForEach-Object { $adbArguments.Add([string]$_) }
+$contract.flags | ForEach-Object {
+    if (-not ($SkipLink2Symlink -and [string]$_ -eq "--link2symlink")) {
+        $adbArguments.Add([string]$_)
+    }
+}
 @("-r", [string]$contract.rootfsPath, "-w", [string]$contract.workingDirectory) |
     ForEach-Object { $adbArguments.Add($_) }
 foreach ($mount in $contract.bindMounts) {

@@ -93,6 +93,18 @@ internal enum class RuntimeFallbackPolicy {
     DISABLED,
 }
 
+/** 文件系统硬链接语义；默认保留 PRoot 的 Android 兼容模拟，只有核验过的进程才请求原生 syscall。 */
+enum class RuntimeHardLinkMode(val wireValue: String) {
+    EMULATED("emulated"),
+    NATIVE("native"),
+    ;
+
+    companion object {
+        fun fromWireValue(value: String?): RuntimeHardLinkMode? = entries
+            .firstOrNull { it.wireValue == value?.trim()?.lowercase() }
+    }
+}
+
 /** 由受信任调用方声明的单次运行文件绑定；物理 PRoot 参数仍只由运行时统一构造。 */
 internal data class RuntimeFilesystemBinding(
     val sourcePath: String,
@@ -126,6 +138,7 @@ internal data class RuntimeExecutionRequest(
     val guarantees: Set<RuntimeExecutionGuarantee> = emptySet(),
     val guaranteeEvidence: Map<String, String> = emptyMap(),
     val filesystemBindings: List<RuntimeFilesystemBinding> = emptyList(),
+    val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
     val fallbackPolicy: RuntimeFallbackPolicy = RuntimeFallbackPolicy.BEFORE_START_ONLY,
 ) {
     init {

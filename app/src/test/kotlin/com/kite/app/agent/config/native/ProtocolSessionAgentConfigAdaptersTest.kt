@@ -237,4 +237,32 @@ class ProtocolSessionAgentConfigAdaptersTest {
             ).map { it.id },
         )
     }
+
+    @Test
+    fun `TraeCode 使用官方三档权限并从工作模式中移除`() {
+        val adapter = TraeCodeAgentConfigAdapter(context)
+        val control = requireNotNull(adapter.sessionPermissionControl())
+
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Smart,
+                AgentPermissionLevel.Full,
+            ),
+            control.option().choices.map { it.permission },
+        )
+        assertEquals("default", control.initialProfileId)
+        assertEquals("bypass_permissions", control.nativeModeId("bypass_permissions"))
+        assertEquals(
+            listOf("custom"),
+            adapter.normalizeSessionModes(
+                listOf(
+                    AgentMode("default", "Default"),
+                    AgentMode("auto", "Auto"),
+                    AgentMode("bypass_permissions", "Bypass"),
+                    AgentMode("custom", "用户模式"),
+                ),
+            ).map { it.id },
+        )
+    }
 }

@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.trae.code",
+  "base": {
+    "name": "TraeCode CLI",
+    "description": "TRAE 官方终端编码 Agent",
+    "version": "0.201.6-tob",
+    "icon": {"type": "text", "value": "TR"}
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["traecli", "traex", "trae-cli", "trae-agent", "ta"],
+    "versionProbe": {
+      "command": "cat /workspace/.kf/software/kite.trae.code/.kite-version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+(?:-[A-Za-z0-9.-]+)?)"
+    },
+    "preservePaths": ["user-home"]
+  },
+  "display": {
+    "sections": ["ai-vendor"],
+    "tabs": ["angel-cli"],
+    "order": 106,
+    "category": "AI",
+    "accent": "blue",
+    "sizeLabel": "下载约 132 MB，安装约 394 MB",
+    "longDescription": "TraeCode CLI 是 TRAE 官方跨平台终端编码 Agent。Kite 固定下载 Linux ARM64 独立制品并校验 SHA-256，通过原生 ACP 提供会话创建、列表、恢复、分叉、模型、推理档、三种执行权限和官方登录；MCP 与 Skill 使用 TraeCode 自己的 TOML 和目录。该二进制需要真实硬链接语义，Kite 通过通用运行时声明为它关闭 PRoot 的 link2symlink 模拟。",
+    "recommendations": [
+      {"resourceId": "kite.git", "label": "源码工具"},
+      {"resourceId": "kite.nodejs", "label": "MCP 运行时"},
+      {"resourceId": "kite.codebuddy.code", "label": "同类 Agent"},
+      {"resourceId": "kite.qoder.cli", "label": "同类 Agent"}
+    ],
+    "tags": ["trae", "traecode", "coding-agent", "terminal", "ai", "acp", "mcp", "skills"]
+  },
+  "relations": {
+    "provides": ["cli.trae.code", "agent.trae.code"],
+    "base": ["kite.git"],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "official_release_archive",
+    "url": "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/releases/0.201.6-tob/traex-linux-aarch64.gz",
+    "repository": "https://docs.trae.cn/cli_get-started-with-trae-code-cli-2",
+    "tag": "0.201.6-tob",
+    "archiveType": "gzip",
+    "binaryPath": "traex",
+    "maxBytes": 157286400
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.trae.code",
+    "installRoot": "/workspace/.kf/software/kite.trae.code",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "trae",
+      "name": "TraeCode CLI",
+      "description": "TraeCode CLI 原生 ACP 会话",
+      "configuration": {"required": false, "adapter": "trae-code"},
+      "accounts": [
+        {
+          "id": "trae",
+          "name": "TRAE 官方账号",
+          "modelGroupIds": ["trae"],
+          "status": {
+            "argv": ["traecli", "login", "status"],
+            "hardLinkMode": "native",
+            "loggedInPatterns": ["logged in", "authenticated"],
+            "loggedOutPatterns": ["not logged in", "not authenticated"],
+            "timeoutMs": 15000
+          },
+          "login": {
+            "argv": ["traecli", "login"],
+            "hardLinkMode": "native",
+            "timeoutMs": 300000
+          },
+          "logout": {
+            "argv": ["traecli", "logout"],
+            "hardLinkMode": "native",
+            "timeoutMs": 30000
+          }
+        }
+      ],
+      "launch": {
+        "mode": "managed",
+        "providerId": "trae",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["traecli", "acp", "serve"],
+        "hardLinkMode": "native",
+        "initializeTimeoutMs": 60000,
+        "title": "TraeCode CLI"
+      }
+    }
+  ],
+  "actions": {
+    "install": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "download-trae-linux-arm64",
+            "type": "download",
+            "url": "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/releases/0.201.6-tob/traex-linux-aarch64.gz",
+            "destination": "$install_root/.kite-downloads/traex-linux-aarch64.gz",
+            "sha256": "e2ddc587cb813473c4f2635bb14c5a3da9a5eb944991600d4bdefe8267a4b1c5",
+            "retryAttempts": 4,
+            "retryDelaySeconds": 2,
+            "maxBytes": 157286400
+          },
+          {
+            "id": "extract-trae-linux-arm64",
+            "type": "shell",
+            "cmd": "set -eu\narchive=\"$install_root/.kite-downloads/traex-linux-aarch64.gz\"\nmkdir -p \"$install_root/runtime\" \"$install_root/bin\" \"$install_root/user-home\"\ngzip -dc \"$archive\" > \"$install_root/runtime/traex\"\nchmod 755 \"$install_root/runtime/traex\"\ncat > \"$install_root/bin/traecli\" <<EOF\n#!/usr/bin/env bash\nset -eu\nexport HOME=\"$install_root/user-home\"\nexport USER=root\nexec \"$install_root/runtime/traex\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/traecli\"\nfor alias in traex trae-cli trae-agent ta; do ln -sfn traecli \"$install_root/bin/$alias\"; done\nprintf '%s\\n' '0.201.6-tob' > \"$install_root/.kite-version\"\nrm -f \"$archive\""
+          }
+        ],
+        "managedCommands": ["traecli", "traex", "trae-cli", "trae-agent", "ta"],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "trae-arm64-runtime",
+            "cmd": "test -x \"$install_root/runtime/traex\" && test -s \"$install_root/runtime/traex\" && test \"$(cat \"$install_root/.kite-version\")\" = '0.201.6-tob'"
+          }
+        ],
+        "timeoutMs": 900000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {"id": "", "name": "TraeCode CLI", "description": "启动 TraeCode CLI Agent 会话", "icon": {"type": "builtin", "name": "bot"}},
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "trae", "workdir": "/workspace"}]
+      }
+    },
+    "uninstall": [
+      {"type": "shell", "cmd": ":", "managedCommands": ["traecli", "traex", "trae-cli", "trae-agent", "ta"], "timeoutMs": 180000}
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "TraeCode CLI",
+      "policy": "manual",
+      "recipe": {
+        "base": {"id": "", "name": "TraeCode CLI", "description": "启动 TraeCode CLI Agent 会话", "icon": {"type": "builtin", "name": "bot"}},
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "trae", "workdir": "/workspace"}]
+      }
+    }
+  ]
+}

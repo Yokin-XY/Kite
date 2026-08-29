@@ -78,6 +78,7 @@ internal object AgentResourceRegistrationMapper {
             loggedOutPatterns = loggedOutPatterns,
             successPatterns = successPatterns,
             timeoutMs = timeoutMs,
+            hardLinkMode = hardLinkMode,
         )
 
     private const val MODE_MANAGED = "managed"

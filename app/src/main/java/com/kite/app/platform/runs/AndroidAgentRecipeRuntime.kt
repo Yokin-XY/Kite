@@ -55,6 +55,7 @@ import com.kite.app.agent.sdk.configuration.StoreBackedAgentProviderCatalogApi
 import com.kite.app.foundation.runtime.AndroidSharedStorageManager
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
+import com.kite.app.foundation.runtime.RuntimeHardLinkMode
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
@@ -165,6 +166,7 @@ internal fun interface ManagedAgentProcessLaunchPlanner {
         environment: Map<String, String>,
         runtimeGuarantees: Set<String>,
         runtimeGuaranteeEvidence: Map<String, String>,
+        hardLinkMode: RuntimeHardLinkMode,
     ): ManagedAgentProcessLaunch
 }
 
@@ -266,6 +268,7 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
         environment: Map<String, String>,
         runtimeGuarantees: Set<String>,
         runtimeGuaranteeEvidence: Map<String, String>,
+        hardLinkMode: RuntimeHardLinkMode,
     ): ManagedAgentProcessLaunch {
         require(argv.isNotEmpty()) { "agent_process_command_empty" }
         val guarantees = RuntimeExecutionGuaranteeCodec.decode(runtimeGuarantees)
@@ -284,6 +287,7 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
                 environment = environment,
                 guarantees = guarantees,
                 guaranteeEvidence = guaranteeEvidence,
+                hardLinkMode = hardLinkMode,
             ),
         )
         val selected = ManagedAgentProcessLaunchSelector.select(runtimePlan) { plan ->
@@ -366,6 +370,7 @@ internal class AndroidAgentRecipeRuntime(
         val argv: List<String>,
         val runtimeGuarantees: Set<String>,
         val runtimeGuaranteeEvidence: Map<String, String>,
+        val hardLinkMode: RuntimeHardLinkMode,
         val environmentFiles: Map<String, String>,
         val runtimeDependencies: List<KiteResourceAgentRuntimeDependency>,
         val initializeTimeoutMs: Long,
@@ -494,6 +499,7 @@ internal class AndroidAgentRecipeRuntime(
                     environment = resolvedEnvironment,
                     runtimeGuarantees = resolved.runtimeGuarantees,
                     runtimeGuaranteeEvidence = resolved.runtimeGuaranteeEvidence,
+                    hardLinkMode = resolved.hardLinkMode,
                 )
             }.getOrElse { error ->
                 callback(
@@ -994,6 +1000,7 @@ internal class AndroidAgentRecipeRuntime(
                     argv = launch.argv,
                     runtimeGuarantees = launch.runtimeGuarantees,
                     runtimeGuaranteeEvidence = launch.runtimeGuaranteeEvidence,
+                    hardLinkMode = profile?.hardLinkMode ?: RuntimeHardLinkMode.EMULATED,
                     environmentFiles = profile?.environmentFiles.orEmpty(),
                     runtimeDependencies = profile?.runtimeDependencies.orEmpty(),
                     initializeTimeoutMs = profile?.initializeTimeoutMs
@@ -1015,6 +1022,7 @@ internal class AndroidAgentRecipeRuntime(
                 argv = emptyList(),
                 runtimeGuarantees = emptySet(),
                 runtimeGuaranteeEvidence = emptyMap(),
+                hardLinkMode = RuntimeHardLinkMode.EMULATED,
                 environmentFiles = emptyMap(),
                 runtimeDependencies = emptyList(),
                 initializeTimeoutMs = DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
@@ -1039,6 +1047,7 @@ internal class AndroidAgentRecipeRuntime(
             argv = argv,
             runtimeGuarantees = runtimeGuarantees,
             runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
+            hardLinkMode = hardLinkMode,
             environmentFiles = environmentFiles,
             runtimeDependencies = runtimeDependencies,
             initializeTimeoutMs = initializeTimeoutMs,

@@ -461,6 +461,52 @@ class NativeAgentConfigAdaptersTest {
     }
 
     @Test
+    fun traeCodeUsesNativeTomlMcpAndResourceOwnedHome() = runTest {
+        val configFile = nativeFile(
+            "workspace/.kf/software/kite.trae.code/user-home/.trae/traecli.toml",
+        ).apply {
+            writeText(
+                """
+                [mcp_servers.demo]
+                url = "https://mcp.example.com/mcp"
+                bearer_token_env_var = "TRAE_TOKEN"
+                vendor_extension = "keep"
+                """.trimIndent(),
+            )
+        }
+        val adapter = TraeCodeAgentConfigAdapter(context, ::container)
+        val before = (adapter.readLive("trae") as AgentConfigReadResult.Ready).snapshot
+
+        assertEquals(AgentMcpTransport.StreamableHttp, before.mcpServers.single().transport)
+        assertEquals("TRAE_TOKEN", before.mcpServers.single().headerReferences.single().environmentVariable)
+        val applied = adapter.apply(
+            AgentConfigApplyRequest(
+                "trae",
+                before.revision,
+                listOf(
+                    AgentPersistentConfigChange.ConfigureMcpServer(
+                        AgentMcpDraft(
+                            id = "demo",
+                            transport = AgentMcpTransport.Stdio,
+                            command = "npx",
+                            arguments = listOf("-y", "@example/mcp"),
+                            environmentReferences = listOf(
+                                AgentMcpEnvironmentReference("TOKEN", "TRAE_MCP_TOKEN"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ) as AgentConfigApplyResult.Applied
+
+        assertEquals(AgentMcpTransport.Stdio, applied.snapshot.mcpServers.single().transport)
+        assertEquals("TRAE_MCP_TOKEN", applied.snapshot.mcpServers.single().environmentReferences.single().environmentVariable)
+        assertTrue(configFile.readText().contains("vendor_extension = \"keep\""))
+        assertTrue(configFile.readText().contains("TOKEN = \"${'$'}{TRAE_MCP_TOKEN}\""))
+        assertFalse(configFile.readText().contains("bearer_token_env_var"))
+    }
+
+    @Test
     fun openClawDoesNotFallBackWhenWorkspaceConfigIsMalformed() = runTest {
         nativeFile("root/.openclaw/openclaw.json").writeText("{ agents:")
         val adapter = OpenClawAgentConfigAdapter(context, ::container)

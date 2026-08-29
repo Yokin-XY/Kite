@@ -47,7 +47,7 @@ class AndroidAgentOfficialAccountCommandRunnerTest {
                     exitCode = 0,
                 )
             },
-            launchPlanner = { argv, workingDirectory, environment, guarantees, evidence ->
+            launchPlanner = { argv, workingDirectory, environment, guarantees, evidence, _ ->
                 assertEquals(listOf("codex", "login"), argv)
                 assertEquals("/workspace", workingDirectory)
                 assertEquals(emptyMap<String, String>(), environment)
@@ -89,7 +89,7 @@ class AndroidAgentOfficialAccountCommandRunnerTest {
             processFactory = {
                 SuspendingProcess(stopped = stopped, stopGraceMs = stopGraceMs, closed = closed)
             },
-            launchPlanner = { argv, workingDirectory, _, _, _ ->
+            launchPlanner = { argv, workingDirectory, _, _, _, _ ->
                 ManagedAgentProcessLaunch(
                     process = AgentProcessLaunch(
                         command = argv,
