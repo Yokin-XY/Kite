@@ -41,13 +41,21 @@ class AgentExtensionMarketParserTest {
         var requestedUrl = ""
         val repository = AgentExtensionMarketRepository(AgentExtensionMarketRemote { url, _ ->
             requestedUrl = url
-            AgentMarketHttpPayload("{\"items\":[]}".toByteArray(), "application/json")
+            AgentMarketHttpPayload(
+                "{\"items\":[],\"nextCursor\":\"{\\\"v\\\":2}\"}".toByteArray(),
+                "application/json",
+            )
         })
 
-        repository.browseSkills(AgentExtensionMarketSort.Trending)
+        val firstPage = repository.browseSkills(AgentExtensionMarketSort.Trending)
 
         assertTrue(requestedUrl.contains("sort=trending"))
         assertTrue(requestedUrl.contains("nonSuspiciousOnly=true"))
+        assertEquals("{\"v\":2}", firstPage.nextCursor)
+
+        repository.browseSkills(AgentExtensionMarketSort.Trending, firstPage.nextCursor)
+
+        assertTrue(requestedUrl.contains("cursor=%7B%22v%22%3A2%7D"))
     }
 
     @Test

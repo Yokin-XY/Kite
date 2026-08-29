@@ -331,6 +331,11 @@ internal class RunAgentSurfaceBinding(
     private var extensionMarketAdapter: AgentExtensionMarketAdapter? = null
     private var extensionMarketStatusText: TextView? = null
     private var extensionMarketQueryInput: EditText? = null
+    private var extensionMarketSortContainer: View? = null
+    private var extensionMarketActiveQuery: String = ""
+    private var extensionMarketActiveSort = AgentExtensionMarketSort.Recommended
+    private var extensionMarketNextCursor: String? = null
+    private var extensionMarketLoadingMore: Boolean = false
     private var extensionMarketLoadRevision: Long = 0L
     private var coreDocumentPageAgentId: String? = null
     private var coreDocumentPageTarget: AgentConfigurationTarget? = null
@@ -5263,6 +5268,16 @@ internal class RunAgentSurfaceBinding(
             clipToPadding = false
             setPadding(ui.dp(14), ui.dp(2), ui.dp(14), ui.dp(18))
             visibility = View.GONE
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    if (dy <= 0 || kind != AgentExtensionMarketKind.Skill) return
+                    val manager = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                    val total = adapter.itemCount
+                    if (total > 0 && manager.findLastVisibleItemPosition() >= total - MARKET_LOAD_MORE_THRESHOLD) {
+                        loadMoreExtensionMarketSkills(recyclerView)
+                    }
+                }
+            })
         }
         val input = EditText(context).apply {
             hint = if (kind == AgentExtensionMarketKind.Skill) "例如 GitHub、PDF" else "例如 GitHub、浏览器"
@@ -5306,7 +5321,7 @@ internal class RunAgentSurfaceBinding(
         val sortRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-        }
+        }.also { extensionMarketSortContainer = it }
         val sortActions = linkedMapOf<AgentExtensionMarketSort, TextView>()
         fun renderSortActions() {
             sortActions.forEach { (sort, action) ->
@@ -5417,12 +5432,19 @@ internal class RunAgentSurfaceBinding(
         sort: AgentExtensionMarketSort = AgentExtensionMarketSort.Recommended,
     ) {
         val normalized = query.trim()
+        extensionMarketSortContainer?.visibility = if (
+            kind == AgentExtensionMarketKind.Skill && normalized.isEmpty()
+        ) View.VISIBLE else View.GONE
         if (normalized.isEmpty() && kind != AgentExtensionMarketKind.Skill) {
             extensionMarketStatusText?.apply { text = "请输入搜索关键词"; visibility = View.VISIBLE }
             list.visibility = View.GONE
             return
         }
         val revision = ++extensionMarketLoadRevision
+        extensionMarketActiveQuery = normalized
+        extensionMarketActiveSort = sort
+        extensionMarketNextCursor = null
+        extensionMarketLoadingMore = false
         extensionMarketStatusText?.apply {
             text = if (normalized.isEmpty()) "正在加载${sort.displayName} Skill…" else "正在搜索…"
             visibility = View.VISIBLE
@@ -5446,6 +5468,7 @@ internal class RunAgentSurfaceBinding(
                 extensionMarketKind != kind
             ) return@launch
             result.onSuccess { snapshot ->
+                extensionMarketNextCursor = snapshot.nextCursor
                 extensionMarketAdapter?.submitList(snapshot.items)
                 list.visibility = if (snapshot.items.isEmpty()) View.GONE else View.VISIBLE
                 extensionMarketStatusText?.apply {
@@ -5459,6 +5482,47 @@ internal class RunAgentSurfaceBinding(
                         ?: "市场暂时无法访问：${error.javaClass.simpleName}"
                     visibility = View.VISIBLE
                 }
+            }
+        }
+    }
+
+    private fun loadMoreExtensionMarketSkills(list: RecyclerView) {
+        if (
+            navigationScreen != AgentNavigationScreen.ExtensionMarket ||
+            extensionMarketKind != AgentExtensionMarketKind.Skill ||
+            extensionMarketActiveQuery.isNotEmpty() ||
+            extensionMarketLoadingMore
+        ) return
+        val cursor = extensionMarketNextCursor ?: return
+        val revision = extensionMarketLoadRevision
+        val sort = extensionMarketActiveSort
+        extensionMarketLoadingMore = true
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { extensionMarketRepository.browseSkills(sort, cursor) }
+            }
+            if (
+                revision != extensionMarketLoadRevision ||
+                navigationScreen != AgentNavigationScreen.ExtensionMarket ||
+                extensionMarketKind != AgentExtensionMarketKind.Skill ||
+                extensionMarketActiveQuery.isNotEmpty() ||
+                extensionMarketActiveSort != sort ||
+                extensionMarketNextCursor != cursor
+            ) return@launch
+            extensionMarketLoadingMore = false
+            result.onSuccess { snapshot ->
+                val current = extensionMarketAdapter?.currentList.orEmpty()
+                val merged = (current + snapshot.items).distinctBy(AgentExtensionMarketItem::id)
+                extensionMarketAdapter?.submitList(merged)
+                list.visibility = if (merged.isEmpty()) View.GONE else View.VISIBLE
+                extensionMarketNextCursor = snapshot.nextCursor?.takeUnless { it == cursor }
+            }.onFailure { error ->
+                Log.w("AgentExtensionMarket", "Skill market pagination failed", error)
+                Toast.makeText(
+                    context,
+                    error.message?.let { "继续加载失败：$it" } ?: "继续加载失败",
+                    Toast.LENGTH_SHORT,
+                ).show()
             }
         }
     }
@@ -5617,6 +5681,11 @@ internal class RunAgentSurfaceBinding(
         extensionMarketAdapter = null
         extensionMarketStatusText = null
         extensionMarketQueryInput = null
+        extensionMarketSortContainer = null
+        extensionMarketActiveQuery = ""
+        extensionMarketActiveSort = AgentExtensionMarketSort.Recommended
+        extensionMarketNextCursor = null
+        extensionMarketLoadingMore = false
     }
 
     private fun showSkillImportPicker(
@@ -9720,6 +9789,7 @@ internal class RunAgentSurfaceBinding(
     private companion object {
         const val MAX_SKILL_ARCHIVE_BYTES = 10 * 1024 * 1024
         const val MAX_MARKET_OWNER_CHOICES = 8
+        const val MARKET_LOAD_MORE_THRESHOLD = 6
         const val MAX_MCP_IMPORT_BYTES = 2 * 1024 * 1024
         const val SESSION_SEARCH_WATCHER_TAG = "agent-session-search-watcher"
         const val COPY_BUFFER_SIZE = 8 * 1024

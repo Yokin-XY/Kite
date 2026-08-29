@@ -52,6 +52,12 @@ internal data class AgentExtensionMarketSnapshot(
     val sourceLabel: String,
     val query: String,
     val items: List<AgentExtensionMarketItem>,
+    val nextCursor: String? = null,
+)
+
+internal data class AgentExtensionMarketPage(
+    val items: List<AgentExtensionMarketItem>,
+    val nextCursor: String?,
 )
 
 internal data class AgentMarketHttpPayload(
@@ -67,16 +73,26 @@ internal fun interface AgentExtensionMarketRemote {
 internal class AgentExtensionMarketRepository(
     private val remote: AgentExtensionMarketRemote = HttpAgentExtensionMarketRemote(),
 ) {
-    fun browseSkills(sort: AgentExtensionMarketSort): AgentExtensionMarketSnapshot {
+    fun browseSkills(
+        sort: AgentExtensionMarketSort,
+        cursor: String? = null,
+    ): AgentExtensionMarketSnapshot {
+        val normalizedCursor = cursor?.trim()?.ifBlank { null }
+        require(normalizedCursor == null || normalizedCursor.length <= MAX_CURSOR_LENGTH) { "市场分页标识过长" }
+        val cursorQuery = normalizedCursor?.let {
+            "&cursor=${URLEncoder.encode(it, Charsets.UTF_8.name())}"
+        }.orEmpty()
         val payload = remote.get(
-            "$CLAWHUB_BASE/api/v1/skills?limit=$MAX_RESULTS&sort=${sort.apiValue}&nonSuspiciousOnly=true",
+            "$CLAWHUB_BASE/api/v1/skills?limit=$MAX_RESULTS&sort=${sort.apiValue}&nonSuspiciousOnly=true$cursorQuery",
             MAX_CATALOG_BYTES,
         )
+        val page = AgentExtensionMarketParser.parseClawHubBrowsePage(payload.bytes.toString(Charsets.UTF_8))
         return AgentExtensionMarketSnapshot(
             kind = AgentExtensionMarketKind.Skill,
             sourceLabel = "ClawHub",
             query = "",
-            items = AgentExtensionMarketParser.parseClawHubBrowse(payload.bytes.toString(Charsets.UTF_8)),
+            items = page.items,
+            nextCursor = page.nextCursor,
         )
     }
 
@@ -164,6 +180,7 @@ internal class AgentExtensionMarketRepository(
         const val MCP_REGISTRY_BASE = "https://registry.modelcontextprotocol.io"
         const val MAX_RESULTS = 40
         const val MAX_QUERY_LENGTH = 120
+        const val MAX_CURSOR_LENGTH = 8 * 1024
         const val MAX_CATALOG_BYTES = 2 * 1024 * 1024
         const val MAX_SKILL_ARCHIVE_BYTES = 10 * 1024 * 1024
         val SAFE_PATH_SEGMENT = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -171,10 +188,14 @@ internal class AgentExtensionMarketRepository(
 }
 
 internal object AgentExtensionMarketParser {
-    fun parseClawHubBrowse(payload: String): List<AgentExtensionMarketItem> {
+    fun parseClawHubBrowse(payload: String): List<AgentExtensionMarketItem> =
+        parseClawHubBrowsePage(payload).items
+
+    fun parseClawHubBrowsePage(payload: String): AgentExtensionMarketPage {
         require(payload.toByteArray(Charsets.UTF_8).size <= MAX_CATALOG_BYTES) { "ClawHub 目录超过大小限制" }
-        val items = JSONObject(payload).optJSONArray("items")
-        return buildList {
+        val root = JSONObject(payload)
+        val items = root.optJSONArray("items")
+        val parsedItems = buildList {
             for (index in 0 until minOf(items?.length() ?: 0, MAX_RESULTS)) {
                 val row = items?.optJSONObject(index) ?: continue
                 val slug = row.optString("slug").trim()
@@ -202,6 +223,13 @@ internal object AgentExtensionMarketParser {
                 ))
             }
         }.distinctBy(AgentExtensionMarketItem::id)
+        return AgentExtensionMarketPage(
+            items = parsedItems,
+            nextCursor = root.takeIf { it.has("nextCursor") && !it.isNull("nextCursor") }
+                ?.optString("nextCursor")
+                ?.trim()
+                ?.ifBlank { null },
+        )
     }
 
     fun parseClawHubSearch(payload: String): List<AgentExtensionMarketItem> {
