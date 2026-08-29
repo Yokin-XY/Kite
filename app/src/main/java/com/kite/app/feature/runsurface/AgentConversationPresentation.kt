@@ -145,6 +145,43 @@ internal sealed interface AgentConversationDisplayItem {
     ) : AgentConversationDisplayItem
 }
 
+internal object AgentConversationProcessPresentation {
+    fun isExpandedByDefault(state: AgentConversationTurnState): Boolean =
+        state == AgentConversationTurnState.Running
+
+    fun durationLabel(
+        process: AgentConversationDisplayItem.Process,
+        nowMillis: Long,
+    ): String {
+        val elapsedMillis = when {
+            process.state == AgentConversationTurnState.Running && process.startedAtMillis != null ->
+                (nowMillis - process.startedAtMillis).coerceAtLeast(0L)
+            process.durationMillis != null -> process.durationMillis.coerceAtLeast(0L)
+            else -> null
+        }
+        return elapsedMillis?.let(::formatElapsed) ?: if (
+            process.state == AgentConversationTurnState.Running
+        ) {
+            "正在处理"
+        } else {
+            "过程"
+        }
+    }
+
+    private fun formatElapsed(elapsedMillis: Long): String {
+        val totalSeconds = elapsedMillis / 1_000L
+        val hours = totalSeconds / 3_600L
+        val minutes = totalSeconds % 3_600L / 60L
+        val seconds = totalSeconds % 60L
+        return buildString {
+            append("用时 ")
+            if (hours > 0L) append(hours).append("小时 ")
+            if (minutes > 0L) append(minutes).append("分钟 ")
+            append(seconds).append("秒")
+        }
+    }
+}
+
 /**
  * 把协议无关会话事实投影成轻量显示块。解析只在 snapshot 变化时执行，RecyclerView 绑定不解析 Markdown。
  */
@@ -206,7 +243,9 @@ internal object AgentConversationPresentation {
                 }
 
                 val turn = turnsByOrdinal[turnOrdinal]
-                val process = processEntries.takeIf { it.isNotEmpty() }?.let { entries ->
+                val shouldShowProcess = processEntries.isNotEmpty() ||
+                    turn?.state == AgentConversationTurnState.Running
+                val process = processEntries.takeIf { shouldShowProcess }?.let { entries ->
                     AgentConversationDisplayItem.Process(
                         id = "${turnItems.first().id}:turn:$turnOrdinal:process",
                         turnOrdinal = turnOrdinal,
@@ -227,7 +266,7 @@ internal object AgentConversationPresentation {
                 if (!processAdded) process?.let(::add)
                 turn?.toStatus(
                     phase = phase,
-                    hasAgentContent = process != null || visibleEntries.any { !it.isUserAuthored() },
+                    hasAgentContent = processEntries.isNotEmpty() || visibleEntries.any { !it.isUserAuthored() },
                     itemId = turnItems.first().id,
                 )?.let(::add)
             }

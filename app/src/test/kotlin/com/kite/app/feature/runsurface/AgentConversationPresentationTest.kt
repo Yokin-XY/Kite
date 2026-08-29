@@ -28,13 +28,50 @@ class AgentConversationPresentationTest {
                     turnOrdinal = 1L,
                 ),
             ),
-            turns = listOf(AgentConversationTurn(1L, AgentConversationTurnState.Running)),
+            turns = listOf(
+                AgentConversationTurn(
+                    ordinal = 1L,
+                    state = AgentConversationTurnState.Running,
+                    startedAtMillis = 1_000L,
+                )
+            ),
             phase = AgentSessionPhase.Preparing,
         )
 
         assertTrue(items[0] is AgentConversationDisplayItem.UserMessage)
-        val status = items[1] as AgentConversationDisplayItem.TurnStatus
+        val process = items[1] as AgentConversationDisplayItem.Process
+        assertTrue(process.entries.isEmpty())
+        assertEquals(1_000L, process.startedAtMillis)
+        val status = items[2] as AgentConversationDisplayItem.TurnStatus
         assertEquals("正在连接 Agent…", status.label)
+    }
+
+    @Test
+    fun `运行过程持续显示计时且完成后默认收起`() {
+        val running = AgentConversationDisplayItem.Process(
+            id = "running",
+            turnOrdinal = 1L,
+            state = AgentConversationTurnState.Running,
+            startedAtMillis = 1_000L,
+            durationMillis = null,
+            entries = emptyList(),
+        )
+        val completed = running.copy(
+            id = "completed",
+            state = AgentConversationTurnState.Completed,
+            durationMillis = 832_000L,
+        )
+
+        assertEquals(
+            "用时 13分钟 52秒",
+            AgentConversationProcessPresentation.durationLabel(running, nowMillis = 833_000L),
+        )
+        assertEquals(
+            "用时 13分钟 52秒",
+            AgentConversationProcessPresentation.durationLabel(completed, nowMillis = 999_000L),
+        )
+        assertTrue(AgentConversationProcessPresentation.isExpandedByDefault(running.state))
+        assertFalse(AgentConversationProcessPresentation.isExpandedByDefault(completed.state))
     }
 
     @Test
