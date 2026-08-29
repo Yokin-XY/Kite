@@ -171,4 +171,36 @@ class ProtocolSessionAgentConfigAdaptersTest {
             adapter.normalizeSessionModes(listOf(AgentMode("custom", "用户模式"))).single().name,
         )
     }
+
+    @Test
+    fun `Devin 将原生权限档位与计划模式分开投影`() {
+        val adapter = DevinCliAgentConfigAdapter(context)
+        val control = requireNotNull(adapter.sessionPermissionControl())
+
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Lenient,
+                AgentPermissionLevel.Smart,
+                AgentPermissionLevel.Full,
+            ),
+            control.option().choices.map { it.permission },
+        )
+        assertEquals("normal", control.initialProfileId)
+        assertEquals("bypass", control.nativeModeId("bypass"))
+        assertEquals(
+            listOf("plan", "custom"),
+            adapter.normalizeSessionModes(
+                listOf(
+                    AgentMode("normal", "Normal"),
+                    AgentMode("accept-edits", "Accept Edits"),
+                    AgentMode("smart", "Smart"),
+                    AgentMode("bypass", "Bypass"),
+                    AgentMode("plan", "Plan"),
+                    AgentMode("autonomous", "Autonomous"),
+                    AgentMode("custom", "用户模式"),
+                ),
+            ).map { it.id },
+        )
+    }
 }
