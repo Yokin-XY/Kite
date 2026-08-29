@@ -8,6 +8,7 @@ import com.kite.app.action.KiteActionRouter
 import com.kite.app.action.KiteRecipeActionCoordinator
 import com.kite.app.agent.registration.KiteAgentRegistry
 import com.kite.app.agent.registration.KiteCustomAgentRegistrationStore
+import com.kite.app.agent.discovery.AcpAgentDiscoveryRepository
 import com.kite.app.agent.auth.AgentOfficialAccountManager
 import com.kite.app.agent.auth.AndroidAgentOfficialAccountVault
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
@@ -185,6 +186,9 @@ internal class KiteAppGraph private constructor(context: Context) {
     }
     val customAgentRegistrationStore: KiteCustomAgentRegistrationStore by lazy {
         KiteCustomAgentRegistrationStore(appContext)
+    }
+    val acpAgentDiscoveryRepository: AcpAgentDiscoveryRepository by lazy {
+        AcpAgentDiscoveryRepository(appContext)
     }
     val agentConfigAdapterRegistry: AgentConfigAdapterRegistry by lazy {
         AgentConfigAdapterRegistry(
