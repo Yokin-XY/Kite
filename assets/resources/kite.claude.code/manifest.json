@@ -76,6 +76,10 @@
     "type": "npm",
     "package": "@anthropic-ai/claude-code",
     "companionPackages": ["@agentclientprotocol/claude-agent-acp"],
+    "registries": [
+      "https://registry.npmmirror.com",
+      "https://registry.npmjs.org"
+    ],
     "installArguments": ["--allow-scripts=@anthropic-ai/claude-code"]
   },
   "paths": {

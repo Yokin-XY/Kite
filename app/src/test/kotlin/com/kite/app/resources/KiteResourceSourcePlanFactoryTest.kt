@@ -19,7 +19,7 @@ class KiteResourceSourcePlanFactoryTest {
     @Test
     fun `NPM 声明生成同一套安装更新卸载和版本检查计划`() {
         val manifest = parse(
-            source = """{"type":"npm","package":"@openai/codex","companionPackages":["@agentclientprotocol/codex-acp"],"installArguments":["--foreground-scripts"],"tag":"latest"}""",
+            source = """{"type":"npm","package":"@openai/codex","companionPackages":["@agentclientprotocol/codex-acp"],"registries":["https://registry.npmmirror.com","https://registry.npmjs.org"],"installArguments":["--foreground-scripts"],"tag":"latest"}""",
             management = managed(listOf("codex", "codex-acp"), "codex --version")
         )
 
@@ -37,6 +37,10 @@ class KiteResourceSourcePlanFactoryTest {
             update.installActions.single().installSteps.single().packages
         )
         assertEquals(listOf("--foreground-scripts"), install.installActions.single().installSteps.single().arguments)
+        assertEquals(
+            listOf("https://registry.npmmirror.com", "https://registry.npmjs.org"),
+            install.installActions.single().installSteps.single().registries,
+        )
         assertEquals(listOf("codex", "codex-acp"), install.installActions.single().managedCommands)
         assertEquals(
             listOf("@openai/codex", "@agentclientprotocol/codex-acp"),

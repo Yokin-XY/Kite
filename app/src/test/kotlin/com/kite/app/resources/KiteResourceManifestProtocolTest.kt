@@ -57,17 +57,22 @@ class KiteResourceManifestProtocolTest {
         val manifestFile = File(resourceRoot(), "kite.github.copilot/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
         val expectedArguments = listOf(
-            "--registry=https://registry.npmmirror.com",
             "--no-update-notifier",
             "--no-audit",
             "--no-fund",
         )
+        val expectedRegistries = listOf(
+            "https://registry.npmmirror.com",
+            "https://registry.npmjs.org",
+        )
 
         assertEquals(expectedArguments, manifest.source.installArguments)
         assertEquals(expectedArguments, manifest.installActions.single().installSteps.first().arguments)
+        assertEquals(expectedRegistries, manifest.source.registries)
+        assertEquals(expectedRegistries, manifest.installActions.single().installSteps.first().registries)
         assertTrue(
             KiteResourceInstallPlanCompiler.compile(manifest.installActions.single())
-                .contains("--registry=https://registry.npmmirror.com"),
+                .contains("--registry=\"${'$'}npm_registry\""),
         )
     }
 
@@ -396,6 +401,10 @@ class KiteResourceManifestProtocolTest {
             installStep.packages
         )
         assertEquals(listOf("--allow-scripts=@anthropic-ai/claude-code"), installStep.arguments)
+        assertEquals(
+            listOf("https://registry.npmmirror.com", "https://registry.npmjs.org"),
+            installStep.registries,
+        )
         assertEquals(5, installStep.retryAttempts)
         assertEquals(3, installStep.retryDelaySeconds)
         assertEquals(listOf("claude", "claude-agent-acp"), installAction.managedCommands)

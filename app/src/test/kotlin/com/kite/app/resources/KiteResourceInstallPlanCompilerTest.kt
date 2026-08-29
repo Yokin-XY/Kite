@@ -98,6 +98,56 @@ class KiteResourceInstallPlanCompilerTest {
     }
 
     @Test
+    fun npmRegistriesUseOneSharedFallbackTransaction() {
+        val action = managedAction(
+            steps = listOf(
+                KiteResourceInstallStep(
+                    id = "npm-package",
+                    type = KiteResourceInstallPlanCompiler.STEP_NPM,
+                    packages = listOf("@example/cli"),
+                    registries = listOf(
+                        "https://registry.npmmirror.com",
+                        "https://registry.npmjs.org",
+                    ),
+                )
+            )
+        )
+
+        val script = KiteResourceInstallPlanCompiler.compile(action)
+
+        assertTrue(script.indexOf("registry.npmmirror.com") < script.indexOf("registry.npmjs.org"))
+        assertTrue(script.contains("KITE_RESOURCE_ROUTE stage=install"))
+        assertTrue(script.contains("npm install -g --registry=\"${'$'}npm_registry\""))
+        assertTrue(script.contains("kite_resource_run 'npm-package' install kite_resource_npm_npm_package"))
+    }
+
+    @Test
+    fun npmRegistryRejectsInsecureOrCredentialBearingUrls() {
+        listOf(
+            "http://registry.example.test",
+            "https://user:password@registry.example.test",
+            "https://registry.example.test?token=secret",
+        ).forEach { registry ->
+            val failure = runCatching {
+                KiteResourceInstallPlanCompiler.compile(
+                    managedAction(
+                        steps = listOf(
+                            KiteResourceInstallStep(
+                                id = "npm-package",
+                                type = KiteResourceInstallPlanCompiler.STEP_NPM,
+                                packages = listOf("example"),
+                                registries = listOf(registry),
+                            )
+                        )
+                    )
+                )
+            }.exceptionOrNull()
+
+            assertTrue(failure is IllegalArgumentException)
+        }
+    }
+
+    @Test
     fun gitMirrorsShareOnePinnedCommitPreserveSourceOrderAndRejectBadMirrorOnly() {
         val commit = "5fc308a70719a83cccdbba4c0e39c23f5a8239d5"
         val action = managedAction(

@@ -69,6 +69,7 @@ data class KiteResourceSourceSpec(
     val latestFormat: String = "json",
     val latestJsonField: String = "",
     val latestStripPrefix: String = "",
+    val registries: List<String> = emptyList(),
     val installArguments: List<String> = emptyList(),
     val versionArguments: List<String> = emptyList(),
     val environment: Map<String, String> = emptyMap(),

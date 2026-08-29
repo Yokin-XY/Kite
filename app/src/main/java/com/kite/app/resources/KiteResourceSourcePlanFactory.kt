@@ -290,6 +290,7 @@ object KiteResourceSourcePlanFactory {
                     id = "install-npm-package",
                     type = KiteResourceInstallPlanCompiler.STEP_NPM,
                     packages = listOf(packageSpec) + companionSpecs,
+                    registries = manifest.source.registries,
                     arguments = manifest.source.installArguments,
                     retryAttempts = 5,
                     retryDelaySeconds = 3

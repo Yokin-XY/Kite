@@ -130,17 +130,53 @@ object KiteResourceInstallPlanCompiler {
 
     private fun compileNpm(step: KiteResourceInstallStep): String {
         require(step.packages.isNotEmpty()) { "npm step ${step.id} has no packages" }
+        step.registries.forEach { registry ->
+            require(isSecureRegistryUrl(registry)) {
+                "npm step ${step.id} has an invalid HTTPS registry"
+            }
+        }
         val arguments = step.arguments.joinToString(" ") { shellLiteral(it) }
         val packages = step.packages.joinToString(" ") { shellLiteral(it) }
         val installArguments = listOf(arguments, packages).filter { it.isNotBlank() }.joinToString(" ")
+        val installCommand = if (step.registries.isEmpty()) {
+            "npm install -g $installArguments"
+        } else {
+            val functionSuffix = safeId(step.id).replace(Regex("[^a-z0-9_]"), "_")
+            val functionName = "kite_resource_npm_$functionSuffix"
+            val registries = step.registries.distinct().joinToString(" ") { shellLiteral(it) }
+            """
+                $functionName() {
+                  last_status=1
+                  for npm_registry in $registries; do
+                    echo "KITE_RESOURCE_ROUTE stage=install step=${safeId(step.id)} registry=${'$'}npm_registry"
+                    if npm install -g --registry="${'$'}npm_registry" $installArguments; then
+                      return 0
+                    else
+                      last_status=${'$'}?
+                    fi
+                  done
+                  return "${'$'}last_status"
+                }
+                kite_resource_run ${shellLiteral(safeId(step.id))} install $functionName
+            """.trimIndent()
+        }
         return """
             command -v npm >/dev/null 2>&1 || { echo "KITE_RESOURCE_FAILURE stage=prepare step=${safeId(step.id)} reason=npm-missing"; exit 127; }
             export npm_config_fetch_retries=${step.retryAttempts}
             export npm_config_fetch_retry_mintimeout=$(( ${step.retryDelaySeconds} * 1000 ))
             export npm_config_fetch_retry_maxtimeout=$(( ${step.retryDelaySeconds} * ${step.retryAttempts} * 4000 ))
-            kite_resource_run ${shellLiteral(safeId(step.id))} install npm install -g $installArguments
+            $installCommand
         """.trimIndent()
     }
+
+    private fun isSecureRegistryUrl(value: String): Boolean = runCatching {
+        val uri = java.net.URI(value.trim())
+        uri.scheme.equals("https", ignoreCase = true) &&
+            !uri.host.isNullOrBlank() &&
+            uri.userInfo == null &&
+            uri.query == null &&
+            uri.fragment == null
+    }.getOrDefault(false)
 
     private fun compileApt(step: KiteResourceInstallStep): String {
         require(step.updateIndex || step.packages.isNotEmpty()) { "apt step ${step.id} has no operation" }
