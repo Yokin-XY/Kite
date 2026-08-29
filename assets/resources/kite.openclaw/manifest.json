@@ -151,7 +151,7 @@
             "cmd": "command -v openclaw >/dev/null 2>&1"
           }
         ],
-        "timeoutMs": 600000
+        "timeoutMs": 900000
       }
     ],
     "open": {

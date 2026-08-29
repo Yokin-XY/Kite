@@ -117,7 +117,7 @@
             "cmd": "command -v qwen >/dev/null 2>&1"
           }
         ],
-        "timeoutMs": 600000
+        "timeoutMs": 900000
       }
     ],
     "open": {
