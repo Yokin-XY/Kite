@@ -302,6 +302,56 @@ class AgentConversationStoreTest {
     }
 
     @Test
+    fun `原生历史确认本地回合后重复加载不会追加副本`() {
+        AgentConversationStore.bind("run-1", key, AgentSessionPhase.Ready)
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                AgentMessageRole.User,
+                AgentContent.Text("你好你好"),
+                "local-user",
+            ),
+        )
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                AgentMessageRole.Assistant,
+                AgentContent.Text("OK"),
+                "live-answer",
+            ),
+        )
+        AgentConversationStore.applyEvent(key, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready))
+
+        repeat(2) {
+            AgentConversationStore.beginHistoryReplay("run-1", key)
+            AgentConversationStore.applyEvent(
+                key,
+                AgentSessionEvent.MessageChunk(
+                    AgentMessageRole.User,
+                    AgentContent.Text("你好你好"),
+                    "native-user",
+                ),
+            )
+            AgentConversationStore.applyEvent(
+                key,
+                AgentSessionEvent.MessageChunk(
+                    AgentMessageRole.Assistant,
+                    AgentContent.Text("OK"),
+                    "native-answer",
+                ),
+            )
+            AgentConversationStore.completeHistoryReplay(key)
+        }
+
+        assertEquals(
+            listOf("你好你好", "OK"),
+            AgentConversationStore.snapshot(key)!!.timeline
+                .filterIsInstance<AgentConversationItem.Message>()
+                .map { message -> (message.content.single() as AgentContent.Text).text },
+        )
+    }
+
+    @Test
     fun `历史投影按内联媒体预算淘汰最早项目`() {
         val sharedPayload = "A".repeat(2 * 1024 * 1024)
         AgentConversationStore.beginHistoryReplay("run-1", key)

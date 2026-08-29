@@ -354,6 +354,7 @@ internal class RunAgentSurfaceBinding(
     private var drawerExpansionSeeded = false
     private var initialEntryDraftPrepared = false
     private var draftPreparationPending = false
+    private var pendingSessionSwitch: PendingSessionSwitch? = null
     private var projectEditorDialog: AgentProjectEditorDialog? = null
     private var workspaceDirectoryPickerDialog: WorkspaceDirectoryPickerDialog? = null
     private var skillDirectoryPickerDialog: WorkspaceDirectoryPickerDialog? = null
@@ -450,6 +451,14 @@ internal class RunAgentSurfaceBinding(
         agentDisplayName = state.title.ifBlank { content.agentId ?: "Agent" }
         agentTitleText.setTextIfChanged(agentDisplayName)
         providerId = content.providerId
+        val pendingSwitch = pendingSessionSwitch
+        if (pendingSwitch != null && content.sessionId != pendingSwitch.targetSessionId) {
+            sessionId = pendingSwitch.targetSessionId
+            statusText.setTextIfChanged("正在连接会话…")
+            subscribe(content.providerId, pendingSwitch.targetSessionId)
+            updateComposer()
+            return
+        }
         sessionId = content.sessionId
         restoreComposerDraft(
             ComposerDraftIdentity(instanceId, generation, content.sessionId),
@@ -1001,6 +1010,12 @@ internal class RunAgentSurfaceBinding(
             adapter.submitList(emptyList())
             return
         }
+        val cached = AgentConversationStore.snapshot(key)
+        if (cached != null) {
+            renderConversation(cached)
+        } else {
+            adapter.submitList(emptyList())
+        }
         observation = lifecycleOwner.lifecycleScope.launch {
             lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 AgentConversationStore.observe(key).collect { snapshot ->
@@ -1014,8 +1029,11 @@ internal class RunAgentSurfaceBinding(
         val nearBottom = !list.canScrollVertically(1)
         val configurationChanged = currentSnapshot?.configuration != snapshot.configuration
         currentSnapshot = snapshot
-        statusText.text = snapshot.lastError
-            ?: phaseLabel(snapshot.phase)
+        statusText.text = if (pendingSessionSwitch != null) {
+            "正在连接会话…"
+        } else {
+            snapshot.lastError ?: phaseLabel(snapshot.phase)
+        }
         adapter.submitConversation(snapshot.timeline, snapshot.turns, snapshot.phase) {
             if (nearBottom && adapter.itemCount > 0) list.scrollToPosition(adapter.itemCount - 1)
         }
@@ -1299,7 +1317,7 @@ internal class RunAgentSurfaceBinding(
         return true
     }
 
-    private fun composerPhase(): AgentSessionPhase? = if (draftPreparationPending) {
+    private fun composerPhase(): AgentSessionPhase? = if (draftPreparationPending || pendingSessionSwitch != null) {
         AgentSessionPhase.Preparing
     } else currentSnapshot?.phase
         ?: AgentRuntimeRegistry.session(instanceId)
@@ -1793,18 +1811,60 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun loadDrawerSession(session: AgentSessionSummary) {
+        if (pendingSessionSwitch != null) return
+        val runtime = AgentRuntimeRegistry.session(instanceId)
+        if (runtime?.sessionId == session.id) {
+            closeNavigation()
+            return
+        }
         val defaultCwd = AgentRuntimeRegistry.defaultCwd(instanceId, generation)
         if (defaultCwd != null && !AgentSurfaceNavigationPolicy.sameCwd(session.cwd, defaultCwd)) {
             expandedProjectCwds.add(AgentSurfaceNavigationPolicy.normalizeCwd(session.cwd))
         }
+        val pending = PendingSessionSwitch(
+            targetSessionId = session.id,
+            previousSessionId = sessionId,
+        )
+        pendingSessionSwitch = pending
         closeNavigation()
+        sessionId = session.id
+        restoreComposerDraft(ComposerDraftIdentity(instanceId, generation, session.id))
+        subscribe(providerId, session.id)
+        statusText.text = "正在连接会话…"
+        if (currentSnapshot == null) {
+            historyStatusText.text = "正在恢复历史记录…"
+            historyStatusText.visibility = View.VISIBLE
+        }
+        updateComposer()
         lifecycleOwner.lifecycleScope.launch {
-            showOperationResult(
-                AgentRuntimeRegistry.loadSession(instanceId, generation, session.id, session.cwd),
-                "已切换会话"
-            )
+            val result = AgentRuntimeRegistry.loadSession(instanceId, generation, session.id, session.cwd)
+            if (pendingSessionSwitch != pending) return@launch
+            pendingSessionSwitch = null
+            when (result) {
+                is AgentOperationResult.Success -> {
+                    sessionId = result.value.sessionId
+                    subscribe(providerId, result.value.sessionId)
+                    restoreComposerDraft(ComposerDraftIdentity(instanceId, generation, result.value.sessionId))
+                    loadDraftModelCatalog(force = true)
+                    currentSnapshot?.let(::renderConversation)
+                        ?: statusText.setTextIfChanged("准备就绪")
+                }
+                is AgentOperationResult.Failure,
+                is AgentOperationResult.Unsupported -> {
+                    sessionId = pending.previousSessionId
+                    subscribe(providerId, pending.previousSessionId)
+                    restoreComposerDraft(ComposerDraftIdentity(instanceId, generation, pending.previousSessionId))
+                }
+            }
+            updateComposer()
+            showOperationResult(result, "已切换会话")
         }
     }
+
+    private data class PendingSessionSwitch(
+        val targetSessionId: String,
+        val previousSessionId: String?,
+    )
 
     private fun toggleDrawerProject(cwd: String) {
         val normalized = AgentSurfaceNavigationPolicy.normalizeCwd(cwd)

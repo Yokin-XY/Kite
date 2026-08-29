@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import java.util.ArrayDeque
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -174,6 +175,7 @@ object AgentConversationStore {
             ?: MutableConversation(key, instanceId, AgentSessionPhase.Preparing).also {
                 mutableConversations[key] = it
             }
+        current.historyStatusBeforeReplay = current.historyStatus
         current.historyStatus = AgentConversationHistoryStatus.Loading
         current.revision++
         replayConversations[key] = MutableConversation(
@@ -191,7 +193,11 @@ object AgentConversationStore {
     @Synchronized
     fun completeHistoryReplay(key: AgentConversationKey): AgentConversationSnapshot? {
         val replay = replayConversations.remove(key) ?: return mutableConversations[key]?.freeze()
+        val current = mutableConversations[key]
         replay.finishHistoryReplay()
+        if (current != null && current !== replay) {
+            replay.mergeLocalTurnsFrom(current)
+        }
         replay.historyStatus = AgentConversationHistoryStatus.Loaded
         replay.visibleTimelineItems = minOf(INITIAL_VISIBLE_TIMELINE_ITEMS, replay.timeline.size)
         replay.revision++
@@ -204,7 +210,8 @@ object AgentConversationStore {
     fun abortHistoryReplay(key: AgentConversationKey): AgentConversationSnapshot? {
         replayConversations.remove(key)
         val current = mutableConversations[key] ?: return null
-        current.historyStatus = AgentConversationHistoryStatus.Live
+        current.historyStatus = current.historyStatusBeforeReplay ?: AgentConversationHistoryStatus.Live
+        current.historyStatusBeforeReplay = null
         current.revision++
         publishNow(key)
         return current.freeze()
@@ -428,6 +435,7 @@ object AgentConversationStore {
         var lastError: String? = null
         val extensions = mutableListOf<AgentSessionEvent.Extension>()
         var historyStatus: AgentConversationHistoryStatus = AgentConversationHistoryStatus.Live
+        var historyStatusBeforeReplay: AgentConversationHistoryStatus? = null
         var visibleTimelineItems: Int = INITIAL_VISIBLE_TIMELINE_ITEMS
         var truncatedTimelineItems: Int = 0
         var retainedTextChars: Long = 0L
@@ -651,6 +659,76 @@ object AgentConversationStore {
             recordsLiveTiming = true
         }
 
+        /**
+         * 原生历史可能在刚结束一轮时尚未包含 Kite 已经显示的本地发送。只保留含本地用户消息的
+         * 完整回合，并用角色与内容和已回放历史对账；这样既不会整份覆盖刚发送的内容，也不会
+         * 把所有旧内存消息永久当成第二份历史来源。
+         */
+        fun mergeLocalTurnsFrom(current: MutableConversation) {
+            val localTurnOrdinals = current.timeline
+                .filterIsInstance<MutableMessage>()
+                .filter(MutableMessage::originatedLocally)
+                .mapTo(linkedSetOf(), MutableMessage::turnOrdinal)
+            if (localTurnOrdinals.isEmpty()) return
+
+            val replayedMessages = linkedMapOf<MessageFingerprint, ArrayDeque<MutableMessage>>()
+            timeline.filterIsInstance<MutableMessage>().forEach { message ->
+                replayedMessages.getOrPut(message.fingerprint(), ::ArrayDeque).addLast(message)
+            }
+            // 先消费当前投影中原本就来自历史的消息，剩余队列才代表本次 load 新确认的内容。
+            current.timeline.filterIsInstance<MutableMessage>()
+                .filterNot { message -> message.turnOrdinal in localTurnOrdinals }
+                .forEach { message -> replayedMessages[message.fingerprint()]?.pollFirst() }
+            val replayedTools = timeline.filterIsInstance<MutableTool>()
+                .mapTo(linkedSetOf()) { tool -> tool.call.id }
+            val replayedPlans = timeline.filterIsInstance<MutablePlan>()
+                .mapTo(linkedSetOf()) { plan -> plan.entries }
+
+            localTurnOrdinals.forEach { sourceOrdinal ->
+                val sourceItems = current.timeline.filter { item -> item.turnOrdinal == sourceOrdinal }
+                val sourceMessages = sourceItems.filterIsInstance<MutableMessage>()
+                val durableMatches = sourceMessages.map { message ->
+                    replayedMessages[message.fingerprint()]?.pollFirst()
+                }
+                val fullyDurable = durableMatches.all { message -> message != null }
+                if (fullyDurable) {
+                    sourceMessages.zip(durableMatches).forEach { (source, durable) ->
+                        checkNotNull(durable).adoptLocalOrigin(source)
+                    }
+                    return@forEach
+                }
+
+                val beforeOrdinal = turnOrdinal
+                sourceItems.forEach { item ->
+                        when (item) {
+                            is MutableMessage -> {
+                                item.freeze().content.forEach { content ->
+                                    apply(AgentSessionEvent.MessageChunk(
+                                        role = item.role,
+                                        content = content,
+                                        messageId = item.messageId,
+                                    ))
+                                }
+                                (timeline.lastOrNull() as? MutableMessage)?.adoptLocalOrigin(item)
+                            }
+                            is MutableTool -> if (replayedTools.add(item.call.id)) {
+                                apply(AgentSessionEvent.ToolCallStarted(item.call))
+                            }
+                            is MutablePlan -> if (replayedPlans.add(item.entries)) {
+                                apply(AgentSessionEvent.PlanUpdated(item.entries))
+                            }
+                        }
+                    }
+                if (turnOrdinal > beforeOrdinal) {
+                    val sourceTurn = current.turns[sourceOrdinal]
+                    finishTurn(
+                        state = sourceTurn?.state ?: AgentConversationTurnState.Completed,
+                        errorMessage = sourceTurn?.errorMessage,
+                    )
+                }
+            }
+        }
+
         fun discardMessage(messageId: String): Boolean {
             val index = timeline.indexOfFirst { item ->
                 item is MutableMessage && item.messageId == messageId
@@ -792,6 +870,7 @@ object AgentConversationStore {
     }
 
     private sealed interface MutableTimelineItem {
+        val turnOrdinal: Long
         val retainedTextChars: Long
         val retainedInlineBytes: Long
         fun freeze(): AgentConversationItem
@@ -801,9 +880,10 @@ object AgentConversationStore {
         private val id: String,
         val role: AgentMessageRole,
         val messageId: String?,
-        val turnOrdinal: Long
+        override val turnOrdinal: Long
     ) : MutableTimelineItem {
         private val content = mutableListOf<MutableMessageContent>()
+        private var localOrigin = messageId?.startsWith(LOCAL_MESSAGE_ID_PREFIX) == true
         override var retainedTextChars: Long = 0L
             private set
         override var retainedInlineBytes: Long = 0L
@@ -826,6 +906,14 @@ object AgentConversationStore {
             }
         }
 
+        fun fingerprint(): MessageFingerprint = MessageFingerprint(role, freeze().content)
+
+        fun originatedLocally(): Boolean = localOrigin
+
+        fun adoptLocalOrigin(source: MutableMessage) {
+            if (source.localOrigin) localOrigin = true
+        }
+
         override fun freeze(): AgentConversationItem.Message = AgentConversationItem.Message(
             id = id,
             role = role,
@@ -837,7 +925,7 @@ object AgentConversationStore {
 
     private class MutableTool(
         private val id: String,
-        val turnOrdinal: Long,
+        override val turnOrdinal: Long,
         var call: AgentToolCall
     ) : MutableTimelineItem {
         override val retainedTextChars: Long
@@ -849,7 +937,7 @@ object AgentConversationStore {
 
     private class MutablePlan(
         private val id: String,
-        val turnOrdinal: Long,
+        override val turnOrdinal: Long,
         var entries: List<AgentPlanEntry>
     ) : MutableTimelineItem {
         override val retainedTextChars: Long
@@ -941,6 +1029,11 @@ object AgentConversationStore {
         return useful * 3L / 4L
     }
 
+    private data class MessageFingerprint(
+        val role: AgentMessageRole,
+        val content: List<AgentContent>,
+    )
+
     private const val PUBLISH_FRAME_MS = 32L
     private const val INITIAL_VISIBLE_TIMELINE_ITEMS = 80
     private const val VISIBLE_TIMELINE_PAGE_ITEMS = 60
@@ -948,4 +1041,5 @@ object AgentConversationStore {
     private const val MAX_RETAINED_TEXT_CHARS = 2_000_000L
     private const val MAX_RETAINED_INLINE_BYTES = 24L * 1024L * 1024L
     private const val MAX_EXTENSION_EVENTS = 50
+    private const val LOCAL_MESSAGE_ID_PREFIX = "local-"
 }

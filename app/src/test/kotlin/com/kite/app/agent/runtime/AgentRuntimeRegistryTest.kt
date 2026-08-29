@@ -501,20 +501,73 @@ class AgentRuntimeRegistryTest {
     }
 
     @Test
-    fun `已有内存投影时用 resume 避免重复回放`() = runTest {
+    fun `已有内存投影时仍用 load 对账并保留尚未进入原生历史的本地消息`() = runTest {
         val key = AgentConversationKey("fake", "historical-1")
         AgentConversationStore.bind("instance-restore", key, AgentSessionPhase.Ready)
         AgentConversationStore.applyEvent(
             key,
-            AgentSessionEvent.MessageChunk(AgentMessageRole.User, AgentContent.Text("已显示"), "existing")
+            AgentSessionEvent.MessageChunk(AgentMessageRole.User, AgentContent.Text("已显示"), "local-existing")
         )
         val provider = FakeProvider(resumeSupported = true)
 
         start(provider, "instance-restore", preferredSessionId = "historical-1")
 
-        assertEquals(1, provider.connection.resumeSessionCalls)
-        assertEquals(0, provider.connection.loadSessionCalls)
-        assertEquals(1, AgentConversationStore.snapshot(key)!!.timeline.size)
+        assertEquals(0, provider.connection.resumeSessionCalls)
+        assertEquals(1, provider.connection.loadSessionCalls)
+        assertEquals(
+            listOf("历史问题", "历史回答", "已显示"),
+            AgentConversationStore.snapshot(key)!!.timeline
+                .filterIsInstance<AgentConversationItem.Message>()
+                .map { message -> (message.content.single() as AgentContent.Text).text },
+        )
+    }
+
+    @Test
+    fun `模型切换后的本地回合在再次加载原生历史时不会被吞掉`() = runTest {
+        val modelOption = selectOption(
+            "model", "模型", AgentConfigCategory.Model, "custom:old",
+            "custom:old" to "Old", "custom:new" to "New",
+        )
+        val provider = FakeProvider(
+            resumeSupported = true,
+            initialConfiguration = listOf(modelOption),
+            requestPermission = false,
+        )
+        start(
+            provider,
+            request("instance-model-history", preferredSessionId = "historical-1").copy(
+                resolveDraftModelSelection = { _, _ ->
+                    AgentSessionModelSelection("model", "custom:new")
+                },
+            ),
+        )
+        AgentRuntimeRegistry.selectDraftModel(
+            "instance-model-history",
+            1L,
+            AgentDraftModelSelection("custom", "new", usesAgentDefault = false),
+        )
+
+        val prompted = AgentRuntimeRegistry.prompt(
+            "instance-model-history",
+            1L,
+            listOf(AgentContent.Text("你好你好")),
+        )
+        val reloaded = AgentRuntimeRegistry.loadSession(
+            "instance-model-history",
+            1L,
+            "historical-1",
+        )
+
+        assertTrue(prompted is AgentOperationResult.Success)
+        assertTrue(reloaded is AgentOperationResult.Success)
+        assertEquals(2, provider.connection.loadSessionCalls)
+        assertEquals(0, provider.connection.resumeSessionCalls)
+        assertEquals(
+            listOf("历史问题", "历史回答", "你好你好", "已完成"),
+            AgentConversationStore.snapshot(AgentConversationKey("fake", "historical-1"))!!.timeline
+                .filterIsInstance<AgentConversationItem.Message>()
+                .map { message -> (message.content.single() as AgentContent.Text).text },
+        )
     }
 
     @Test

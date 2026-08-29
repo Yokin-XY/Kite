@@ -1665,11 +1665,9 @@ object AgentRuntimeRegistry {
         additionalDirectories: List<String>
     ): AgentOperationResult<AgentSessionSnapshot> {
         val key = AgentConversationKey(providerId, sessionId)
-        val hasProjection = AgentConversationStore.snapshot(key)?.history?.totalItems?.let { it > 0 } == true
         val request = AgentExistingSessionRequest(sessionId, cwd, additionalDirectories)
-        if (hasProjection && connection.capabilities.sessions.resume) {
-            return connection.resumeSession(request)
-        }
+        // `resume` 只恢复连接，不回放历史。只要 Agent 支持 `load`，切换会话就重新读取权威历史，
+        // 再由 ConversationStore 与仍未进入原生历史的本地回合对账，不能把一份内存投影视为完整历史。
         if (connection.capabilities.sessions.load) {
             AgentConversationStore.beginHistoryReplay(instanceId, key)
             return when (val loaded = connection.loadSession(request)) {
