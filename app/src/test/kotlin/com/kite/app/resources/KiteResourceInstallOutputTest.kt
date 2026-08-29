@@ -41,4 +41,14 @@ class KiteResourceInstallOutputTest {
             ),
         )
     }
+
+    @Test
+    fun `卡片进度移除终端样式并压缩空白`() {
+        assertEquals(
+            "Downloading codex-relay (3.1MiB)",
+            KiteResourceInstallOutput.compactProgress(
+                "\u001B[36m\u001B[1mDownloading\u001B[0m\u001B[39m  codex-relay\n(3.1MiB)"
+            ),
+        )
+    }
 }

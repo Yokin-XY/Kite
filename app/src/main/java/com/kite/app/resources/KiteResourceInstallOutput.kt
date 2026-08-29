@@ -16,6 +16,13 @@ object KiteResourceInstallOutput {
         else -> null
     }
 
+    /** 清除终端样式与控制字符，只保留适合卡片单行展示的状态文本。 */
+    fun compactProgress(raw: String): String = raw
+        .replace(ANSI_ESCAPE, "")
+        .replace(CONTROL_CHARACTER, "")
+        .replace(WHITESPACE, " ")
+        .trim()
+
     /** 从实时 SH 尾部提取用户可读的下载细节；未知输出保持为空，不猜进度。 */
     fun progressDetail(output: String): String? {
         if (output.isBlank()) return null
@@ -109,6 +116,9 @@ object KiteResourceInstallOutput {
             ?.takeIf { it.isNotBlank() }
 
     private val TOKEN = Regex("(?:^|\\s)([A-Za-z0-9_-]+)=([^\\s]+)")
+    private val ANSI_ESCAPE = Regex("\\u001B\\[[0-?]*[ -/]*[@-~]")
+    private val CONTROL_CHARACTER = Regex("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]")
+    private val WHITESPACE = Regex("\\s+")
     private val GIT_PROGRESS = Regex("(Receiving objects|Resolving deltas|Updating files):\\s+(\\d{1,3})%")
     private val APT_DOWNLOAD = Regex("(?m)^Get:(\\d+)\\s+(https?://\\S+).*?\\[([^]\\r\\n]+)]")
     private val SOURCE = Regex("(?:source|url)=(https?://[^\\s]+)")

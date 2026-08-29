@@ -254,11 +254,14 @@ internal fun ResourceInstallWizardRowViewState.subtitle(context: Context, now: L
             context.getString(R.string.resource_wizard_subtitle_stopped, base, elapsed)
         else -> base
     }
-    val progress = currentRun.progressText.trim()
+    val progress = KiteResourceInstallOutput.compactProgress(currentRun.progressText)
     val detail = KiteResourceInstallOutput.progressDetail(currentRun.reportText)
-    return listOf(timing, progress, detail)
+    val activity = listOf(progress, detail)
         .filterNotNull()
         .filter(String::isNotBlank)
         .distinct()
+        .joinToString(" · ")
+    return listOf(timing, activity)
+        .filter(String::isNotBlank)
         .joinToString("\n")
 }

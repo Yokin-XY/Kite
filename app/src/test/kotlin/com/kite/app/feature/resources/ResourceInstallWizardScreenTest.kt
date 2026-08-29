@@ -174,7 +174,7 @@ class ResourceInstallWizardScreenTest {
     }
 
     @Test
-    fun `运行步骤提供显式实时日志入口且队列行打开同一实例报告`() {
+    fun `运行步骤只通过队列整行打开同一实例报告`() {
         val requests = mutableListOf<ResourceInstallWizardRunRequest>()
         val screen = createScreen(onOpenRun = requests::add)
         attach(screen)
@@ -182,11 +182,13 @@ class ResourceInstallWizardScreenTest {
         screen.render(runningState(surface = CardRunSurface.Report))
         shadowOf(Looper.getMainLooper()).idle()
 
-        screen.root.textViews().first {
-            it.text.toString() == context.getString(R.string.resource_wizard_view_live_log)
-        }.performClick()
-        assertEquals("install-instance", requests.single().instanceId)
-        requests.clear()
+        assertEquals(
+            1,
+            screen.root.textViews().count {
+                it.visibility == View.VISIBLE &&
+                    it.text.toString() == context.getString(R.string.resource_state_installing)
+            },
+        )
         val row = screen.root.views().first {
             it.contentDescription?.toString() == context.getString(
                 R.string.resource_wizard_row_description,
@@ -225,6 +227,24 @@ class ResourceInstallWizardScreenTest {
         assertTrue(screen.root.textViews().any { view ->
             val text = view.text.toString()
             text.contains("资源仍在下载") && text.contains("源码写入 76%")
+        })
+    }
+
+    @Test
+    fun `运行步骤摘要不会展示终端控制符`() {
+        val screen = createScreen()
+        attach(screen)
+        screen.render(runningState(
+            surface = CardRunSurface.Report,
+            progressText = "\u001B[36m\u001B[1mDownloading\u001B[0m\u001B[39m codex-relay",
+        ))
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue(screen.root.textViews().any { view ->
+            view.text.toString().contains("Downloading codex-relay")
+        })
+        assertFalse(screen.root.textViews().any { view ->
+            view.text.toString().contains("[36m") || view.text.toString().contains("[1m")
         })
     }
 

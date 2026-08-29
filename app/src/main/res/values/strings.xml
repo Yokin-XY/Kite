@@ -829,7 +829,7 @@
     <string name="resource_wizard_queue_title">执行队列</string>
     <string name="resource_wizard_row_description">%1$s，%2$s</string>
     <string name="resource_wizard_cleanup_and_retry">清理残留并重试</string>
-    <string name="resource_wizard_view_live_log">查看实时日志</string>
+    <string name="resource_wizard_progress_completed">已完成 %1$d/%2$d</string>
     <string name="resource_wizard_cleanup_confirm_title">清理失败残留？</string>
     <string name="resource_wizard_cleanup_confirm_summary">将先卸载这个资源留下的不完整内容，确认清理后再继续获取。</string>
     <string name="resource_wizard_cleanup_confirm_action">确认清理</string>

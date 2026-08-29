@@ -10,6 +10,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.content.res.AppCompatResources
@@ -130,11 +131,12 @@ internal class ResourceInstallWizardScreen(
         val title = TextView(root.context)
         val detail = TextView(root.context)
         val progress = TextView(root.context)
-        contentHost.addView(header(statusIcon, title, detail, progress))
-        headerBinding = HeaderBinding(statusIcon, title, detail, progress)
+        val progressBar = ProgressBar(root.context, null, android.R.attr.progressBarStyleHorizontal)
+        contentHost.addView(header(statusIcon, title, detail, progress, progressBar))
+        headerBinding = HeaderBinding(statusIcon, title, detail, progress, progressBar)
         primaryButton = actionButton().also(contentHost::addView)
         contentHost.addView(factory.sectionTitle(root.context.getString(R.string.resource_wizard_queue_title)).apply {
-            setPadding(0, factory.dp(24), 0, factory.dp(12))
+            setPadding(0, factory.dp(20), 0, factory.dp(10))
         })
         state.rows.forEach { row ->
             val binding = row(row)
@@ -149,10 +151,17 @@ internal class ResourceInstallWizardScreen(
             title.text = state.title
             detail.text = state.detail
             progress.text = if (state.totalCount > 0) {
-                "${state.completedCount}/${state.totalCount}"
+                root.context.getString(
+                    R.string.resource_wizard_progress_completed,
+                    state.completedCount,
+                    state.totalCount,
+                )
             } else {
                 "--"
             }
+            progressBar.max = state.totalCount.coerceAtLeast(1)
+            progressBar.progress = state.completedCount.coerceIn(0, progressBar.max)
+            progressBar.contentDescription = progress.text
         }
         bindPrimaryAction(state)
         state.rows.forEach { row -> rowBindings[row.resourceId]?.let { bindRow(it, row, now) } }
@@ -165,6 +174,7 @@ internal class ResourceInstallWizardScreen(
         }
         val pending = pendingPlanAction
         button.apply {
+            visibility = if (state.primaryIntent != null) View.VISIBLE else View.GONE
             text = if (pending == KiteInstallPlanActionIntent.StartNext) {
                 root.context.getString(R.string.resource_state_preparing)
             } else {
@@ -174,7 +184,7 @@ internal class ResourceInstallWizardScreen(
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
-            val enabled = state.primaryEnabled && pending == null
+            val enabled = state.primaryEnabled && pending == null && state.primaryIntent != null
             setTextColor(if (enabled) factory.tokens.buttonText else factory.tokens.textSecondary)
             background = factory.roundedBox(
                 if (enabled) factory.tokens.primaryStrong else factory.tokens.surface,
@@ -248,18 +258,10 @@ internal class ResourceInstallWizardScreen(
 
     private fun bindSecondaryAction(binding: RowBinding, row: ResourceInstallWizardRowViewState) {
         val canRecoverFailure = row.projection.failed && !row.projection.uninstalling
-        val runRequest = row.runRequest(CardRunSurface.Report)
-        val key = "${row.operation}|$canRecoverFailure|${runRequest?.instanceId.orEmpty()}"
+        val key = "${row.operation}|$canRecoverFailure"
         if (binding.secondaryKey == key) return
         binding.secondaryKey = key
         binding.secondaryHost.removeAllViews()
-        if (runRequest != null) {
-            binding.secondaryHost.addView(
-                inlineButton(
-                    label = root.context.getString(R.string.resource_wizard_view_live_log),
-                ) { onOpenRun(runRequest) }
-            )
-        }
         if (canRecoverFailure) {
             binding.secondaryHost.addView(
                 inlineButton(
@@ -271,11 +273,17 @@ internal class ResourceInstallWizardScreen(
         binding.secondaryHost.visibility = if (binding.secondaryHost.childCount > 0) View.VISIBLE else View.GONE
     }
 
-    private fun header(icon: ImageView, title: TextView, detail: TextView, progress: TextView): View =
+    private fun header(
+        icon: ImageView,
+        title: TextView,
+        detail: TextView,
+        progress: TextView,
+        progressBar: ProgressBar,
+    ): View =
         LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
-            minimumHeight = factory.dp(136)
-            setPadding(factory.dp(18), factory.dp(18), factory.dp(18), factory.dp(18))
+            minimumHeight = factory.dp(116)
+            setPadding(factory.dp(16), factory.dp(15), factory.dp(16), factory.dp(15))
             background = factory.roundedBox(
                 factory.tokens.cardBackground,
                 factory.tokens.border,
@@ -286,34 +294,44 @@ internal class ResourceInstallWizardScreen(
                 gravity = Gravity.CENTER_VERTICAL
                 addView(icon.apply {
                     scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    setPadding(factory.dp(15), factory.dp(15), factory.dp(15), factory.dp(15))
-                    layoutParams = LinearLayout.LayoutParams(factory.dp(54), factory.dp(54)).apply {
-                        setMargins(0, 0, factory.dp(14), 0)
+                    setPadding(factory.dp(12), factory.dp(12), factory.dp(12), factory.dp(12))
+                    layoutParams = LinearLayout.LayoutParams(factory.dp(46), factory.dp(46)).apply {
+                        setMargins(0, 0, factory.dp(12), 0)
                     }
                 })
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     addView(title.apply {
-                        textSize = 20f
+                        textSize = 18.5f
                         typeface = Typeface.DEFAULT_BOLD
                         setTextColor(factory.tokens.textPrimary)
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
                     })
                     addView(detail.apply {
-                        textSize = 12.5f
+                        textSize = 12f
                         setTextColor(factory.tokens.textSecondary)
-                        setPadding(0, factory.dp(6), 0, 0)
-                        maxLines = 2
+                        setPadding(0, factory.dp(4), 0, 0)
+                        maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
                     })
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             })
             addView(progress.apply {
-                textSize = 13f
+                textSize = 12.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(factory.tokens.primaryStrong)
-                setPadding(0, factory.dp(14), 0, 0)
+                setPadding(0, factory.dp(10), 0, 0)
+            })
+            addView(progressBar.apply {
+                progressTintList = ColorStateList.valueOf(factory.tokens.primaryStrong)
+                progressBackgroundTintList = ColorStateList.valueOf(factory.tokens.primarySubtle)
+                isIndeterminate = false
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                factory.dp(4),
+            ).apply {
+                setMargins(0, factory.dp(7), 0, 0)
             })
         }
 
@@ -372,7 +390,7 @@ internal class ResourceInstallWizardScreen(
         }
         val rootView = LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(factory.dp(14), factory.dp(13), factory.dp(14), factory.dp(13))
+            setPadding(factory.dp(14), factory.dp(12), factory.dp(14), factory.dp(12))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -385,37 +403,39 @@ internal class ResourceInstallWizardScreen(
                     typeface = Typeface.DEFAULT_BOLD
                     gravity = Gravity.CENTER
                     includeFontPadding = false
-                }, LinearLayout.LayoutParams(factory.dp(34), factory.dp(34)).apply {
+                }, LinearLayout.LayoutParams(factory.dp(32), factory.dp(32)).apply {
                     setMargins(0, 0, factory.dp(12), 0)
                 })
-                addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    addView(TextView(context).apply {
-                        text = state.name
-                        textSize = 15f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setTextColor(factory.tokens.textPrimary)
-                        maxLines = 1
-                        ellipsize = TextUtils.TruncateAt.END
-                    })
-                    addView(subtitle.apply {
-                        textSize = 11.5f
-                        setTextColor(factory.tokens.textSecondary)
-                        setPadding(0, factory.dp(4), 0, 0)
-                        maxLines = 3
-                        ellipsize = TextUtils.TruncateAt.END
-                    })
+                addView(TextView(context).apply {
+                    text = state.name
+                    textSize = 15f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(factory.tokens.textPrimary)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 addView(status.apply {
-                    textSize = 12.5f
+                    textSize = 12f
                     typeface = Typeface.DEFAULT_BOLD
                     gravity = Gravity.CENTER
                     includeFontPadding = false
-                    setPadding(factory.dp(12), 0, factory.dp(12), 0)
-                    minWidth = factory.dp(58)
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, factory.dp(26)).apply {
-                    setMargins(factory.dp(12), 0, 0, 0)
+                    setPadding(factory.dp(10), 0, factory.dp(10), 0)
+                    minWidth = factory.dp(54)
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, factory.dp(24)).apply {
+                    setMargins(factory.dp(10), 0, 0, 0)
                 })
+            })
+            addView(subtitle.apply {
+                textSize = 12f
+                setTextColor(factory.tokens.textSecondary)
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+                setLineSpacing(factory.dp(2).toFloat(), 1f)
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                setMargins(factory.dp(44), factory.dp(5), 0, 0)
             })
             addView(secondaryHost)
         }
@@ -491,7 +511,8 @@ internal class ResourceInstallWizardScreen(
         val icon: ImageView,
         val title: TextView,
         val detail: TextView,
-        val progress: TextView
+        val progress: TextView,
+        val progressBar: ProgressBar,
     )
 
     private data class RowBinding(
