@@ -81,19 +81,26 @@ internal class QwenCodeAgentConfigAdapter(
         skills: List<AgentSkillSummary>,
     ): NativeState {
         val environment = root.getObject(ENV_KEY)
-        val providers = root.getObject(MODEL_PROVIDERS_KEY)?.entries.orEmpty().mapNotNull { (id, value) ->
-            val models = value as? JsonArray ?: return@mapNotNull null
-            val summaries = models.mapNotNull { item ->
+        val providerModels = root.getObject(MODEL_PROVIDERS_KEY)?.entries.orEmpty().flatMap { (protocol, value) ->
+            (value as? JsonArray).orEmpty().mapNotNull { item ->
                 val model = item as? JsonObject ?: return@mapNotNull null
-                val modelId = model.string(ID_KEY)?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                if (model.string(ID_KEY).isNullOrBlank()) return@mapNotNull null
+                QwenProviderModel(protocol, model)
+            }
+        }
+        val providers = providerModels.groupBy { entry ->
+            entry.model.string(KITE_PROVIDER_ID_KEY)?.takeIf(String::isNotBlank) ?: entry.protocol
+        }.map { (id, entries) ->
+            val summaries = entries.mapNotNull { entry ->
+                val modelId = entry.model.string(ID_KEY)?.takeIf(String::isNotBlank) ?: return@mapNotNull null
                 AgentProviderModelSummary(
                     modelId,
-                    model.string(NAME_KEY)?.takeIf(String::isNotBlank) ?: modelId,
+                    entry.model.string(NAME_KEY)?.takeIf(String::isNotBlank) ?: modelId,
                 )
             }
-            val first = models.firstOrNull() as? JsonObject
-            val envKey = first?.string(ENV_KEY_FIELD)
-            val credential = if (!envKey.isNullOrBlank() && !environment?.string(envKey).isNullOrBlank()) {
+            val first = entries.first().model
+            val envKeys = entries.mapNotNull { it.model.string(ENV_KEY_FIELD) }.distinct()
+            val credential = if (envKeys.any { envKey -> !environment?.string(envKey).isNullOrBlank() }) {
                 AgentCredentialPresence.Present
             } else {
                 AgentCredentialPresence.Missing
@@ -101,13 +108,17 @@ internal class QwenCodeAgentConfigAdapter(
             AgentProviderSummary(
                 id = id,
                 displayName = id,
-                baseUrl = first?.string(BASE_URL_KEY),
+                baseUrl = first.string(BASE_URL_KEY),
                 models = summaries,
                 credentialPresence = credential,
             )
         }.sortedBy(AgentProviderSummary::id)
-        val activeProvider = root.getObject(SECURITY_KEY)?.getObject(AUTH_KEY)?.string(SELECTED_TYPE_KEY)
-            ?.takeIf { selected -> providers.any { it.id == selected } }
+        val activeProtocol = root.getObject(SECURITY_KEY)?.getObject(AUTH_KEY)?.string(SELECTED_TYPE_KEY)
+        val activeModel = root.getObject(MODEL_KEY)?.string(NAME_KEY)
+        val activeProvider = providerModels.firstOrNull { entry ->
+            entry.protocol == activeProtocol && entry.model.string(ID_KEY) == activeModel
+        }?.model?.string(KITE_PROVIDER_ID_KEY)?.takeIf(String::isNotBlank)
+            ?: activeProtocol?.takeIf { selected -> providers.any { it.id == selected } }
         return NativeState(
             defaultModel = root.getObject(MODEL_KEY)?.string(NAME_KEY),
             providers = providers,
@@ -143,27 +154,38 @@ internal class QwenCodeAgentConfigAdapter(
         credential: AgentProviderCredentialChange,
     ) {
         val providers = root.objectCopy(MODEL_PROVIDERS_KEY)
-        val existing = providers[provider.id] as? JsonArray
-        val existingById = existing.orEmpty().mapNotNull { value ->
+        val protocolModels = (providers[OPENAI_PROTOCOL] as? JsonArray).orEmpty()
+        val legacyModels = (providers[provider.id] as? JsonArray).orEmpty()
+        val ownedModels = (protocolModels + legacyModels).mapNotNull { value ->
             val model = value as? JsonObject ?: return@mapNotNull null
+            val owner = model.string(KITE_PROVIDER_ID_KEY)
+            if (owner == provider.id || value in legacyModels) model else null
+        }
+        val existingById = ownedModels.mapNotNull { model ->
             model.string(ID_KEY)?.let { it to model }
         }.toMap()
         val existingEnv = existingById.values.firstNotNullOfOrNull { it.string(ENV_KEY_FIELD) }
         val envName = existingEnv ?: qwenCredentialEnvironment(provider.id)
         val next = JsonArray()
+        protocolModels.filterNot { value ->
+            (value as? JsonObject)?.string(KITE_PROVIDER_ID_KEY) == provider.id
+        }.forEach(next::add)
         provider.models.forEach { summary ->
             val model = existingById[summary.id]?.clone() ?: JsonObject()
             putPreserving(model, ID_KEY, JsonPrimitive.of(summary.id.trim()))
             putPreserving(model, NAME_KEY, JsonPrimitive.of(summary.displayName.ifBlank { summary.id }.trim()))
             putPreserving(model, BASE_URL_KEY, JsonPrimitive.of(provider.baseUrl.trim()))
             putPreserving(model, ENV_KEY_FIELD, JsonPrimitive.of(envName))
+            putPreserving(model, KITE_PROVIDER_ID_KEY, JsonPrimitive.of(provider.id))
             next.add(model)
         }
-        putPreserving(providers, provider.id, next)
+        if (provider.id != OPENAI_PROTOCOL) providers.remove(provider.id)
+        putPreserving(providers, OPENAI_PROTOCOL, next)
         putPreserving(root, MODEL_PROVIDERS_KEY, providers)
         val protocols = root.objectCopy(PROVIDER_PROTOCOL_KEY)
-        putPreserving(protocols, provider.id, JsonPrimitive.of(OPENAI_PROTOCOL))
-        putPreserving(root, PROVIDER_PROTOCOL_KEY, protocols)
+        protocols.remove(provider.id)
+        if (protocols.isEmpty()) root.remove(PROVIDER_PROTOCOL_KEY)
+        else putPreserving(root, PROVIDER_PROTOCOL_KEY, protocols)
         val environment = root.objectCopy(ENV_KEY)
         when (credential) {
             AgentProviderCredentialChange.Keep -> Unit
@@ -181,14 +203,31 @@ internal class QwenCodeAgentConfigAdapter(
         putPreserving(root, MODEL_KEY, model)
         val security = root.objectCopy(SECURITY_KEY)
         val auth = security.objectCopy(AUTH_KEY)
-        putPreserving(auth, SELECTED_TYPE_KEY, JsonPrimitive.of(providerId))
+        val protocol = root.getObject(MODEL_PROVIDERS_KEY)?.entries?.firstOrNull { (_, value) ->
+            (value as? JsonArray).orEmpty().any { item ->
+                val candidate = item as? JsonObject ?: return@any false
+                candidate.string(KITE_PROVIDER_ID_KEY) == providerId && candidate.string(ID_KEY) == modelId
+            }
+        }?.key ?: OPENAI_PROTOCOL
+        putPreserving(auth, SELECTED_TYPE_KEY, JsonPrimitive.of(protocol))
         putPreserving(security, AUTH_KEY, auth)
         putPreserving(root, SECURITY_KEY, security)
     }
 
     private fun removeProvider(root: JsonObject, providerId: String, removeCredential: Boolean) {
         val providers = root.objectCopy(MODEL_PROVIDERS_KEY)
-        val removed = providers[providerId] as? JsonArray
+        val removed = mutableListOf<JsonObject>()
+        providers.entries.toList().forEach { (protocol, value) ->
+            val models = value as? JsonArray ?: return@forEach
+            val kept = JsonArray()
+            models.forEach { item ->
+                val model = item as? JsonObject
+                val belongsToProvider = model?.string(KITE_PROVIDER_ID_KEY) == providerId ||
+                    (protocol == providerId && model?.string(KITE_PROVIDER_ID_KEY).isNullOrBlank())
+                if (belongsToProvider && model != null) removed += model else kept.add(item)
+            }
+            if (kept.isEmpty()) providers.remove(protocol) else putPreserving(providers, protocol, kept)
+        }
         providers.remove(providerId)
         putPreserving(root, MODEL_PROVIDERS_KEY, providers)
         val protocols = root.objectCopy(PROVIDER_PROTOCOL_KEY)
@@ -196,15 +235,22 @@ internal class QwenCodeAgentConfigAdapter(
         putPreserving(root, PROVIDER_PROTOCOL_KEY, protocols)
         if (removeCredential) {
             val environment = root.objectCopy(ENV_KEY)
-            removed.orEmpty().mapNotNull { (it as? JsonObject)?.string(ENV_KEY_FIELD) }
+            removed.mapNotNull { it.string(ENV_KEY_FIELD) }
                 .distinct().forEach(environment::remove)
             putPreserving(root, ENV_KEY, environment)
         }
+        val currentModel = root.getObject(MODEL_KEY)?.string(NAME_KEY)
+        val removedCurrentModel = removed.any { it.string(ID_KEY) == currentModel }
         val security = root.objectCopy(SECURITY_KEY)
         val auth = security.objectCopy(AUTH_KEY)
-        if (auth.string(SELECTED_TYPE_KEY) == providerId) auth.remove(SELECTED_TYPE_KEY)
+        if (removedCurrentModel) auth.remove(SELECTED_TYPE_KEY)
         putPreserving(security, AUTH_KEY, auth)
         putPreserving(root, SECURITY_KEY, security)
+        if (removedCurrentModel) {
+            val model = root.objectCopy(MODEL_KEY)
+            model.remove(NAME_KEY)
+            putPreserving(root, MODEL_KEY, model)
+        }
     }
 
     private fun qwenCredentialEnvironment(providerId: String): String =
@@ -227,6 +273,7 @@ internal class QwenCodeAgentConfigAdapter(
         private const val ID_KEY = "id"
         private const val NAME_KEY = "name"
         private const val BASE_URL_KEY = "baseUrl"
+        private const val KITE_PROVIDER_ID_KEY = "x-kite-provider-id"
         private const val OPENAI_PROTOCOL = "openai"
         private val QWEN_PERMISSION_LEVELS = mapOf(
             "plan" to AgentPermissionLevel.ReadOnly,
@@ -236,4 +283,9 @@ internal class QwenCodeAgentConfigAdapter(
             "yolo" to AgentPermissionLevel.Full,
         )
     }
+
+    private data class QwenProviderModel(
+        val protocol: String,
+        val model: JsonObject,
+    )
 }
