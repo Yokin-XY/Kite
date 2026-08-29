@@ -61,7 +61,7 @@ internal abstract class StandardJsonMcpProtocolAgentConfigAdapter protected cons
         supported = setOf(
             AgentPersistentConfigCapability.Mcp,
             AgentPersistentConfigCapability.Skill,
-        ),
+        ) + additionalCapabilities(),
         credentialOwnership = AgentCredentialOwnership.AgentOwned,
         mcpOperations = buildSet {
             add(AgentMcpOperation.Create)
@@ -76,20 +76,33 @@ internal abstract class StandardJsonMcpProtocolAgentConfigAdapter protected cons
         skillOperations = setOf(AgentSkillOperation.Import, AgentSkillOperation.Remove),
     )
 
+    /** 只有具体 Agent 已核验原生字段后，才在共享 MCP/Skill 骨架上补充其他能力。 */
+    protected open fun additionalCapabilities(): Set<AgentPersistentConfigCapability> = emptySet()
+
     override fun decode(files: Map<String, ByteArray>): NativeState {
         val root = parse(files.getValue(CONFIG_KEY))
-        return NativeState(
-            defaultModel = null,
-            providers = emptyList(),
-            credentialPresence = AgentCredentialPresence.NotApplicable,
+        return decodeAdditionalState(
+            root = root,
             mcpServers = summaries(root),
             skills = skillDirectory.summaries(
                 activation = { AgentSkillActivation.Enabled },
                 activationOperations = emptySet(),
             ),
-            warnings = listOf("模型、Provider、推理和权限以 $agentDisplayName 当前会话公布的原生能力为准"),
         )
     }
+
+    protected open fun decodeAdditionalState(
+        root: JsonObject,
+        mcpServers: List<AgentMcpSummary>,
+        skills: List<com.kite.app.agent.config.AgentSkillSummary>,
+    ): NativeState = NativeState(
+            defaultModel = null,
+            providers = emptyList(),
+            credentialPresence = AgentCredentialPresence.NotApplicable,
+            mcpServers = mcpServers,
+            skills = skills,
+            warnings = listOf("模型、Provider、推理和权限以 $agentDisplayName 当前会话公布的原生能力为准"),
+        )
 
     override fun validateNativeChange(
         index: Int,
@@ -116,8 +129,9 @@ internal abstract class StandardJsonMcpProtocolAgentConfigAdapter protected cons
         }
     }
 
-    override fun validateNativeRequest(request: AgentConfigApplyRequest): List<AgentConfigValidationProblem> =
-        request.changes.mapIndexedNotNull { index, change ->
+    override fun validateNativeRequest(request: AgentConfigApplyRequest): List<AgentConfigValidationProblem> = buildList {
+        if (AgentPersistentConfigCapability.Provider in additionalCapabilities()) return@buildList
+        request.changes.mapIndexedNotNullTo(this) { index, change ->
             when (change) {
                 is AgentPersistentConfigChange.SetDefaultModel,
                 is AgentPersistentConfigChange.SelectProvider,
@@ -130,6 +144,7 @@ internal abstract class StandardJsonMcpProtocolAgentConfigAdapter protected cons
                 else -> null
             }
         }
+    }
 
     override suspend fun applyExternalChanges(
         request: AgentConfigApplyRequest,
@@ -171,11 +186,14 @@ internal abstract class StandardJsonMcpProtocolAgentConfigAdapter protected cons
                     putPreserving(root, MCP_SERVERS_KEY, servers)
                     removeExcluded(root, change.serverId)
                 }
-                else -> Unit
+                else -> mutateAdditionalState(root, change)
             }
         }
         return mapOf(CONFIG_KEY to serialize(root))
     }
+
+    /** 具体 Agent 只处理自己已经声明的额外原生字段；共享层继续拥有 MCP 与 Skill。 */
+    protected open fun mutateAdditionalState(root: JsonObject, change: AgentPersistentConfigChange) = Unit
 
     private fun summaries(root: JsonObject): List<AgentMcpSummary> {
         val excluded = excludedIds(root)

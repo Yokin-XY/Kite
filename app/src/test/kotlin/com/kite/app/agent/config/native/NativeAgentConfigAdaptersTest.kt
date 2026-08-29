@@ -245,7 +245,7 @@ class NativeAgentConfigAdaptersTest {
 
         val qwen = (QwenCodeAgentConfigAdapter(context, ::container).readLive("qwen-code") as AgentConfigReadResult.Ready)
             .snapshot
-        val reasonix = (ReasonixAgentConfigAdapter(::container).readLive("reasonix") as AgentConfigReadResult.Ready)
+        val reasonix = (ReasonixAgentConfigAdapter(context, ::container).readLive("reasonix") as AgentConfigReadResult.Ready)
             .snapshot
 
         assertEquals(listOf("duplicate", "shared"), qwen.skills.map { it.id })
@@ -787,7 +787,7 @@ class NativeAgentConfigAdaptersTest {
     }
 
     @Test
-    fun kimiUsesSeparateMcpFileAndSkillFrontmatterWithoutInventingProviderSchema() = runTest {
+    fun kimiUsesSeparateNativeFilesForProviderMcpAndSkill() = runTest {
         val mcp = nativeFile("root/.kimi-code/mcp.json")
         mcp.writeText(
             """
@@ -814,7 +814,7 @@ class NativeAgentConfigAdaptersTest {
         val adapter = KimiCodeAgentConfigAdapter(context, ::container)
         val before = (adapter.readLive("kimi") as AgentConfigReadResult.Ready).snapshot
 
-        assertTrue(AgentPersistentConfigCapability.Provider !in adapter.capabilities().supported)
+        assertTrue(AgentPersistentConfigCapability.Provider in adapter.capabilities().supported)
         assertEquals(AgentMcpTransport.Stdio, before.mcpServers.single().transport)
         assertFalse(before.mcpServers.single().enabled)
         assertEquals(setOf("review", "shared"), before.skills.map { it.id }.toSet())
