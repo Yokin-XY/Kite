@@ -53,6 +53,25 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
+    fun githubCopilotUsesDomesticNpmRouteForInstallAndUpdate() {
+        val manifestFile = File(resourceRoot(), "kite.github.copilot/manifest.json")
+        val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
+        val expectedArguments = listOf(
+            "--registry=https://registry.npmmirror.com",
+            "--no-update-notifier",
+            "--no-audit",
+            "--no-fund",
+        )
+
+        assertEquals(expectedArguments, manifest.source.installArguments)
+        assertEquals(expectedArguments, manifest.installActions.single().installSteps.first().arguments)
+        assertTrue(
+            KiteResourceInstallPlanCompiler.compile(manifest.installActions.single())
+                .contains("--registry=https://registry.npmmirror.com"),
+        )
+    }
+
+    @Test
     fun kimiCodeUsesTheSameAcpRegistrationAndAgentRecipeContract() {
         val manifestFile = File(resourceRoot(), "kite.kimi.code/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
