@@ -606,6 +606,14 @@ internal class AndroidResourceActionGateway(
             )
             return@withEnvironment PlanCancelOutcome(true, message("获取任务已取消"))
         }
+        if (ResourcePlanCancellationPolicy.canCancelBeforeFirstStart(currentPlan, targetResourceId)) {
+            clearInstallTask(
+                targetId = currentPlan.targetResourceId,
+                resourceIds = currentPlan.resourceIds,
+                environmentId = environmentId,
+            )
+            return@withEnvironment PlanCancelOutcome(true, message("获取任务已取消"))
+        }
         val resourceIds = currentPlan.resourceIds
             .ifEmpty { planResourceIds.filter(String::isNotBlank) }
             .ifEmpty { listOfNotNull(targetResourceId.takeIf(String::isNotBlank)) }

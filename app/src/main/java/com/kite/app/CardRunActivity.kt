@@ -114,6 +114,7 @@ class CardRunActivity : AppCompatActivity() {
     private var registeredCloserGeneration: Long? = null
     private var pendingCloseInstanceId: String? = null
     private var pendingCloseGeneration: Long? = null
+    private var resolvingInstallWizardBack = false
     private var tickScheduled = false
     private var agentSurfaceBinding: RunAgentSurfaceBinding? = null
     private val agentAttachmentPicker = registerForActivityResult(
@@ -930,12 +931,44 @@ class CardRunActivity : AppCompatActivity() {
         currentChildren = emptyList()
         pendingCloseInstanceId = null
         pendingCloseGeneration = null
+        resolvingInstallWizardBack = false
     }
 
     private fun navigateBackFromTask() {
         when (CardRunTaskNavigationPolicy.decide(currentState)) {
+            CardRunTaskNavigationAction.ResolveInstallWizardBack -> resolveInstallWizardBack()
             CardRunTaskNavigationAction.HideTask -> moveTaskToBack(true)
             CardRunTaskNavigationAction.CloseTask -> closeTaskWindow(CardRunTaskCloseReason.DismissSurface)
+        }
+    }
+
+    private fun resolveInstallWizardBack() {
+        val state = currentState ?: run {
+            closeTaskWindow(CardRunTaskCloseReason.DismissSurface)
+            return
+        }
+        if (resolvingInstallWizardBack) return
+        resolvingInstallWizardBack = true
+        lifecycleScope.launch {
+            val result = graph.runInstanceCloseCoordinator.close(
+                RunInstanceCloseCommand(
+                    instanceId = state.instanceId,
+                    expectedGeneration = state.createdAt,
+                    source = RunInstanceCloseSource.NavigateBack,
+                )
+            )
+            resolvingInstallWizardBack = false
+            when (result) {
+                is RunCommandResult.Accepted ->
+                    closeTaskWindow(CardRunTaskCloseReason.StopConfirmed)
+                is RunCommandResult.Ignored -> {
+                    if (result.reason == "missing_instance" || result.reason == "generation_mismatch") {
+                        closeTaskWindow(CardRunTaskCloseReason.DismissSurface)
+                    } else {
+                        moveTaskToBack(true)
+                    }
+                }
+            }
         }
     }
 

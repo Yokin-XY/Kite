@@ -29,6 +29,7 @@ import com.kite.app.application.browser.BrowserOpenCoordinator
 import com.kite.app.application.packages.InstallApkCoordinator
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceActionWorkflowCoordinator
+import com.kite.app.application.resources.ResourcePlanCancellationPolicy
 import com.kite.app.application.resources.ResourceVersionCoordinator
 import com.kite.app.application.resources.ResourceVersionBatchSummary
 import com.kite.app.application.recipes.RecipeFeatureGateway
@@ -37,6 +38,7 @@ import com.kite.app.application.runs.RunExecutionEnvironmentProvider
 import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunHistoryGateway
 import com.kite.app.application.runs.RunInstanceCloseCoordinator
+import com.kite.app.application.runs.RunInstanceCloseSource
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartGate
 import com.kite.app.application.runs.RecipeActionWorkflowCoordinator
@@ -492,10 +494,15 @@ internal class KiteAppGraph private constructor(context: Context) {
             scope = processScope,
             state = CardRunStore::get,
             stopRun = { command -> runOrchestrator.stop(command) },
-            cancelInstallWizard = { state ->
+            cancelInstallWizard = { state, source ->
                 val targetResourceId = state.stepId.orEmpty()
                 val plan = resourceInstallStore.planSnapshot(state.environmentId)
-                if (state.status in INSTALL_WIZARD_ENDED_STATUSES) {
+                if (
+                    source == RunInstanceCloseSource.NavigateBack &&
+                    !ResourcePlanCancellationPolicy.canCancelBeforeFirstStart(plan, targetResourceId)
+                ) {
+                    false
+                } else if (state.status in INSTALL_WIZARD_ENDED_STATUSES) {
                     CardRunStore.removeRun(state.instanceId, state.createdAt) != null
                 } else if (
                     targetResourceId.isNotBlank() &&

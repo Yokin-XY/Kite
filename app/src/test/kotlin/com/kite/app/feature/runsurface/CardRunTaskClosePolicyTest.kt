@@ -8,12 +8,12 @@ import org.junit.Test
 
 class CardRunTaskClosePolicyTest {
     @Test
-    fun `安装向导普通导航只隐藏任务而不进入关闭策略`() {
+    fun `安装向导返回交给状态拥有者解析是否尚未开始`() {
         val action = CardRunTaskNavigationPolicy.decide(
             state(CardRunState.OWNER_KIND_INSTALL_WIZARD, CardRunSurface.InstallWizard)
         )
 
-        assertEquals(CardRunTaskNavigationAction.HideTask, action)
+        assertEquals(CardRunTaskNavigationAction.ResolveInstallWizardBack, action)
     }
 
     @Test

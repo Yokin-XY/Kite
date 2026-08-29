@@ -7,6 +7,7 @@ import kotlinx.coroutines.launch
 
 internal enum class RunInstanceCloseSource {
     Explicit,
+    NavigateBack,
     TaskRemoved,
     MainTaskRemoved,
 }
@@ -18,13 +19,14 @@ internal data class RunInstanceCloseCommand(
 )
 
 /**
- * 显式关闭与系统任务移除的进程级统一入口。页面返回不经过这里。
+ * 显式关闭、系统任务移除，以及需要解析运行语义的页面返回共用的进程级入口。
+ * 普通页面返回仍只做导航；只有安装向导会在这里判断能否取消尚未开始的计划。
  */
 internal class RunInstanceCloseCoordinator(
     private val scope: CoroutineScope,
     private val state: (String) -> CardRunState?,
     private val stopRun: (RunStopCommand) -> RunCommandResult,
-    private val cancelInstallWizard: suspend (CardRunState) -> Boolean,
+    private val cancelInstallWizard: suspend (CardRunState, RunInstanceCloseSource) -> Boolean,
 ) {
     private data class CloseKey(val instanceId: String, val generation: Long)
 
@@ -63,7 +65,7 @@ internal class RunInstanceCloseCoordinator(
             return RunCommandResult.Ignored("generation_mismatch")
         }
         return if (current.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD) {
-            if (cancelInstallWizard(current)) {
+            if (cancelInstallWizard(current, command.source)) {
                 RunCommandResult.Accepted(current.instanceId)
             } else {
                 RunCommandResult.Ignored("install_wizard_close_rejected")
