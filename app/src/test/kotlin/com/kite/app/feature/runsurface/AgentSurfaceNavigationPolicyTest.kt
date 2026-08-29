@@ -743,6 +743,34 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
+    fun `供应商离开策略只拦截真实草稿变化且不持有凭据`() {
+        val baseline = AgentProviderEditorDraftSnapshot(
+            providerId = "zhipu",
+            displayName = "智谱 GLM",
+            baseUrl = "https://open.bigmodel.cn/api/paas/v4/",
+            models = listOf(AgentProviderModelSummary("glm-5.2", "GLM-5.2")),
+            groupId = null,
+            presetId = "zhipu-global-api",
+            catalogSync = null,
+            credentialChanged = false,
+        )
+
+        assertFalse(AgentProviderEditorExitPolicy.hasUnsavedChanges(baseline, baseline.copy()))
+        assertTrue(
+            AgentProviderEditorExitPolicy.hasUnsavedChanges(
+                baseline,
+                baseline.copy(displayName = "智谱国际版"),
+            )
+        )
+        assertTrue(
+            AgentProviderEditorExitPolicy.hasUnsavedChanges(
+                baseline,
+                baseline.copy(credentialChanged = true),
+            )
+        )
+    }
+
+    @Test
     fun `API Key 输入保持掩码并安全清理剪贴板首尾空白`() {
         assertEquals(
             InputType.TYPE_TEXT_VARIATION_PASSWORD,

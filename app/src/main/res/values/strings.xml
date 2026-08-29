@@ -567,9 +567,6 @@
     <string name="recipe_editor_description_title">说明</string>
     <string name="recipe_editor_description_hint">简短说明这张卡片会做什么</string>
     <string name="recipe_editor_flow_title">动作流程</string>
-    <string name="recipe_editor_template_web">打开网页</string>
-    <string name="recipe_editor_template_command_web">命令 + 网页</string>
-    <string name="recipe_editor_template_service">启动服务</string>
     <string name="recipe_editor_add_action">添加动作</string>
     <string name="recipe_editor_group_title">所属分组</string>
     <string name="recipe_editor_choose">选择</string>
@@ -597,10 +594,7 @@
     <string name="recipe_editor_keep_notification_title">保留结束通知</string>
     <string name="recipe_editor_keep_notification_summary">运行结束后保留可清除的结果通知。</string>
     <string name="recipe_editor_shortcut_title">桌面快捷方式</string>
-    <string name="recipe_editor_shortcut_after_save">保存后申请</string>
     <string name="recipe_editor_shortcut_request">点击后申请创建</string>
-    <string name="recipe_editor_save_changes">保存修改</string>
-    <string name="recipe_editor_save_changes_summary">校验并写入卡片注册存储</string>
     <string name="recipe_editor_delete_config">删除配置</string>
     <string name="recipe_editor_delete_config_summary">从卡片注册存储移除</string>
     <string name="recipe_editor_status_loading">正在读取卡片</string>

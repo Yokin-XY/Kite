@@ -105,6 +105,23 @@ class RecipeEditorScreenTest {
         assertEquals(KiteRecipe.STEP_AGENT, actions.putSteps.single().second.type)
     }
 
+    @Test
+    fun desktopShortcutIsImmediateAndMoreMenuHasNoDuplicateSaveCommand() {
+        val actions = RecordingActions()
+        val screen = screen(actions)
+        attach(screen)
+        screen.render(state())
+
+        screen.showMoreDialog()
+        val dialogRoot = ShadowDialog.getLatestDialog().window!!.decorView
+        assertTrue(dialogRoot.allText().none { it == "保存修改" || it == "Save changes" })
+        val shortcutTitle = screen.root.context.getString(R.string.recipe_editor_shortcut_title)
+        val shortcutRow = dialogRoot.findByText(shortcutTitle)!!.parent!!.parent as View
+        shortcutRow.performClick()
+
+        assertEquals(1, actions.shortcutRequests)
+    }
+
     private fun screen(actions: RecordingActions): RecipeEditorScreen {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         return RecipeEditorScreen(
@@ -192,6 +209,7 @@ class RecipeEditorScreenTest {
     private class RecordingActions : RecipeEditorScreenActions {
         val moves = mutableListOf<Pair<Int, Int>>()
         val putSteps = mutableListOf<Pair<Int?, RecipeEditorStepDraft>>()
+        var shortcutRequests = 0
 
         override fun onBack() = Unit
         override fun onSave() = Unit
@@ -205,7 +223,9 @@ class RecipeEditorScreenTest {
         override fun onCreateGroup(name: String) = Unit
         override fun onSetLaunchOpenInstance(enabled: Boolean) = Unit
         override fun onSetKeepFinishedNotification(enabled: Boolean) = Unit
-        override fun onSetShortcutRequested(requested: Boolean) = Unit
+        override fun onRequestShortcut() {
+            shortcutRequests += 1
+        }
         override fun onPutStep(index: Int?, step: RecipeEditorStepDraft) {
             putSteps += index to step
         }
@@ -213,7 +233,6 @@ class RecipeEditorScreenTest {
         override fun onMoveStep(from: Int, to: Int) {
             moves += from to to
         }
-        override fun onApplyTemplate(type: String) = Unit
         override fun onOpenRawJson(recipeId: String) = Unit
         override fun onOpenRunHistory(recipeId: String) = Unit
         override fun onRun(intent: KiteRecipeActionIntent) = Unit

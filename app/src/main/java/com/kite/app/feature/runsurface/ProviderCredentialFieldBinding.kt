@@ -44,6 +44,10 @@ internal class ProviderCredentialFieldBinding(
             value = field.text,
         )
 
+    /** 只暴露是否存在待提交变化，避免把 API Key 带进页面草稿或比较逻辑。 */
+    fun hasPendingChange(): Boolean =
+        credentialChange() !is AgentProviderCredentialChange.Keep
+
     fun setEnabledState(enabled: Boolean) {
         field.isEnabled = enabled
         field.alpha = if (enabled) 1f else 0.45f

@@ -86,7 +86,6 @@ class RecipeEditorControllerTest {
         controller.dispatch(RecipeEditorAction.SetDescription("  Description  "))
         controller.dispatch(RecipeEditorAction.SelectGroup("ai"))
         controller.dispatch(RecipeEditorAction.SetKeepFinishedNotification(true))
-        controller.dispatch(RecipeEditorAction.SetShortcutRequested(true))
         controller.dispatch(
             RecipeEditorAction.PutStep(
                 null,
@@ -96,7 +95,7 @@ class RecipeEditorControllerTest {
 
         val effect = controller.dispatch(RecipeEditorAction.Save)
 
-        assertEquals(RecipeEditorEffect.Saved("saved", true), effect)
+        assertEquals(RecipeEditorEffect.Saved("saved"), effect)
         assertEquals("New Tool", gateway.savedInput?.name)
         assertEquals("echo ok", gateway.savedInput?.steps?.single()?.command)
         assertEquals("ai", gateway.savedInput?.groupId)

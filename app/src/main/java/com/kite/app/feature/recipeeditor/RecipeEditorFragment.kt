@@ -195,11 +195,13 @@ internal class RecipeEditorFragment : Fragment() {
         override fun onSetKeepFinishedNotification(enabled: Boolean) =
             dispatch(RecipeEditorAction.SetKeepFinishedNotification(enabled))
 
-        override fun onSetShortcutRequested(requested: Boolean) {
-            if (requested && !controller.state.value.draft.shortcutRequested) {
-                Toast.makeText(requireContext(), "已选择，保存后将申请添加到桌面", Toast.LENGTH_SHORT).show()
+        override fun onRequestShortcut() {
+            val recipeId = controller.state.value.originalRecipe?.id
+            if (recipeId == null) {
+                Toast.makeText(requireContext(), "请先保存卡片", Toast.LENGTH_SHORT).show()
+            } else {
+                send(RecipeEditorRequest.RequestShortcut(recipeId))
             }
-            dispatch(RecipeEditorAction.SetShortcutRequested(requested))
         }
 
         override fun onPutStep(index: Int?, step: RecipeEditorStepDraft) =
@@ -209,9 +211,6 @@ internal class RecipeEditorFragment : Fragment() {
 
         override fun onMoveStep(from: Int, to: Int) =
             dispatch(RecipeEditorAction.MoveStep(from, to))
-
-        override fun onApplyTemplate(type: String) =
-            dispatch(RecipeEditorAction.ApplyTemplate(type))
 
         override fun onOpenRawJson(recipeId: String) = persistThenSend(
             RecipeEditorRequest.OpenRawJson(recipeId)
@@ -240,9 +239,6 @@ internal class RecipeEditorFragment : Fragment() {
             is RecipeEditorEffect.Saved -> {
                 closing = true
                 Toast.makeText(requireContext(), "已保存配置", Toast.LENGTH_SHORT).show()
-                if (effect.shortcutRequested) {
-                    send(RecipeEditorRequest.RequestShortcut(effect.recipeId))
-                }
                 send(RecipeEditorRequest.Close)
             }
             is RecipeEditorEffect.Deleted -> {

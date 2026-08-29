@@ -90,7 +90,6 @@ internal data class RecipeEditorDraft(
     val groupId: String = "",
     val name: String = "",
     val description: String = "",
-    val shortcutRequested: Boolean = false,
     val launchOpenInstance: Boolean = true,
     val keepFinishedNotification: Boolean = false,
     val steps: List<RecipeEditorStepDraft> = emptyList()
@@ -201,7 +200,6 @@ internal data class RecipeEditorDraft(
         .put("groupId", groupId)
         .put("name", name)
         .put("description", description)
-        .put("shortcutRequested", shortcutRequested)
         .put("launchOpenInstance", launchOpenInstance)
         .put("keepFinishedNotification", keepFinishedNotification)
         .put("steps", JSONArray().apply {
@@ -273,7 +271,6 @@ internal data class RecipeEditorDraft(
                 groupId = json.optString("groupId"),
                 name = json.optString("name"),
                 description = json.optString("description"),
-                shortcutRequested = json.optBoolean("shortcutRequested", false),
                 launchOpenInstance = json.optBoolean("launchOpenInstance", true),
                 keepFinishedNotification = json.optBoolean("keepFinishedNotification", false),
                 steps = steps
@@ -337,12 +334,10 @@ internal sealed interface RecipeEditorAction {
     data class SelectGroup(val groupId: String) : RecipeEditorAction
     data class SetLaunchOpenInstance(val enabled: Boolean) : RecipeEditorAction
     data class SetKeepFinishedNotification(val enabled: Boolean) : RecipeEditorAction
-    data class SetShortcutRequested(val requested: Boolean) : RecipeEditorAction
     data class ReconcileAgents(val agents: List<AgentRegistryEntry>) : RecipeEditorAction
     data class PutStep(val index: Int?, val step: RecipeEditorStepDraft) : RecipeEditorAction
     data class RemoveStep(val index: Int) : RecipeEditorAction
     data class MoveStep(val from: Int, val to: Int) : RecipeEditorAction
-    data class ApplyTemplate(val type: String) : RecipeEditorAction
     data class CreateGroup(val name: String) : RecipeEditorAction
     data class SetRuntimeBlocked(val blocked: Boolean) : RecipeEditorAction
     data object ReconcileRun : RecipeEditorAction
@@ -354,7 +349,7 @@ internal sealed interface RecipeEditorAction {
 }
 
 internal sealed interface RecipeEditorEffect {
-    data class Saved(val recipeId: String, val shortcutRequested: Boolean) : RecipeEditorEffect
+    data class Saved(val recipeId: String) : RecipeEditorEffect
     data class Deleted(val recipeId: String, val removedCardInstanceIds: Set<String>) : RecipeEditorEffect
     data class DeleteRequiresStop(val request: KiteRecipeActionRequest) : RecipeEditorEffect
     data class ActionRequested(val request: KiteRecipeActionRequest) : RecipeEditorEffect

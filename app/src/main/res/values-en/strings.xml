@@ -568,9 +568,6 @@
     <string name="recipe_editor_description_title">Description</string>
     <string name="recipe_editor_description_hint">Briefly describe what this card does</string>
     <string name="recipe_editor_flow_title">Action flow</string>
-    <string name="recipe_editor_template_web">Open web page</string>
-    <string name="recipe_editor_template_command_web">Command + web</string>
-    <string name="recipe_editor_template_service">Start service</string>
     <string name="recipe_editor_add_action">Add action</string>
     <string name="recipe_editor_group_title">Group</string>
     <string name="recipe_editor_choose">Choose</string>
@@ -598,10 +595,7 @@
     <string name="recipe_editor_keep_notification_title">Keep completion notification</string>
     <string name="recipe_editor_keep_notification_summary">Keep a dismissible result notification after the run ends.</string>
     <string name="recipe_editor_shortcut_title">Home screen shortcut</string>
-    <string name="recipe_editor_shortcut_after_save">Request after saving</string>
     <string name="recipe_editor_shortcut_request">Tap to request creation</string>
-    <string name="recipe_editor_save_changes">Save changes</string>
-    <string name="recipe_editor_save_changes_summary">Validate and write to card registration storage</string>
     <string name="recipe_editor_delete_config">Delete configuration</string>
     <string name="recipe_editor_delete_config_summary">Remove from card registration storage</string>
     <string name="recipe_editor_status_loading">Loading card</string>

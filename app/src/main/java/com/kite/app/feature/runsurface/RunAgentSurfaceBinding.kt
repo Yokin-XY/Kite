@@ -321,6 +321,7 @@ internal class RunAgentSurfaceBinding(
     private var draftModelLoadJob: Job? = null
     private var providerEditorStatusText: TextView? = null
     private var providerEditorSaveAction: TextView? = null
+    private var providerEditorBackHandler: (() -> Unit)? = null
     private var providerLibraryGroupId: String = AgentModelLibraryStore.ALL_GROUP_ID
     private var providerLibraryMode: AgentProviderLibraryMode = AgentProviderLibraryMode.Browse
     private val expandedProviderIds = linkedSetOf<String>()
@@ -518,7 +519,7 @@ internal class RunAgentSurfaceBinding(
         }
         return when (navigationScreen) {
         AgentNavigationScreen.ProviderEditor -> {
-            showCurrentProviderList()
+            requestProviderEditorExit()
             true
         }
         AgentNavigationScreen.ProviderPresetPicker,
@@ -3755,6 +3756,7 @@ internal class RunAgentSurfaceBinding(
         target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot
     ) {
+        providerEditorBackHandler = null
         val targetAgentId = selected.registration.definition.agentId
         if (providerPageAgentId != null && providerPageAgentId != targetAgentId) {
             providerLibraryGroupId = AgentModelLibraryStore.ALL_GROUP_ID
@@ -5069,6 +5071,10 @@ internal class RunAgentSurfaceBinding(
             return
         }
         showProviderManager(selected, target, snapshot)
+    }
+
+    private fun requestProviderEditorExit() {
+        providerEditorBackHandler?.invoke() ?: showCurrentProviderList()
     }
 
     private fun buildAgentSubpageHeader(
@@ -7209,6 +7215,7 @@ internal class RunAgentSurfaceBinding(
         existing: AgentProviderSummary?,
         preset: AgentProviderPreset?
     ) {
+        providerEditorBackHandler = null
         providerPageAgentId = selected.registration.definition.agentId
         providerPageTarget = target
         providerPageSnapshot = snapshot
@@ -7496,6 +7503,19 @@ internal class RunAgentSurfaceBinding(
         }
 
         replaceModels(initialModels)
+        fun currentDraftSnapshot() = AgentProviderEditorDraftSnapshot(
+            providerId = idInput.text?.toString()?.trim().orEmpty(),
+            displayName = nameInput.text?.toString()?.trim().orEmpty(),
+            baseUrl = urlInput.text?.toString()?.trim().orEmpty(),
+            models = modelDrafts.map { model ->
+                model.copy(id = model.id.trim(), displayName = model.displayName.trim())
+            },
+            groupId = selectedGroupId,
+            presetId = selectedPreset?.id,
+            catalogSync = catalogSync,
+            credentialChanged = credentialInput.hasPendingChange(),
+        )
+        val baselineDraft = currentDraftSnapshot()
         val saveAction = TextView(context).apply {
             text = "保存"
             textSize = 15f
@@ -7560,6 +7580,30 @@ internal class RunAgentSurfaceBinding(
             }
         }
         providerEditorSaveAction = saveAction
+        providerEditorBackHandler = {
+            if (!saveAction.isEnabled) {
+                Toast.makeText(context, "正在保存供应商，请稍候", Toast.LENGTH_SHORT).show()
+            } else if (!AgentProviderEditorExitPolicy.hasUnsavedChanges(
+                    baselineDraft,
+                    currentDraftSnapshot(),
+                )) {
+                showCurrentProviderList()
+            } else {
+                ui.showChoiceDialog(
+                    context = context,
+                    title = "保存对供应商的修改？",
+                    options = listOf("保存更改", "放弃更改"),
+                    selectedIndex = -1,
+                    dismissLabel = "继续编辑",
+                ) { selectedIndex ->
+                    if (selectedIndex == 0) {
+                        saveAction.performClick()
+                    } else {
+                        showCurrentProviderList()
+                    }
+                }
+            }
+        }
         val editorScroll = ScrollView(context).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -7614,7 +7658,7 @@ internal class RunAgentSurfaceBinding(
             addView(buildAgentSubpageHeader(
                 title = if (existing == null) "新建供应商" else "编辑供应商",
                 backDescription = "返回供应商配置",
-                onBack = ::showCurrentProviderList,
+                onBack = ::requestProviderEditorExit,
                 trailingView = saveAction
             ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
             addView(editorBody, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))

@@ -16,7 +16,6 @@ import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridLayout
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -53,11 +52,10 @@ internal interface RecipeEditorScreenActions {
     fun onCreateGroup(name: String)
     fun onSetLaunchOpenInstance(enabled: Boolean)
     fun onSetKeepFinishedNotification(enabled: Boolean)
-    fun onSetShortcutRequested(requested: Boolean)
+    fun onRequestShortcut()
     fun onPutStep(index: Int?, step: RecipeEditorStepDraft)
     fun onRemoveStep(index: Int)
     fun onMoveStep(from: Int, to: Int)
-    fun onApplyTemplate(type: String)
     fun onOpenRawJson(recipeId: String)
     fun onOpenRunHistory(recipeId: String)
     fun onRun(intent: KiteRecipeActionIntent)
@@ -113,7 +111,6 @@ internal class RecipeEditorScreen(
             addView(descriptionPanel())
             addView(divider(dp(24)))
             addView(sectionTitle(context.getString(R.string.recipe_editor_flow_title)))
-            addView(templateRow())
             addView(stepsHost)
             addView(addStepButton())
             addView(existingOnlyHost)
@@ -409,19 +406,10 @@ internal class RecipeEditorScreen(
             ) { actions.onSetKeepFinishedNotification(it) })
             addView(commandRow(
                 context.getString(R.string.recipe_editor_shortcut_title),
-                context.getString(
-                    if (state.draft.shortcutRequested) R.string.recipe_editor_shortcut_after_save
-                    else R.string.recipe_editor_shortcut_request,
-                )
-            ) {
-                actions.onSetShortcutRequested(true)
-            })
-            addView(commandRow(
-                context.getString(R.string.recipe_editor_save_changes),
-                context.getString(R.string.recipe_editor_save_changes_summary),
+                context.getString(R.string.recipe_editor_shortcut_request)
             ) {
                 dialog.dismiss()
-                actions.onSave()
+                actions.onRequestShortcut()
             })
             if (!state.isNew) {
                 addView(commandRow(
@@ -551,33 +539,6 @@ internal class RecipeEditorScreen(
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
             setMargins(0, dp(10), 0, 0)
         })
-    }
-
-    private fun templateRow(): View = HorizontalScrollView(context).apply {
-        isHorizontalScrollBarEnabled = false
-        addView(row().apply {
-            setPadding(0, 0, 0, dp(8))
-            addView(templateChip(context.getString(R.string.recipe_editor_template_web), KiteRecipe.TYPE_OPEN_URL))
-            addView(templateChip(context.getString(R.string.recipe_editor_template_command_web), KiteRecipe.TYPE_COMMAND_WEB))
-            addView(templateChip(context.getString(R.string.recipe_editor_template_service), KiteRecipe.TYPE_START_SERVICE))
-        })
-    }
-
-    private fun templateChip(label: String, type: String): View = TextView(context).apply {
-        text = label
-        ui.applyTextRole(this, UiTextRole.Badge)
-        gravity = Gravity.CENTER
-        setTextColor(tokens.primaryStrong)
-        background = ui.containerBackground(
-            tokens.primarySubtle,
-            tokens.primarySoft,
-            environment.components.chip,
-        )
-        setPadding(dp(12), 0, dp(12), 0)
-        setOnClickListener { actions.onApplyTemplate(type) }
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply {
-            setMargins(0, 0, dp(7), 0)
-        }
     }
 
     private fun addStepButton(): View = row().apply {
@@ -1240,6 +1201,7 @@ internal class RecipeEditorScreen(
         row().apply {
             setPadding(0, dp(12), 0, dp(12))
             isClickable = true
+            contentDescription = title
             setOnClickListener { click() }
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL

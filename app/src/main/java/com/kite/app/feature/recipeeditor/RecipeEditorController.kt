@@ -54,14 +54,10 @@ internal class RecipeEditorController(
             is RecipeEditorAction.SetKeepFinishedNotification -> updateDraft {
                 copy(keepFinishedNotification = action.enabled)
             }
-            is RecipeEditorAction.SetShortcutRequested -> updateDraft {
-                copy(shortcutRequested = action.requested)
-            }
             is RecipeEditorAction.ReconcileAgents -> reconcileAgents(action.agents)
             is RecipeEditorAction.PutStep -> putStep(action.index, action.step)
             is RecipeEditorAction.RemoveStep -> removeStep(action.index)
             is RecipeEditorAction.MoveStep -> moveStep(action.from, action.to)
-            is RecipeEditorAction.ApplyTemplate -> applyTemplate(action.type)
             is RecipeEditorAction.CreateGroup -> createGroup(action.name)
             is RecipeEditorAction.SetRuntimeBlocked -> {
                 if (mutableState.value.runtimeBlocked != action.blocked) {
@@ -218,24 +214,6 @@ internal class RecipeEditorController(
         copy(steps = next)
     }
 
-    private fun applyTemplate(type: String): RecipeEditorEffect? = updateDraft {
-        val next = when (type) {
-            KiteRecipe.TYPE_COMMAND_WEB -> listOf(
-                RecipeEditorStepDraft.shell(),
-                RecipeEditorStepDraft.openWeb()
-            )
-            KiteRecipe.TYPE_START_SERVICE -> listOf(RecipeEditorStepDraft.shell())
-            else -> listOf(RecipeEditorStepDraft.openWeb())
-        }
-        copy(
-            selectedType = type,
-            selectedIconName = KiteRecipeIcon.defaultNameForType(type),
-            selectedIconType = KiteRecipeIcon.TYPE_BUILTIN,
-            selectedIconSource = "",
-            steps = next
-        )
-    }
-
     private suspend fun createGroup(rawName: String): RecipeEditorEffect {
         val name = rawName.trim()
         if (name.isBlank()) return RecipeEditorEffect.Failed("create_group", "请输入分组名称")
@@ -335,7 +313,7 @@ internal class RecipeEditorController(
                     },
                     revision = mutableState.value.revision + 1L
                 )
-                RecipeEditorEffect.Saved(saved.id, normalized.shortcutRequested)
+                RecipeEditorEffect.Saved(saved.id)
             },
             onFailure = { error ->
                 mutableState.value = mutableState.value.copy(
