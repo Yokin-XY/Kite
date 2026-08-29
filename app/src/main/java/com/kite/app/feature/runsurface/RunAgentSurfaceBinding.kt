@@ -119,6 +119,7 @@ import com.kite.app.agent.market.AgentExtensionInstallSpec
 import com.kite.app.agent.market.AgentExtensionMarketItem
 import com.kite.app.agent.market.AgentExtensionMarketKind
 import com.kite.app.agent.market.AgentExtensionMarketRepository
+import com.kite.app.agent.market.AgentExtensionMarketSort
 import com.kite.app.agent.registration.AgentConfigurationStatus
 import com.kite.app.agent.registration.AgentInstallationStatus
 import com.kite.app.agent.registration.AgentLaunchStatus
@@ -149,6 +150,7 @@ import com.kite.app.agent.runtime.AgentRuntimeRegistry
 import com.kite.app.agent.runtime.AgentRuntimeSession
 import com.kite.app.agent.store.AgentConversationItem
 import com.kite.app.agent.store.AgentConversationHistoryStatus
+import com.kite.app.platform.browser.AndroidExternalBrowserLauncher
 import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationSnapshot
 import com.kite.app.agent.store.AgentConversationStore
@@ -5238,12 +5240,13 @@ internal class RunAgentSurfaceBinding(
         target: AgentConfigurationTarget,
         kind: AgentExtensionMarketKind,
     ): View {
+        var selectedSort = AgentExtensionMarketSort.Recommended
         val adapter = AgentExtensionMarketAdapter(context, tokens) { item ->
             showExtensionMarketItem(selected, target, item)
         }.also { extensionMarketAdapter = it }
         val status = TextView(context).apply {
             text = if (kind == AgentExtensionMarketKind.Skill) {
-                "输入关键词搜索 ClawHub"
+                "正在加载推荐 Skill…"
             } else {
                 "输入关键词搜索 MCP 官方目录"
             }
@@ -5278,7 +5281,7 @@ internal class RunAgentSurfaceBinding(
             setPadding(ui.dp(15), 0, ui.dp(15), 0)
             setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    searchExtensionMarket(kind, text?.toString().orEmpty(), list)
+                    searchExtensionMarket(kind, text?.toString().orEmpty(), list, selectedSort)
                     true
                 } else false
             }
@@ -5296,7 +5299,49 @@ internal class RunAgentSurfaceBinding(
             )
             isClickable = true
             isFocusable = true
-            setOnClickListener { searchExtensionMarket(kind, input.text?.toString().orEmpty(), list) }
+            setOnClickListener {
+                searchExtensionMarket(kind, input.text?.toString().orEmpty(), list, selectedSort)
+            }
+        }
+        val sortRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val sortActions = linkedMapOf<AgentExtensionMarketSort, TextView>()
+        fun renderSortActions() {
+            sortActions.forEach { (sort, action) ->
+                val selectedAction = sort == selectedSort
+                action.setTextColor(if (selectedAction) tokens.textPrimary else tokens.textSecondary)
+                action.typeface = if (selectedAction) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                action.background = ui.roundedBox(
+                    if (selectedAction) agentSettingsSurface else android.graphics.Color.TRANSPARENT,
+                    android.graphics.Color.TRANSPARENT,
+                    ui.dp(16).toFloat(),
+                )
+            }
+        }
+        if (kind == AgentExtensionMarketKind.Skill) {
+            AgentExtensionMarketSort.entries.forEach { sort ->
+                val action = TextView(context).apply {
+                    text = sort.displayName
+                    textSize = 13f
+                    gravity = Gravity.CENTER
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        if (selectedSort == sort && input.text.isNullOrBlank()) return@setOnClickListener
+                        selectedSort = sort
+                        input.text?.clear()
+                        renderSortActions()
+                        searchExtensionMarket(kind, "", list, selectedSort)
+                    }
+                }
+                sortActions[sort] = action
+                sortRow.addView(action, LinearLayout.LayoutParams(0, ui.dp(36), 1f).apply {
+                    marginStart = if (sort == AgentExtensionMarketSort.Recommended) 0 else ui.dp(4)
+                })
+            }
+            renderSortActions()
         }
         val viewport = FrameLayout(context).apply {
             addView(list, FrameLayout.LayoutParams(
@@ -5309,7 +5354,7 @@ internal class RunAgentSurfaceBinding(
                 Gravity.CENTER,
             ))
         }
-        return LinearLayout(context).apply {
+        val page = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(agentPageBackground)
             addView(buildAgentSubpageHeader(
@@ -5336,33 +5381,64 @@ internal class RunAgentSurfaceBinding(
                 setTextColor(tokens.textTertiary)
                 setPadding(ui.dp(22), 0, ui.dp(22), ui.dp(10))
             })
+            if (kind == AgentExtensionMarketKind.Skill) {
+                addView(sortRow, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ui.dp(40),
+                ).apply {
+                    marginStart = ui.dp(18)
+                    marginEnd = ui.dp(18)
+                    bottomMargin = ui.dp(6)
+                })
+            }
             addView(viewport, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
                 1f,
             ))
         }
+        if (kind == AgentExtensionMarketKind.Skill) {
+            list.post {
+                if (
+                    navigationScreen == AgentNavigationScreen.ExtensionMarket &&
+                    extensionMarketKind == AgentExtensionMarketKind.Skill
+                ) {
+                    searchExtensionMarket(kind, "", list, selectedSort)
+                }
+            }
+        }
+        return page
     }
 
     private fun searchExtensionMarket(
         kind: AgentExtensionMarketKind,
         query: String,
         list: RecyclerView,
+        sort: AgentExtensionMarketSort = AgentExtensionMarketSort.Recommended,
     ) {
         val normalized = query.trim()
-        if (normalized.isEmpty()) {
+        if (normalized.isEmpty() && kind != AgentExtensionMarketKind.Skill) {
             extensionMarketStatusText?.apply { text = "请输入搜索关键词"; visibility = View.VISIBLE }
             list.visibility = View.GONE
             return
         }
         val revision = ++extensionMarketLoadRevision
-        extensionMarketStatusText?.apply { text = "正在搜索…"; visibility = View.VISIBLE }
+        extensionMarketStatusText?.apply {
+            text = if (normalized.isEmpty()) "正在加载${sort.displayName} Skill…" else "正在搜索…"
+            visibility = View.VISIBLE
+        }
         list.visibility = View.GONE
         extensionMarketAdapter?.submitList(emptyList())
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching { extensionMarketRepository.search(kind, normalized) }
+                runCatching {
+                    if (normalized.isEmpty()) {
+                        extensionMarketRepository.browseSkills(sort)
+                    } else {
+                        extensionMarketRepository.search(kind, normalized)
+                    }
+                }
             }
             if (
                 revision != extensionMarketLoadRevision ||
@@ -5393,15 +5469,13 @@ internal class RunAgentSurfaceBinding(
         item: AgentExtensionMarketItem,
     ) {
         when (val spec = item.installSpec) {
-            is AgentExtensionInstallSpec.Skill -> showAgentChoiceCard(
-                title = item.title,
-                message = "${item.description.ifBlank { "没有提供说明" }}\n\n来源：${item.sourceLabel}",
-                actions = listOf(
-                    AgentChoiceAction("安装到 ${selected.registration.definition.displayName}") {
-                        installMarketSkill(selected, target, item, spec)
-                    },
-                ),
-            )
+            is AgentExtensionInstallSpec.Skill -> {
+                if (spec.ownerHandle.isNullOrBlank()) {
+                    resolveMarketSkillItem(selected, target, item)
+                } else {
+                    showResolvedMarketSkill(selected, target, item, spec)
+                }
+            }
             is AgentExtensionInstallSpec.Mcp -> {
                 val compatible = compatibleMcpCandidate(target, spec.server)
                 if (compatible == null) {
@@ -5427,6 +5501,86 @@ internal class RunAgentSurfaceBinding(
                 }
             }
         }
+    }
+
+    private fun resolveMarketSkillItem(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        item: AgentExtensionMarketItem,
+    ) {
+        val revision = ++extensionMarketLoadRevision
+        extensionMarketStatusText?.apply {
+            text = "正在确认 Skill 发布者…"
+            visibility = View.VISIBLE
+        }
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { extensionMarketRepository.resolveSkill(item) }
+            }
+            if (
+                revision != extensionMarketLoadRevision ||
+                navigationScreen != AgentNavigationScreen.ExtensionMarket ||
+                extensionMarketKind != AgentExtensionMarketKind.Skill
+            ) return@launch
+            result.onSuccess { candidates ->
+                extensionMarketStatusText?.visibility = View.GONE
+                val exactMetricMatch = item.downloads?.let { downloads ->
+                    candidates.filter { it.downloads == downloads }.singleOrNull()
+                }
+                val resolved = exactMetricMatch ?: candidates.singleOrNull()
+                if (resolved != null) {
+                    val spec = resolved.installSpec as AgentExtensionInstallSpec.Skill
+                    showResolvedMarketSkill(selected, target, resolved, spec)
+                } else if (candidates.isNotEmpty()) {
+                    showAgentChoiceCard(
+                        title = item.title,
+                        message = "ClawHub 中有多个同名 Skill，请按发布者选择。",
+                        actions = candidates.take(MAX_MARKET_OWNER_CHOICES).map { candidate ->
+                            val spec = candidate.installSpec as AgentExtensionInstallSpec.Skill
+                            AgentChoiceAction("选择 @${spec.ownerHandle}") {
+                                showResolvedMarketSkill(selected, target, candidate, spec)
+                            }
+                        },
+                    )
+                } else {
+                    extensionMarketStatusText?.apply {
+                        text = "这个 Skill 当前无法确认发布者，请尝试按名称搜索"
+                        visibility = View.VISIBLE
+                    }
+                }
+            }.onFailure { error ->
+                Log.w("AgentExtensionMarket", "Skill publisher resolution failed", error)
+                extensionMarketStatusText?.apply {
+                    text = error.message?.let { "无法确认发布者：$it" } ?: "无法确认 Skill 发布者"
+                    visibility = View.VISIBLE
+                }
+            }
+        }
+    }
+
+    private fun showResolvedMarketSkill(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        item: AgentExtensionMarketItem,
+        spec: AgentExtensionInstallSpec.Skill,
+    ) {
+        val owner = requireNotNull(spec.ownerHandle)
+        showAgentChoiceCard(
+            title = item.title,
+            message = "${item.description.ifBlank { "没有提供说明" }}\n\n来源：${item.sourceLabel}",
+            actions = listOf(
+                AgentChoiceAction("安装到 ${selected.registration.definition.displayName}") {
+                    installMarketSkill(selected, target, item, spec)
+                },
+                AgentChoiceAction("在 ClawHub 查看") {
+                    AndroidExternalBrowserLauncher.open(
+                        context,
+                        "https://clawhub.ai/$owner/skills/${spec.slug}",
+                    )
+                },
+            ),
+        )
     }
 
     private fun compatibleMcpCandidate(
@@ -9565,6 +9719,7 @@ internal class RunAgentSurfaceBinding(
 
     private companion object {
         const val MAX_SKILL_ARCHIVE_BYTES = 10 * 1024 * 1024
+        const val MAX_MARKET_OWNER_CHOICES = 8
         const val MAX_MCP_IMPORT_BYTES = 2 * 1024 * 1024
         const val SESSION_SEARCH_WATCHER_TAG = "agent-session-search-watcher"
         const val COPY_BUFFER_SIZE = 8 * 1024

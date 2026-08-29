@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.kite.app.agent.market.AgentExtensionMarketItem
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.UiKit
+import java.util.Locale
 
 /** 市场列表只展示来源给出的候选；安装能力由当前 Agent 的统一配置层判断。 */
 internal class AgentExtensionMarketAdapter(
@@ -37,22 +38,19 @@ internal class AgentExtensionMarketAdapter(
                 android.graphics.Color.TRANSPARENT,
                 ui.dp(20).toFloat(),
             )
-            addView(LinearLayout(appContext).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(title.apply {
-                    textSize = 14.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(tokens.textPrimary)
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(source.apply {
-                    textSize = 11.5f
-                    maxLines = 1
-                    setTextColor(tokens.textTertiary)
-                    setPadding(ui.dp(10), 0, 0, 0)
-                })
+            addView(title.apply {
+                textSize = 14.5f
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(tokens.textPrimary)
+            })
+            addView(source.apply {
+                textSize = 11.5f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(tokens.textTertiary)
+                setPadding(0, ui.dp(4), 0, 0)
             })
             addView(description.apply {
                 textSize = 12.5f
@@ -75,7 +73,12 @@ internal class AgentExtensionMarketAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val item = getItem(position)
         holder.title.text = item.title
-        holder.source.text = listOfNotNull(item.sourceLabel, item.versionLabel).joinToString(" · ")
+        holder.source.text = buildList {
+            add(item.sourceLabel)
+            item.versionLabel?.let { add(if (it.startsWith("v", ignoreCase = true)) it else "v$it") }
+            item.downloads?.let { add("${formatCount(it)} 下载") }
+            item.stars?.takeIf { it > 0 }?.let { add("${formatCount(it)} 收藏") }
+        }.joinToString(" · ")
         holder.description.text = item.description.ifBlank { "没有提供说明" }
         holder.itemView.contentDescription = "${item.title}，${holder.source.text}，${holder.description.text}"
         holder.itemView.setOnClickListener { onClick(item) }
@@ -94,5 +97,15 @@ internal class AgentExtensionMarketAdapter(
 
         override fun areContentsTheSame(oldItem: AgentExtensionMarketItem, newItem: AgentExtensionMarketItem): Boolean =
             oldItem == newItem
+    }
+
+    private companion object {
+        fun formatCount(value: Long): String = when {
+            value < 10_000L -> value.toString()
+            value < 100_000_000L ->
+                "${String.format(Locale.ROOT, "%.1f", value / 10_000.0).removeSuffix(".0")}万"
+            else ->
+                "${String.format(Locale.ROOT, "%.1f", value / 100_000_000.0).removeSuffix(".0")}亿"
+        }
     }
 }

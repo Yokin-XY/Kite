@@ -15,9 +15,19 @@ internal enum class AgentExtensionMarketKind {
     Mcp,
 }
 
+internal enum class AgentExtensionMarketSort(
+    val apiValue: String,
+    val displayName: String,
+) {
+    Recommended("recommended", "推荐"),
+    Trending("trending", "热门"),
+    Downloads("downloads", "下载"),
+    Newest("createdAt", "最新"),
+}
+
 internal sealed interface AgentExtensionInstallSpec {
     data class Skill(
-        val ownerHandle: String,
+        val ownerHandle: String?,
         val slug: String,
         val version: String? = null,
     ) : AgentExtensionInstallSpec
@@ -31,6 +41,9 @@ internal data class AgentExtensionMarketItem(
     val description: String,
     val sourceLabel: String,
     val versionLabel: String?,
+    val downloads: Long? = null,
+    val stars: Long? = null,
+    val updatedAtMillis: Long? = null,
     val installSpec: AgentExtensionInstallSpec,
 )
 
@@ -50,10 +63,23 @@ internal fun interface AgentExtensionMarketRemote {
     fun get(url: String, maxBytes: Int): AgentMarketHttpPayload
 }
 
-/** 默认扩展目录只在用户进入市场并主动搜索时联网。 */
+/** 默认扩展目录只在用户进入市场或主动搜索时联网。 */
 internal class AgentExtensionMarketRepository(
     private val remote: AgentExtensionMarketRemote = HttpAgentExtensionMarketRemote(),
 ) {
+    fun browseSkills(sort: AgentExtensionMarketSort): AgentExtensionMarketSnapshot {
+        val payload = remote.get(
+            "$CLAWHUB_BASE/api/v1/skills?limit=$MAX_RESULTS&sort=${sort.apiValue}&nonSuspiciousOnly=true",
+            MAX_CATALOG_BYTES,
+        )
+        return AgentExtensionMarketSnapshot(
+            kind = AgentExtensionMarketKind.Skill,
+            sourceLabel = "ClawHub",
+            query = "",
+            items = AgentExtensionMarketParser.parseClawHubBrowse(payload.bytes.toString(Charsets.UTF_8)),
+        )
+    }
+
     fun search(kind: AgentExtensionMarketKind, rawQuery: String): AgentExtensionMarketSnapshot {
         val query = rawQuery.trim()
         require(query.isNotEmpty()) { "请输入搜索关键词" }
@@ -87,8 +113,31 @@ internal class AgentExtensionMarketRepository(
         }
     }
 
+    fun resolveSkill(item: AgentExtensionMarketItem): List<AgentExtensionMarketItem> {
+        val spec = item.installSpec as? AgentExtensionInstallSpec.Skill ?: return emptyList()
+        if (!spec.ownerHandle.isNullOrBlank()) return listOf(item)
+        val slug = encodePathSegment(spec.slug)
+        val payload = remote.get(
+            "$CLAWHUB_BASE/api/v1/search?q=$slug&mode=exact&nonSuspiciousOnly=true",
+            MAX_CATALOG_BYTES,
+        )
+        val candidates = AgentExtensionMarketParser.parseClawHubSearch(payload.bytes.toString(Charsets.UTF_8))
+            .filter { candidate ->
+                (candidate.installSpec as? AgentExtensionInstallSpec.Skill)?.slug == spec.slug
+            }
+        return candidates.sortedWith(
+            compareByDescending<AgentExtensionMarketItem> { candidate ->
+                item.downloads != null && candidate.downloads == item.downloads
+            }.thenByDescending { candidate ->
+                candidate.title.equals(item.title, ignoreCase = true)
+            }.thenByDescending { candidate ->
+                candidate.downloads ?: 0L
+            },
+        )
+    }
+
     fun downloadSkill(spec: AgentExtensionInstallSpec.Skill): ByteArray {
-        val owner = encodePathSegment(spec.ownerHandle)
+        val owner = encodePathSegment(requireNotNull(spec.ownerHandle) { "需要先确认 Skill 发布者" })
         val slug = encodePathSegment(spec.slug)
         val versionQuery = spec.version?.let { "&version=${URLEncoder.encode(it, Charsets.UTF_8.name())}" }
             ?: "&tag=latest"
@@ -122,6 +171,39 @@ internal class AgentExtensionMarketRepository(
 }
 
 internal object AgentExtensionMarketParser {
+    fun parseClawHubBrowse(payload: String): List<AgentExtensionMarketItem> {
+        require(payload.toByteArray(Charsets.UTF_8).size <= MAX_CATALOG_BYTES) { "ClawHub 目录超过大小限制" }
+        val items = JSONObject(payload).optJSONArray("items")
+        return buildList {
+            for (index in 0 until minOf(items?.length() ?: 0, MAX_RESULTS)) {
+                val row = items?.optJSONObject(index) ?: continue
+                val slug = row.optString("slug").trim()
+                if (!SAFE_PATH_SEGMENT.matches(slug)) continue
+                val title = row.optString("displayName").trim().ifBlank { slug }
+                val description = row.optString("summary").trim()
+                    .ifBlank { row.optString("description").trim() }
+                val stats = row.optJSONObject("stats")
+                val version = row.optJSONObject("latestVersion")
+                    ?.optString("version")
+                    ?.trim()
+                    ?.ifBlank { null }
+                val downloads = stats.longOrNull("downloads")
+                val updatedAt = row.longOrNull("updatedAt")
+                add(AgentExtensionMarketItem(
+                    id = "clawhub-browse:$slug:${updatedAt ?: index}",
+                    title = title.take(MAX_TITLE),
+                    description = description.take(MAX_DESCRIPTION),
+                    sourceLabel = "ClawHub",
+                    versionLabel = version,
+                    downloads = downloads,
+                    stars = stats.longOrNull("stars"),
+                    updatedAtMillis = updatedAt,
+                    installSpec = AgentExtensionInstallSpec.Skill(ownerHandle = null, slug = slug, version = version),
+                ))
+            }
+        }.distinctBy(AgentExtensionMarketItem::id)
+    }
+
     fun parseClawHubSearch(payload: String): List<AgentExtensionMarketItem> {
         require(payload.toByteArray(Charsets.UTF_8).size <= MAX_CATALOG_BYTES) { "ClawHub 目录超过大小限制" }
         val results = JSONObject(payload).optJSONArray("results")
@@ -139,12 +221,16 @@ internal object AgentExtensionMarketParser {
                 val description = nativeSkill?.optString("summary")?.trim()
                     ?.ifBlank { null }
                     ?: row.optString("description").trim()
+                val stats = nativeSkill?.optJSONObject("stats")
                 add(AgentExtensionMarketItem(
                     id = "clawhub:$owner/$slug",
                     title = title.take(MAX_TITLE),
                     description = description.take(MAX_DESCRIPTION),
                     sourceLabel = "ClawHub · @$owner",
                     versionLabel = null,
+                    downloads = row.longOrNull("downloads") ?: stats.longOrNull("downloads"),
+                    stars = stats.longOrNull("stars") ?: row.optJSONObject("metrics").longOrNull("bookmarks"),
+                    updatedAtMillis = row.longOrNull("updatedAt") ?: nativeSkill.longOrNull("updatedAt"),
                     installSpec = AgentExtensionInstallSpec.Skill(owner, slug),
                 ))
             }
@@ -185,6 +271,9 @@ internal object AgentExtensionMarketParser {
     private const val MAX_TITLE = 160
     private const val MAX_DESCRIPTION = 1_000
     private const val MAX_CATALOG_BYTES = 2 * 1024 * 1024
+
+    private fun JSONObject?.longOrNull(name: String): Long? =
+        this?.takeIf { it.has(name) && !it.isNull(name) }?.optLong(name)
 }
 
 internal class HttpAgentExtensionMarketRemote : AgentExtensionMarketRemote {
