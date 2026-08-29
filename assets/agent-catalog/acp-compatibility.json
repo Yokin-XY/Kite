@@ -3,10 +3,13 @@
   "aliases": [
     {"registryId": "claude-acp", "agentId": "claude-code"},
     {"registryId": "codex-acp", "agentId": "codex"},
+    {"registryId": "cursor", "agentId": "cursor"},
+    {"registryId": "devin", "agentId": "devin"},
     {"registryId": "gemini", "agentId": "gemini"},
     {"registryId": "kimi", "agentId": "kimi"},
     {"registryId": "opencode", "agentId": "opencode"},
     {"registryId": "pi-acp", "agentId": "pi"},
+    {"registryId": "qoder", "agentId": "qoder"},
     {"registryId": "qwen-code", "agentId": "qwen"}
   ]
 }

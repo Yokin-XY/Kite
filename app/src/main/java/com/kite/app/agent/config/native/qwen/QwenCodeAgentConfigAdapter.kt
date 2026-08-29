@@ -8,17 +8,23 @@ import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 
-/** Qwen Code 消费原生 ACP 会话目录；认证模型由 CLI 管理，Skill 直接读取原生用户目录。 */
-internal class QwenCodeAgentConfigAdapter internal constructor(
+/** Qwen Code 消费原生 ACP 会话目录；认证模型由 CLI 管理，MCP 与 Skill 直接读写原生用户目录。 */
+internal class QwenCodeAgentConfigAdapter(
+    context: Context,
     containerProvider: () -> ContainerRecord?,
-) : ProtocolOnlyAgentConfigAdapter(
+) : StandardJsonMcpProtocolAgentConfigAdapter(
+    context = context,
     adapterId = ADAPTER_ID,
+    agentDisplayName = "Qwen Code",
+    configPath = SETTINGS_PATH,
     containerProvider = containerProvider,
     skillRoots = listOf(SKILL_ROOT, AGENTS_SKILL_ROOT),
+    schema = StandardJsonMcpSchema(enablement = StandardJsonMcpEnablement.ExcludedList),
 ) {
-    constructor(context: Context) : this({
-        WorkSurfaceRuntimeBridge.getSavedContainer(context.applicationContext)
-    })
+    constructor(context: Context) : this(
+        context.applicationContext,
+        { WorkSurfaceRuntimeBridge.getSavedContainer(context.applicationContext) },
+    )
 
     override fun normalizeSessionModes(modes: List<AgentMode>): List<AgentMode> =
         modes.filterNot { it.id in QWEN_PERMISSION_LEVELS }
@@ -52,6 +58,7 @@ internal class QwenCodeAgentConfigAdapter internal constructor(
 
     companion object {
         const val ADAPTER_ID = "qwen-code"
+        private const val SETTINGS_PATH = "/root/.qwen/settings.json"
         private const val SKILL_ROOT = "/root/.qwen/skills"
         private const val AGENTS_SKILL_ROOT = "/root/.agents/skills"
         private const val MODE_CONFIG_ID = "mode"

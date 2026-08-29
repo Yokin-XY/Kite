@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.qoder.cli",
+  "base": {
+    "name": "Qoder CLI",
+    "description": "Qoder 的终端编码 Agent",
+    "version": "npm",
+    "icon": {
+      "type": "text",
+      "value": "Qd"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["qoder", "qodercli"],
+    "versionProbe": {
+      "command": "qoder --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
+  },
+  "display": {
+    "sections": ["ai-vendor"],
+    "tabs": ["angel-cli"],
+    "order": 105,
+    "category": "AI",
+    "accent": "purple",
+    "sizeLabel": "网络包",
+    "longDescription": "Qoder CLI 是 Qoder 官方终端编码 Agent。Kite 通过官方 npm 包安装 Linux arm64 可用命令，并使用原生 ACP 接入会话、模型和两档权限；MCP 与 Skill 继续写入 Qoder 官方用户目录。",
+    "recommendations": [
+      {"resourceId": "kite.nodejs", "label": "运行时"},
+      {"resourceId": "kite.git", "label": "源码工具"},
+      {"resourceId": "kite.qwen.code", "label": "同类 Agent"},
+      {"resourceId": "kite.codex.cli", "label": "同类 Agent"}
+    ],
+    "tags": ["qoder", "coding-agent", "terminal", "ai", "acp", "mcp", "skills"]
+  },
+  "relations": {
+    "provides": ["cli.qoder", "agent.qoder.cli"],
+    "base": ["kite.nodejs", "kite.git"],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "npm",
+    "package": "@qoder-ai/qodercli",
+    "repository": "https://qoder.com",
+    "registries": [
+      "https://registry.npmmirror.com",
+      "https://registry.npmjs.org"
+    ]
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.qoder.cli",
+    "installRoot": "/workspace/.kf/software/kite.qoder.cli",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "qoder",
+      "name": "Qoder CLI",
+      "description": "Qoder CLI 原生 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "qoder-cli"
+      },
+      "accounts": [
+        {
+          "id": "qoder",
+          "name": "Qoder 官方",
+          "modelGroupIds": ["qoder"],
+          "login": {
+            "argv": ["qoder", "login"],
+            "timeoutMs": 300000
+          }
+        }
+      ],
+      "launch": {
+        "mode": "managed",
+        "providerId": "qoder",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["qoder", "--acp"],
+        "initializeTimeoutMs": 60000,
+        "title": "Qoder CLI"
+      }
+    }
+  ],
+  "actions": {
+    "install": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-qoder-package",
+            "type": "npm",
+            "packages": ["@qoder-ai/qodercli@latest"],
+            "registries": [
+              "https://registry.npmmirror.com",
+              "https://registry.npmjs.org"
+            ],
+            "args": ["--no-audit", "--no-fund"]
+          }
+        ],
+        "managedCommands": ["qoder", "qodercli"],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "qoder-command",
+            "cmd": "command -v qoder >/dev/null 2>&1 && qoder --version"
+          }
+        ],
+        "timeoutMs": 600000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Qoder CLI",
+          "description": "启动 Qoder CLI Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "qoder", "workdir": "/workspace"}]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": ["qoder", "qodercli"],
+        "npmUninstallPackage": "@qoder-ai/qodercli",
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "Qoder CLI",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Qoder CLI",
+          "description": "启动 Qoder CLI Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "qoder", "workdir": "/workspace"}]
+      }
+    }
+  ]
+}

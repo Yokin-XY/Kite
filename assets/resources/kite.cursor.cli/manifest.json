@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.cursor.cli",
+  "base": {
+    "name": "Cursor CLI",
+    "description": "Cursor 的终端编码 Agent",
+    "version": "2026.08.11",
+    "icon": {
+      "type": "text",
+      "value": "Cu"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["cursor-agent"],
+    "versionProbe": {
+      "command": "cursor-agent --version",
+      "pattern": "v?([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
+  },
+  "display": {
+    "sections": ["ai-vendor"],
+    "tabs": ["angel-cli"],
+    "order": 108,
+    "category": "AI",
+    "accent": "blue",
+    "sizeLabel": "约 80 MB",
+    "longDescription": "Cursor CLI 是 Cursor 官方终端编码 Agent。Kite 固定下载 ACP Registry 公布的 Linux arm64 制品并校验 SHA-256，通过原生 ACP 提供会话加载、模型、Agent/计划/问答模式和工具审批；MCP 与 Skill 保持 Cursor 原生目录。",
+    "recommendations": [
+      {"resourceId": "kite.git", "label": "源码工具"},
+      {"resourceId": "kite.codex.cli", "label": "同类 Agent"},
+      {"resourceId": "kite.claude.code", "label": "同类 Agent"}
+    ],
+    "tags": ["cursor", "coding-agent", "terminal", "ai", "acp", "mcp", "skills"]
+  },
+  "relations": {
+    "provides": ["cli.cursor.agent", "agent.cursor.cli"],
+    "base": ["kite.git"],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "acp_registry_binary",
+    "url": "https://downloads.cursor.com/lab/2026.08.11-e8db854/linux/arm64/agent-cli-package.tar.gz",
+    "repository": "https://cursor.com/docs/cli/acp",
+    "tag": "2026.08.11",
+    "archiveType": "tar.gz",
+    "binaryPath": "dist-package/cursor-agent",
+    "maxBytes": 134217728
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.cursor.cli",
+    "installRoot": "/workspace/.kf/software/kite.cursor.cli",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "cursor",
+      "name": "Cursor CLI",
+      "description": "Cursor CLI 原生 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "cursor-cli"
+      },
+      "accounts": [
+        {
+          "id": "cursor",
+          "name": "Cursor 官方",
+          "modelGroupIds": ["cursor"],
+          "status": {
+            "argv": ["cursor-agent", "status"],
+            "loggedInPatterns": ["logged in", "authenticated"],
+            "loggedOutPatterns": ["not logged in", "not authenticated"],
+            "timeoutMs": 15000
+          },
+          "login": {
+            "argv": ["/usr/bin/env", "NO_OPEN_BROWSER=1", "cursor-agent", "login"],
+            "timeoutMs": 300000
+          },
+          "logout": {
+            "argv": ["cursor-agent", "logout"],
+            "timeoutMs": 30000
+          }
+        }
+      ],
+      "launch": {
+        "mode": "managed",
+        "providerId": "cursor",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["cursor-agent", "acp"],
+        "initializeTimeoutMs": 60000,
+        "title": "Cursor CLI"
+      }
+    }
+  ],
+  "actions": {
+    "install": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "download-cursor-arm64",
+            "type": "download",
+            "url": "https://downloads.cursor.com/lab/2026.08.11-e8db854/linux/arm64/agent-cli-package.tar.gz",
+            "destination": "$install_root/.kite-downloads/cursor-arm64.tar.gz",
+            "sha256": "ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed",
+            "retryAttempts": 4,
+            "retryDelaySeconds": 2,
+            "maxBytes": 134217728
+          },
+          {
+            "id": "extract-cursor-arm64",
+            "type": "shell",
+            "cmd": "tar -xzf \"$install_root/.kite-downloads/cursor-arm64.tar.gz\" -C \"$install_root\"\nmkdir -p \"$install_root/bin\"\nchmod 755 \"$install_root/dist-package/cursor-agent\"\nln -sfn ../dist-package/cursor-agent \"$install_root/bin/cursor-agent\""
+          }
+        ],
+        "managedCommands": ["cursor-agent"],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "cursor-command",
+            "cmd": "command -v cursor-agent >/dev/null 2>&1 && cursor-agent --version"
+          }
+        ],
+        "timeoutMs": 600000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Cursor CLI",
+          "description": "启动 Cursor CLI Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "cursor", "workdir": "/workspace"}]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": ["cursor-agent"],
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "Cursor CLI",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Cursor CLI",
+          "description": "启动 Cursor CLI Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "cursor", "workdir": "/workspace"}]
+      }
+    }
+  ]
+}

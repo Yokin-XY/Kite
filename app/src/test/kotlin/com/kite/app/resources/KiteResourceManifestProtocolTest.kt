@@ -706,7 +706,10 @@ class KiteResourceManifestProtocolTest {
                 "kite.gemini.cli",
                 "kite.qwen.code",
                 "kite.google.antigravity",
+                "kite.qoder.cli",
+                "kite.cursor.cli",
                 "kite.zai.coding.helper",
+                "kite.devin.cli",
                 "kite.mimo.code"
             ),
             debugLayout?.sections?.first { it.id == "ai-vendor" }?.items
@@ -737,7 +740,10 @@ class KiteResourceManifestProtocolTest {
                 "kite.gemini.cli",
                 "kite.qwen.code",
                 "kite.google.antigravity",
+                "kite.qoder.cli",
+                "kite.cursor.cli",
                 "kite.zai.coding.helper",
+                "kite.devin.cli",
                 "kite.mimo.code"
             ),
             debugLayout?.tabs?.first { it.id == "angel-cli" }?.sections?.single()?.items
@@ -758,7 +764,7 @@ class KiteResourceManifestProtocolTest {
             .filter { it.isFile }
             .sortedBy { it.parentFile?.name }
 
-        assertEquals(21, manifests.size)
+        assertEquals(24, manifests.size)
         manifests.forEach { manifestFile ->
             val resourceId = manifestFile.parentFile?.name.orEmpty()
             val loaded = loader.parseManifestJson(manifestFile.readText())

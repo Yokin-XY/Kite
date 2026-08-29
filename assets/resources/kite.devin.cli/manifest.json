@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.devin.cli",
+  "base": {
+    "name": "Devin CLI",
+    "description": "Cognition 的终端编码 Agent",
+    "version": "3000.6.7",
+    "icon": {
+      "type": "text",
+      "value": "Dv"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["devin"],
+    "versionProbe": {
+      "command": "devin --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
+  },
+  "display": {
+    "sections": ["ai-vendor"],
+    "tabs": ["angel-cli"],
+    "order": 112,
+    "category": "AI",
+    "accent": "green",
+    "sizeLabel": "约 50 MB",
+    "longDescription": "Devin CLI 是 Cognition 官方终端编码 Agent。Kite 固定下载 ACP Registry 公布的 Linux arm64 制品并校验 SHA-256，通过原生 ACP 接入会话、模型、推理与工具交互；MCP、Skill 和官方账号继续由 Devin 自己持久化。",
+    "recommendations": [
+      {"resourceId": "kite.git", "label": "源码工具"},
+      {"resourceId": "kite.cursor.cli", "label": "同类 Agent"},
+      {"resourceId": "kite.claude.code", "label": "同类 Agent"}
+    ],
+    "tags": ["devin", "cognition", "coding-agent", "terminal", "ai", "acp", "mcp", "skills"]
+  },
+  "relations": {
+    "provides": ["cli.devin", "agent.cognition.devin"],
+    "base": ["kite.git"],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "acp_registry_binary",
+    "url": "https://static.devin.ai/cli/3000.6.7/devin-3000.6.7-aarch64-unknown-linux.tar.gz",
+    "repository": "https://github.com/CognitionAI/devin-cli",
+    "tag": "3000.6.7",
+    "archiveType": "tar.gz",
+    "binaryPath": "bin/devin",
+    "maxBytes": 104857600
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.devin.cli",
+    "installRoot": "/workspace/.kf/software/kite.devin.cli",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "devin",
+      "name": "Devin CLI",
+      "description": "Devin CLI 原生 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "devin-cli"
+      },
+      "accounts": [
+        {
+          "id": "cognition",
+          "name": "Cognition 官方",
+          "modelGroupIds": ["devin", "cognition"],
+          "status": {
+            "argv": ["devin", "auth", "status"],
+            "loggedInPatterns": ["logged in", "authenticated"],
+            "loggedOutPatterns": ["not logged in", "not authenticated"],
+            "timeoutMs": 15000
+          },
+          "login": {
+            "argv": ["devin", "auth", "login", "--force-manual-token-flow"],
+            "timeoutMs": 300000
+          },
+          "logout": {
+            "argv": ["devin", "auth", "logout"],
+            "timeoutMs": 30000
+          }
+        }
+      ],
+      "launch": {
+        "mode": "managed",
+        "providerId": "devin",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["devin", "acp"],
+        "initializeTimeoutMs": 60000,
+        "title": "Devin CLI"
+      }
+    }
+  ],
+  "actions": {
+    "install": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "download-devin-arm64",
+            "type": "download",
+            "url": "https://static.devin.ai/cli/3000.6.7/devin-3000.6.7-aarch64-unknown-linux.tar.gz",
+            "destination": "$install_root/.kite-downloads/devin-arm64.tar.gz",
+            "sha256": "8de95ec3623d93e6f3cb0834fa659fd7d6698d4feff3fb7e752e977abc40a6e0",
+            "retryAttempts": 4,
+            "retryDelaySeconds": 2,
+            "maxBytes": 104857600
+          },
+          {
+            "id": "extract-devin-arm64",
+            "type": "shell",
+            "cmd": "tar -xzf \"$install_root/.kite-downloads/devin-arm64.tar.gz\" -C \"$install_root\"\nchmod 755 \"$install_root/bin/devin\""
+          }
+        ],
+        "managedCommands": ["devin"],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "devin-command",
+            "cmd": "command -v devin >/dev/null 2>&1 && devin --version"
+          }
+        ],
+        "timeoutMs": 600000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Devin CLI",
+          "description": "启动 Devin CLI Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "devin", "workdir": "/workspace"}]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": ["devin"],
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "Devin CLI",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Devin CLI",
+          "description": "启动 Devin CLI Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "devin", "workdir": "/workspace"}]
+      }
+    }
+  ]
+}

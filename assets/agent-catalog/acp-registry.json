@@ -103,6 +103,55 @@
           "args": ["--acp", "--experimental-skills"]
         }
       }
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "version": "2026.08.11",
+      "description": "Cursor's coding agent",
+      "website": "https://cursor.com/docs/cli/acp",
+      "license": "proprietary",
+      "distribution": {
+        "binary": {
+          "linux-aarch64": {
+            "archive": "https://downloads.cursor.com/lab/2026.08.11-e8db854/linux/arm64/agent-cli-package.tar.gz",
+            "cmd": "./dist-package/cursor-agent",
+            "args": ["acp"]
+          }
+        }
+      }
+    },
+    {
+      "id": "devin",
+      "name": "Devin",
+      "version": "3000.6.7",
+      "description": "Devin CLI coding agent by Cognition",
+      "website": "https://docs.devin.ai/cli",
+      "repository": "https://github.com/CognitionAI/devin-cli",
+      "license": "proprietary",
+      "distribution": {
+        "binary": {
+          "linux-aarch64": {
+            "archive": "https://static.devin.ai/cli/3000.6.7/devin-3000.6.7-aarch64-unknown-linux.tar.gz",
+            "cmd": "./bin/devin",
+            "args": ["acp"]
+          }
+        }
+      }
+    },
+    {
+      "id": "qoder",
+      "name": "Qoder CLI",
+      "version": "1.1.36",
+      "description": "AI coding assistant with agentic capabilities",
+      "website": "https://qoder.com",
+      "license": "proprietary",
+      "distribution": {
+        "npx": {
+          "package": "@qoder-ai/qodercli@1.1.36",
+          "args": ["--acp"]
+        }
+      }
     }
   ],
   "extensions": []

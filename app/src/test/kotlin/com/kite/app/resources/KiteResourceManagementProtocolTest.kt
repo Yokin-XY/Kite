@@ -177,7 +177,7 @@ class KiteResourceManagementProtocolTest {
             .filter(File::isFile)
             .map { loader.parseManifestJson(it.readText()) }
 
-        assertEquals(20, manifests.size)
+        assertEquals(24, manifests.size)
         assertTrue(manifests.all { it.rawJson.optJSONObject("management") != null })
         assertEquals(
             SYSTEM_COMPONENT_IDS,
