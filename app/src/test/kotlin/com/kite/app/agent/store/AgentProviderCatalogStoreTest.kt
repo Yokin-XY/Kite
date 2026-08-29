@@ -11,6 +11,7 @@ import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.agent.contract.AgentReasoningLevel
+import com.kite.app.agent.config.AgentProviderCatalogSyncMetadata
 import com.kite.app.agent.sdk.configuration.AgentControlCatalogProjector
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -63,6 +64,25 @@ class AgentProviderCatalogStoreTest {
                 .values
                 .any { it.toString().contains(secret) },
         )
+    }
+
+    @Test
+    fun `供应商目录绑定和用户排除记录会随Provider持久化`() {
+        val sync = AgentProviderCatalogSyncMetadata(
+            presetId = "zhipu-coding-plan",
+            catalogModelIds = setOf("glm-5.3-flash", "glm-5.2"),
+            suppressedModelIds = setOf("glm-5.2"),
+        )
+
+        store.saveUserProvider(
+            "hermes",
+            provider("zhipu", "智谱", "https://example.com/v1", "glm-5.3-flash")
+                .copy(catalogSync = sync),
+            AgentCatalogCredentialChange.Keep,
+        )
+
+        val restored = AgentProviderCatalogStore(context, vault).snapshot("hermes").providers.single()
+        assertEquals(sync, restored.catalogSync)
     }
 
     @Test

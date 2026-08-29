@@ -26,11 +26,16 @@ import com.kite.app.agent.store.AgentModelLibraryProviderPreference
 import com.kite.app.agent.store.AgentModelLibrarySnapshot
 import com.kite.app.agent.store.AgentProviderCatalogStore
 import com.kite.app.agent.registration.KiteAgentRegistry
+import com.kite.app.agent.registration.AgentDefinition
+import com.kite.app.agent.registration.AgentLaunchSpec
+import com.kite.app.agent.registration.AgentRegistration
+import com.kite.app.agent.registration.AgentRegistrationSource
 import com.kite.app.agent.registration.AgentOfficialAccountCommand
 import com.kite.app.agent.registration.AgentOfficialAccountSpec
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.AdapterBackedAgentConfigurationApi
 import com.kite.app.agent.sdk.configuration.StoreBackedAgentProviderCatalogApi
+import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
 import com.kite.app.theme.KiteTheme
 import androidx.appcompat.app.AppCompatActivity
 import org.junit.Assert.assertEquals
@@ -46,6 +51,60 @@ import kotlinx.coroutines.SupervisorJob
 
 @RunWith(RobolectricTestRunner::class)
 class AgentSurfaceNavigationPolicyTest {
+    @Test
+    fun `打开供应商页不会被动执行官方账号状态命令`() {
+        val activity = Robolectric.buildActivity(AppCompatActivity::class.java).setup().get()
+        val tokens = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens
+        val accountJob = SupervisorJob()
+        var commandRuns = 0
+        val registration = AgentRegistration(
+            definition = AgentDefinition("hermes", "Hermes"),
+            source = AgentRegistrationSource.Resource("kite.hermes.core"),
+            launch = AgentLaunchSpec.Managed("hermes", "acp", "stdio", listOf("hermes", "acp")),
+            officialAccounts = listOf(
+                AgentOfficialAccountSpec(
+                    id = "nous",
+                    displayName = "Nous Portal 官方",
+                    status = AgentOfficialAccountCommand(listOf("hermes", "portal", "info")),
+                    login = AgentOfficialAccountCommand(listOf("hermes", "portal", "login")),
+                )
+            ),
+        )
+        val registry = KiteAgentRegistry(
+            context = activity,
+            resourceRegistrationSource = { listOf(registration) },
+        )
+        val binding = RunAgentSurfaceBinding(
+            context = activity,
+            tokens = tokens,
+            onCloseInstance = {},
+            onPickImages = {},
+            onPickFiles = {},
+            agentRegistry = registry,
+            officialAccountManager = AgentOfficialAccountManager(
+                scope = CoroutineScope(accountJob + Dispatchers.Unconfined),
+                registry = registry,
+                commandRunner = {
+                    commandRuns += 1
+                    AgentOfficialAccountCommandResult(0, "Logged in")
+                },
+            ),
+            agentConfigurationApi = AdapterBackedAgentConfigurationApi(AgentConfigAdapterRegistry(emptyList())),
+            agentProviderCatalogApi = StoreBackedAgentProviderCatalogApi(
+                AgentProviderCatalogStore(activity),
+                AgentConfigAdapterRegistry(emptyList()),
+            ),
+        )
+        val selected = requireNotNull(registry.snapshot().entry("hermes"))
+
+        binding.observeOfficialAccountsForTesting(selected, AgentConfigurationTarget("hermes", null))
+
+        assertEquals(0, commandRuns)
+        binding.dispose()
+        accountJob.cancel()
+        activity.finish()
+    }
+
     @Test
     fun `会话读取失败隐藏底层英文并区分登录需求`() {
         assertEquals(

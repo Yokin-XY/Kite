@@ -86,6 +86,9 @@ import com.kite.app.agent.config.AgentPersistentConfigCapability
 import com.kite.app.agent.config.AgentPermissionProfileSummary
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderAccessChannel
+import com.kite.app.agent.config.AgentProviderCatalogMergeResult
+import com.kite.app.agent.config.AgentProviderCatalogSyncMetadata
+import com.kite.app.agent.config.AgentProviderCatalogSyncPolicy
 import com.kite.app.agent.config.AgentProviderCategory
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderMarket
@@ -593,6 +596,11 @@ internal class RunAgentSurfaceBinding(
     internal fun refreshSessionControlsForTesting() = renderSessionConfigurationControls()
 
     internal fun composerInputFlagsForTesting(): Pair<Int, Int> = input.inputType to input.imeOptions
+
+    internal fun observeOfficialAccountsForTesting(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+    ) = observeOfficialAccounts(selected.registration.definition.agentId, selected, target)
 
     fun addAttachments(uris: List<Uri>) {
         if (uris.isEmpty()) return
@@ -3751,11 +3759,7 @@ internal class RunAgentSurfaceBinding(
                 }
             }
         }
-        officialAccountManager.accounts(targetAgentId).forEach { account ->
-            if (officialAccountManager.state(targetAgentId, account.id).status == AgentOfficialAccountStatus.Unknown) {
-                officialAccountManager.refresh(targetAgentId, account.id)
-            }
-        }
+        // 页面只观察已知状态。任何官方账号命令都必须来自用户明确点击，避免状态探测触发登录或浏览器。
     }
 
     private fun showMcpManager(
@@ -7168,6 +7172,14 @@ internal class RunAgentSurfaceBinding(
         val modelLibrary = modelLibraryStore.snapshot(targetAgentId)
         var selectedGroupId = existing?.id?.let(modelLibrary::providerGroupId)
         val initialModels = existing?.models ?: initialPreset?.models.orEmpty()
+        val storedCatalogProvider = existing?.id?.let { providerId ->
+            agentProviderCatalogApi.snapshot(target).providers.firstOrNull { it.id == providerId }
+        }
+        var catalogSync = storedCatalogProvider?.catalogSync
+            ?: initialPreset?.let { AgentProviderCatalogSyncPolicy.metadataForPreset(it, initialModels) }
+        var selectedPreset = initialPreset ?: catalogSync?.presetId?.let { presetId ->
+            agentConfigurationApi.providerPresets(target).firstOrNull { it.id == presetId }
+        }
         val modelDrafts = mutableListOf<AgentProviderModelSummary>()
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -7285,12 +7297,16 @@ internal class RunAgentSurfaceBinding(
             content.addView(providerPresetSelectionRow(presetValue) {
                 showProviderPresetPicker(target) { preset ->
                     if (preset == null) {
+                        selectedPreset = null
+                        catalogSync = null
                         presetValue.text = "自定义配置"
                         idInput.setText("")
                         nameInput.setText("")
                         urlInput.setText("")
                         replaceModels(emptyList())
                     } else {
+                        selectedPreset = preset
+                        catalogSync = AgentProviderCatalogSyncPolicy.metadataForPreset(preset, preset.models)
                         presetValue.text = preset.displayName
                         idInput.setText(preset.providerId)
                         nameInput.setText(preset.displayName)
@@ -7328,7 +7344,14 @@ internal class RunAgentSurfaceBinding(
             setMargins(0, 0, 0, ui.dp(20))
         })
 
-        content.addView(sectionTitle("可用模型", "配置此供应商可以提供的模型；会话中再选择实际使用哪一个。"))
+        content.addView(sectionTitle(
+            "可用模型",
+            if (existing == null) {
+                "配置此供应商可以提供的模型；会话中再选择实际使用哪一个。"
+            } else {
+                "下拉此页可检查最新目录；刷新只更新草稿，点击保存后才生效。"
+            },
+        ))
         content.addView(modelsHost)
         content.addView(actionOutlineButton("＋  添加模型") {
             showProviderModelEditor(
@@ -7441,6 +7464,17 @@ internal class RunAgentSurfaceBinding(
                 alpha = 0.45f
                 providerEditorSaveAction = this
                 val credential = credentialInput.credentialChange()
+                val routePreset = selectedPreset?.takeIf { preset ->
+                    AgentProviderCatalogSyncPolicy.matchingPresets(id, url, listOf(preset)).isNotEmpty()
+                }
+                val syncForSave = when {
+                    routePreset != null -> AgentProviderCatalogSyncPolicy.metadataAfterUserEdit(
+                        catalogSync ?: AgentProviderCatalogSyncPolicy.metadataForPreset(routePreset, models),
+                        models,
+                    )
+                    selectedPreset != null -> null
+                    else -> AgentProviderCatalogSyncPolicy.metadataAfterUserEdit(catalogSync, models)
+                }
                 keyInput.setText("")
                 saveCatalogProvider(
                     selected = selected,
@@ -7452,6 +7486,7 @@ internal class RunAgentSurfaceBinding(
                         models = models,
                     ),
                     credential = credential,
+                    catalogSync = syncForSave,
                     successMessage = "供应商资料已更新",
                     onApplied = { appliedProviderId ->
                         modelLibraryStore.assignProviderGroup(targetAgentId, appliedProviderId, selectedGroupId)
@@ -7465,6 +7500,54 @@ internal class RunAgentSurfaceBinding(
             }
         }
         providerEditorSaveAction = saveAction
+        val editorScroll = ScrollView(context).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(content, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        val editorBody: View = if (existing == null) {
+            editorScroll
+        } else {
+            SwipeRefreshLayout(context).apply {
+                setColorSchemeColors(tokens.textPrimary)
+                setProgressBackgroundColorSchemeColor(agentSettingsSurface)
+                addView(editorScroll, ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ))
+                setOnRefreshListener {
+                    refreshConfiguredProviderCatalog(
+                        target = target,
+                        providerId = idInput.text?.toString().orEmpty(),
+                        baseUrl = urlInput.text?.toString().orEmpty(),
+                        currentModels = { modelDrafts.toList() },
+                        currentMetadata = { catalogSync },
+                        onMerged = { preset, merge, sourceMessage ->
+                            selectedPreset = preset
+                            catalogSync = merge.metadata
+                            replaceModels(merge.models)
+                            status.setTextColor(tokens.textSecondary)
+                            status.text = buildString {
+                                append(sourceMessage)
+                                append("：新增 ${merge.addedCount} 个，下架 ${merge.removedCount} 个")
+                                append("；保留 ${merge.customCount} 个自定义模型")
+                                append("，忽略 ${merge.suppressedCount} 个已排除模型。保存后生效")
+                            }
+                            status.visibility = View.VISIBLE
+                        },
+                        onMessage = { message, error ->
+                            status.setTextColor(if (error) tokens.danger else tokens.textSecondary)
+                            status.text = message
+                            status.visibility = View.VISIBLE
+                        },
+                        refresh = this,
+                    )
+                }
+            }
+        }
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(agentPageBackground)
@@ -7474,14 +7557,80 @@ internal class RunAgentSurfaceBinding(
                 onBack = ::showCurrentProviderList,
                 trailingView = saveAction
             ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
-            addView(ScrollView(context).apply {
-                isFillViewport = true
-                overScrollMode = View.OVER_SCROLL_NEVER
-                addView(content, ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(editorBody, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+    }
+
+    private fun refreshConfiguredProviderCatalog(
+        target: AgentConfigurationTarget,
+        providerId: String,
+        baseUrl: String,
+        currentModels: () -> List<AgentProviderModelSummary>,
+        currentMetadata: () -> AgentProviderCatalogSyncMetadata?,
+        onMerged: (AgentProviderPreset, AgentProviderCatalogMergeResult, String) -> Unit,
+        onMessage: (String, Boolean) -> Unit,
+        refresh: SwipeRefreshLayout,
+    ) {
+        providerPresetRefreshJob?.cancel()
+        providerPresetRefreshJob = lifecycleOwner.lifecycleScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) { agentConfigurationApi.refreshProviderPresets(target) }
+            }.getOrNull()
+            if (navigationScreen != AgentNavigationScreen.ProviderEditor || !refresh.isAttachedToWindow) {
+                return@launch
+            }
+            refresh.isRefreshing = false
+            if (result == null) {
+                onMessage("供应商目录暂时不可用，当前草稿没有变化", true)
+                return@launch
+            }
+
+            val metadata = currentMetadata()
+            val boundPreset = metadata?.presetId?.let { presetId ->
+                result.presets.firstOrNull { it.id == presetId }
+            }?.takeIf { preset ->
+                AgentProviderCatalogSyncPolicy.matchingPresets(providerId, baseUrl, listOf(preset)).isNotEmpty()
+            }
+            val routeMatches = boundPreset?.let(::listOf)
+                ?: AgentProviderCatalogSyncPolicy.matchingPresets(providerId, baseUrl, result.presets)
+            if (routeMatches.isEmpty()) {
+                onMessage("当前请求地址没有匹配到可同步的供应商渠道，草稿没有变化", true)
+                return@launch
+            }
+
+            val sourceMessage = result.warning ?: when (result.source) {
+                AgentProviderPresetSource.ModelsDev -> "已获取最新目录"
+                AgentProviderPresetSource.ModelsDevCache -> "已读取上次成功目录"
+                AgentProviderPresetSource.Bundled -> "已读取随应用目录"
+            }
+            fun applyPreset(preset: AgentProviderPreset) {
+                val baseMetadata = metadata
+                    ?.takeIf { it.presetId == preset.id }
+                    ?: AgentProviderCatalogSyncMetadata(
+                        presetId = preset.id,
+                        catalogModelIds = emptySet(),
+                    )
+                onMerged(
+                    preset,
+                    AgentProviderCatalogSyncPolicy.merge(currentModels(), baseMetadata, preset),
+                    sourceMessage,
+                )
+            }
+
+            if (routeMatches.size == 1) {
+                applyPreset(routeMatches.single())
+            } else {
+                showAgentChoiceCard(
+                    title = "选择目录来源",
+                    message = "这个地址对应多个访问渠道，选择一次后以后会继续跟随该目录。",
+                    actions = routeMatches.map { preset ->
+                        AgentChoiceAction(
+                            label = "${preset.displayName} · ${providerPresetRouteLabel(preset)}",
+                            onClick = { applyPreset(preset) },
+                        )
+                    },
+                )
+            }
         }
     }
 
@@ -7546,6 +7695,7 @@ internal class RunAgentSurfaceBinding(
         target: AgentConfigurationTarget,
         provider: AgentProviderDraft,
         credential: AgentProviderCredentialChange,
+        catalogSync: AgentProviderCatalogSyncMetadata? = null,
         successMessage: String,
         onApplied: ((String) -> Unit)? = null
     ) {
@@ -7553,7 +7703,7 @@ internal class RunAgentSurfaceBinding(
         val requestRevision = ++settingsLoadRevision
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val saved = withContext(Dispatchers.IO) {
-                agentProviderCatalogApi.saveUserProvider(target, provider, credential)
+                agentProviderCatalogApi.saveUserProvider(target, provider, credential, catalogSync)
             }
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
             if (saved != null) {

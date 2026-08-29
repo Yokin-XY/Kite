@@ -10,6 +10,7 @@ import com.kite.app.agent.config.AgentLiveConfigSnapshot
 import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentProviderCredentialChange
+import com.kite.app.agent.config.AgentProviderCatalogSyncMetadata
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
@@ -62,6 +63,7 @@ interface AgentProviderCatalogApi {
         target: AgentConfigurationTarget,
         provider: AgentProviderDraft,
         credential: AgentProviderCredentialChange,
+        catalogSync: AgentProviderCatalogSyncMetadata? = null,
     ): AgentCatalogProvider?
 
     fun removeUserProvider(target: AgentConfigurationTarget, providerId: String): Boolean
@@ -223,6 +225,7 @@ class StoreBackedAgentProviderCatalogApi(
         target: AgentConfigurationTarget,
         provider: AgentProviderDraft,
         credential: AgentProviderCredentialChange,
+        catalogSync: AgentProviderCatalogSyncMetadata?,
     ): AgentCatalogProvider? {
         val saved = store.saveUserProvider(
             target.agentId,
@@ -233,6 +236,7 @@ class StoreBackedAgentProviderCatalogApi(
                 models = provider.models.map { AgentCatalogModel(it.id, it.displayName) },
                 source = AgentModelSource.UserConfigured,
                 policy = AgentProviderCatalogPolicy.UserManaged,
+                catalogSync = catalogSync,
             ),
             credential.toCatalogCredentialChange(),
         )
