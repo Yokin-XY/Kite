@@ -52,6 +52,36 @@ import kotlinx.coroutines.SupervisorJob
 @RunWith(RobolectricTestRunner::class)
 class AgentSurfaceNavigationPolicyTest {
     @Test
+    fun `活动运行时会话覆盖迟到的持久化旧会话身份`() {
+        val resolved = AgentSurfaceNavigationPolicy.resolveSessionBinding(
+            persistedSessionId = "old-session",
+            runtime = AgentSurfaceRuntimeSessionIdentity(
+                sessionId = "current-session",
+                isDraft = false,
+                conversationSessionId = "current-session",
+            ),
+        )
+
+        assertEquals("current-session", resolved.nativeSessionId)
+        assertEquals("current-session", resolved.conversationSessionId)
+    }
+
+    @Test
+    fun `冷草稿不会被持久化旧会话重新绑定`() {
+        val resolved = AgentSurfaceNavigationPolicy.resolveSessionBinding(
+            persistedSessionId = "old-session",
+            runtime = AgentSurfaceRuntimeSessionIdentity(
+                sessionId = null,
+                isDraft = true,
+                conversationSessionId = "draft:instance:1",
+            ),
+        )
+
+        assertEquals(null, resolved.nativeSessionId)
+        assertEquals("draft:instance:1", resolved.conversationSessionId)
+    }
+
+    @Test
     fun `打开供应商页不会被动执行官方账号状态命令`() {
         val activity = Robolectric.buildActivity(AppCompatActivity::class.java).setup().get()
         val tokens = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens

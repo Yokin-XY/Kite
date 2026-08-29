@@ -135,6 +135,35 @@ fun interface AgentRuntimeStatusSink {
     fun onStatus(sessionId: String?, phase: AgentSessionPhase, message: String?)
 }
 
+internal data class AgentRuntimeStatusRoute(
+    val shouldPublish: Boolean,
+    val sessionId: String?,
+)
+
+/**
+ * 原生连接可以在断开后继续吐出少量缓冲事件。只有当前运行时拥有的会话才能改写 CardRun 的
+ * 可见会话身份；准备新会话期间的中间事件只写入会话 Store，最终身份由 activate() 发布。
+ */
+internal object AgentRuntimeStatusRoutingPolicy {
+    fun route(
+        eventSessionId: String,
+        activeSessionId: String?,
+        activeIsDraft: Boolean,
+        hasActiveRuntime: Boolean,
+        preparingWarmDraft: Boolean,
+        preferredSessionId: String?,
+    ): AgentRuntimeStatusRoute = when {
+        hasActiveRuntime && preparingWarmDraft -> AgentRuntimeStatusRoute(false, null)
+        hasActiveRuntime && activeIsDraft -> AgentRuntimeStatusRoute(false, null)
+        hasActiveRuntime && activeSessionId != eventSessionId -> AgentRuntimeStatusRoute(false, null)
+        hasActiveRuntime -> AgentRuntimeStatusRoute(true, eventSessionId)
+        preferredSessionId != null && preferredSessionId != eventSessionId ->
+            AgentRuntimeStatusRoute(false, null)
+        preferredSessionId != null -> AgentRuntimeStatusRoute(true, eventSessionId)
+        else -> AgentRuntimeStatusRoute(true, null)
+    }
+}
+
 /**
  * Agent 长连接与待决权限的进程级拥有者。
  *
@@ -283,21 +312,45 @@ object AgentRuntimeRegistry {
                 if (normalizedEvent is AgentSessionEvent.LifecycleChanged) {
                     val active = activeByInstance[request.instanceId]
                         ?.takeIf { it.session.generation == request.generation }
-                    val visibleSessionId = sessionId.takeUnless {
-                        active?.session?.isDraft == true ||
-                            active?.preparingWarmDraft == true ||
-                            (active == null && preferredSessionId == null)
+                    val route = AgentRuntimeStatusRoutingPolicy.route(
+                        eventSessionId = sessionId,
+                        activeSessionId = active?.session?.sessionId,
+                        activeIsDraft = active?.session?.isDraft == true,
+                        hasActiveRuntime = active != null,
+                        preparingWarmDraft = active?.preparingWarmDraft == true,
+                        preferredSessionId = preferredSessionId,
+                    )
+                    if (route.shouldPublish) {
+                        statusSink.onStatus(route.sessionId, normalizedEvent.phase, normalizedEvent.message)
                     }
-                    statusSink.onStatus(visibleSessionId, normalizedEvent.phase, normalizedEvent.message)
                 }
             },
-            permissionHandler = { permission ->
+            permissionHandler = permissionHandler@ { permission ->
+                val permissionRoute = activeByInstance[request.instanceId]
+                    ?.takeIf { it.session.generation == request.generation }
+                    .let { active ->
+                        AgentRuntimeStatusRoutingPolicy.route(
+                            eventSessionId = permission.sessionId,
+                            activeSessionId = active?.session?.sessionId,
+                            activeIsDraft = active?.session?.isDraft == true,
+                            hasActiveRuntime = active != null,
+                            preparingWarmDraft = active?.preparingWarmDraft == true,
+                            preferredSessionId = preferredSessionId,
+                        )
+                }
+                if (!permissionRoute.shouldPublish) {
+                    return@permissionHandler AgentPermissionOutcome.Cancelled
+                }
                 val key = AgentConversationKey(request.providerId, permission.sessionId)
                 if (AgentConversationStore.snapshot(key) == null) {
                     AgentConversationStore.bind(request.instanceId, key, AgentSessionPhase.WaitingPermission)
                 }
                 AgentConversationStore.requestPermission(key, permission)
-                statusSink.onStatus(permission.sessionId, AgentSessionPhase.WaitingPermission, "等待权限选择")
+                statusSink.onStatus(
+                    permissionRoute.sessionId,
+                    AgentSessionPhase.WaitingPermission,
+                    "等待权限选择",
+                )
                 val pending = PendingPermission(
                     generation = request.generation,
                     conversationKey = key,
@@ -312,11 +365,23 @@ object AgentRuntimeRegistry {
                     } finally {
                         permissionByInstance.remove(request.instanceId, pending)
                         val restored = AgentConversationStore.resolvePermission(key)
-                        statusSink.onStatus(
-                            permission.sessionId,
-                            restored?.phase ?: AgentSessionPhase.Ready,
-                            "权限请求已处理"
+                        val active = activeByInstance[request.instanceId]
+                            ?.takeIf { it.session.generation == request.generation }
+                        val restoredRoute = AgentRuntimeStatusRoutingPolicy.route(
+                            eventSessionId = permission.sessionId,
+                            activeSessionId = active?.session?.sessionId,
+                            activeIsDraft = active?.session?.isDraft == true,
+                            hasActiveRuntime = active != null,
+                            preparingWarmDraft = active?.preparingWarmDraft == true,
+                            preferredSessionId = preferredSessionId,
                         )
+                        if (restoredRoute.shouldPublish) {
+                            statusSink.onStatus(
+                                restoredRoute.sessionId,
+                                restored?.phase ?: AgentSessionPhase.Ready,
+                                "权限请求已处理",
+                            )
+                        }
                     }
                 }
             }

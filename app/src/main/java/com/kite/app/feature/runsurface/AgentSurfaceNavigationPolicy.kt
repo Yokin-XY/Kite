@@ -37,6 +37,25 @@ internal object AgentSurfaceNavigationPolicy {
 
     fun sameCwd(left: String, right: String): Boolean = normalizeCwd(left) == normalizeCwd(right)
 
+    /**
+     * 进程内 Runtime 是当前会话身份的事实源；CardRun 持久化身份只用于进程重建后的恢复提示。
+     * 这样旧连接迟到的状态更新无法把已打开页面重新指向旧会话。
+     */
+    fun resolveSessionBinding(
+        persistedSessionId: String?,
+        runtime: AgentSurfaceRuntimeSessionIdentity?,
+    ): AgentSurfaceSessionBinding = if (runtime == null) {
+        AgentSurfaceSessionBinding(
+            nativeSessionId = persistedSessionId,
+            conversationSessionId = persistedSessionId,
+        )
+    } else {
+        AgentSurfaceSessionBinding(
+            nativeSessionId = runtime.sessionId.takeUnless { runtime.isDraft },
+            conversationSessionId = runtime.conversationSessionId,
+        )
+    }
+
     fun groupSessions(
         sessions: List<AgentSessionSummary>,
         defaultCwd: String,
@@ -343,6 +362,17 @@ internal object AgentSurfaceNavigationPolicy {
 
     private const val UNGROUPED_CONFIGURATION_KEY = "__kite_ungrouped__"
 }
+
+internal data class AgentSurfaceRuntimeSessionIdentity(
+    val sessionId: String?,
+    val isDraft: Boolean,
+    val conversationSessionId: String?,
+)
+
+internal data class AgentSurfaceSessionBinding(
+    val nativeSessionId: String?,
+    val conversationSessionId: String?,
+)
 
 internal data class AgentArchivedSessionProjection(
     val sessions: List<AgentSessionSummary>,

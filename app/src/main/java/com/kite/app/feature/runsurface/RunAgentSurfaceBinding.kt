@@ -471,16 +471,31 @@ internal class RunAgentSurfaceBinding(
             updateComposer()
             return
         }
-        sessionId = content.sessionId
+        val runtime = AgentRuntimeRegistry.session(instanceId)
+            ?.takeIf { it.generation == generation }
+        val sessionBinding = AgentSurfaceNavigationPolicy.resolveSessionBinding(
+            persistedSessionId = content.sessionId,
+            runtime = runtime?.let { current ->
+                AgentSurfaceRuntimeSessionIdentity(
+                    sessionId = current.sessionId,
+                    isDraft = current.isDraft,
+                    conversationSessionId = AgentRuntimeRegistry.conversationProjectionSessionId(
+                        instanceId,
+                        generation,
+                    ),
+                )
+            },
+        )
+        sessionId = sessionBinding.nativeSessionId
         restoreComposerDraft(
-            ComposerDraftIdentity(instanceId, generation, content.sessionId),
+            ComposerDraftIdentity(instanceId, generation, sessionBinding.nativeSessionId),
         )
         statusText.setTextIfChanged(content.statusMessage
             ?: content.connectionStatus?.let(::connectionStatusLabel)
             ?: state.statusLabel)
         loadDraftModelCatalog()
         if (prepareInitialEntryDraftIfNeeded()) return
-        subscribe(content.providerId, observableSessionId(content.sessionId))
+        subscribe(content.providerId, sessionBinding.conversationSessionId)
         updateComposer()
     }
 

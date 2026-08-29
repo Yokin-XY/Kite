@@ -1068,6 +1068,7 @@ class AgentRuntimeRegistryTest {
             requestPermission = false,
             uniqueSessionIdsAcrossConnections = true,
         )
+        val statuses = mutableListOf<String?>()
         start(
             provider,
             request("instance-provider-new-session").copy(
@@ -1081,6 +1082,7 @@ class AgentRuntimeRegistryTest {
                     )
                 },
             ),
+            AgentRuntimeStatusSink { sessionId, _, _ -> statuses += sessionId },
         )
         AgentRuntimeRegistry.prompt(
             "instance-provider-new-session",
@@ -1113,6 +1115,17 @@ class AgentRuntimeRegistryTest {
             timeline.map { message -> (message.content.single() as AgentContent.Text).text },
         )
         assertEquals(null, AgentConversationStore.snapshot(AgentConversationKey("fake", "session-1")))
+
+        provider.connections.first().emitLifecycle("session-1", AgentSessionPhase.Ready)
+
+        assertEquals("session-2", statuses.last())
+        assertEquals(
+            listOf("第一轮", "已完成", "第二轮", "已完成"),
+            requireNotNull(AgentConversationStore.snapshot(AgentConversationKey("fake", "session-2")))
+                .timeline
+                .filterIsInstance<AgentConversationItem.Message>()
+                .map { message -> (message.content.single() as AgentContent.Text).text },
+        )
     }
 
     @Test
@@ -1398,6 +1411,11 @@ class AgentRuntimeRegistryTest {
         val callOrder = mutableListOf<String>()
         val deletedSessions = mutableListOf<String>()
         val renamedSessions = mutableListOf<AgentSessionRenameRequest>()
+
+        suspend fun emitLifecycle(sessionId: String, phase: AgentSessionPhase) {
+            endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(phase))
+        }
+
         override val provider = AgentProviderInfo("fake", "Fake")
         override val capabilities = AgentCapabilities(
             sessions = AgentSessionCapabilities(
