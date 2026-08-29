@@ -14,6 +14,8 @@ import com.kite.app.agent.codex.CodexSessionConfigurationOverride
 import com.kite.app.agent.pi.PiRpcAgentProvider
 import com.kite.app.agent.pi.PiRpcProcessLauncher
 import com.kite.app.agent.pi.PiRpcProviderDescriptor
+import com.kite.app.agent.pi.PiRpcSessionFileResolver
+import com.kite.app.agent.pi.PiRpcSessionPathMapper
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.AgentPersistentConfigChange
@@ -379,6 +381,9 @@ internal class AndroidAgentRecipeRuntime(
             )
         )
     private val manifestLoader = KiteResourceManifestLoader(appContext)
+    private val agentConfigProjection = ContainerAgentConfigProjection {
+        WorkSurfaceRuntimeBridge.getSavedContainer(appContext)
+    }
     private val draftCapabilityCache = AgentDraftCapabilityCacheStore(appContext)
     private val sessionMetadataStore = AgentSessionMetadataStore(appContext)
     private val managedProcessLaunchPlanner = managedProcessLaunchPlanner
@@ -589,6 +594,12 @@ internal class AndroidAgentRecipeRuntime(
                     diagnosticSink = { line ->
                         Log.w(TAG, "Agent ${resolved.providerId}: $line")
                     },
+                    sessionFileResolver = PiRpcSessionFileResolver { path ->
+                        agentConfigProjection.resolve(path)?.readFile
+                    },
+                    sessionPathMapper = PiRpcSessionPathMapper(
+                        processLaunch.sessionPathMapping::fromAgent,
+                    ),
                 )
                 else -> error("已由 managed protocol 校验限制协议")
             }

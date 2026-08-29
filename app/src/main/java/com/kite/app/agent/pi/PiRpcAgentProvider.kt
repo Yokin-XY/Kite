@@ -25,6 +25,7 @@ import com.kite.app.agent.contract.AgentSessionPage
 import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSnapshot
+import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.agent.contract.AgentStopReason
 import com.kite.app.agent.contract.AgentToolCall
 import com.kite.app.agent.contract.AgentToolCallPatch
@@ -43,6 +44,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -63,8 +65,13 @@ class PiRpcAgentProvider(
     private val launcher: PiRpcProcessLauncher,
     private val initializeTimeoutMs: Long = 15_000L,
     private val diagnosticSink: (String) -> Unit = {},
+    sessionFileResolver: PiRpcSessionFileResolver? = null,
+    sessionPathMapper: PiRpcSessionPathMapper = PiRpcSessionPathMapper { it },
 ) : KiteAgentProvider {
     override val id: String = descriptor.id
+    private val sessionCatalog = sessionFileResolver?.let { resolver ->
+        PiRpcSessionCatalog(resolver, sessionPathMapper)
+    }
 
     override suspend fun connect(
         request: AgentConnectionRequest,
@@ -96,6 +103,7 @@ class PiRpcAgentProvider(
                 models = models,
                 thinkingLevels = levels,
                 commands = commands,
+                sessionCatalog = sessionCatalog,
             )
             rpc.eventHandler = connection::onEvent
             AgentOperationResult.Success(connection)
@@ -118,11 +126,17 @@ private class PiRpcConnection(
     models: List<PiModel>,
     thinkingLevels: List<String>,
     private val commands: List<AgentCommand>,
+    private val sessionCatalog: PiRpcSessionCatalog?,
 ) : KiteAgentConnection {
     override val provider = AgentProviderInfo(descriptor.id, descriptor.name, descriptor.version, descriptor.title)
     override val capabilities = AgentCapabilities(
         prompt = AgentPromptCapabilities(text = true, resourceLinks = true, images = true),
-        sessions = AgentSessionCapabilities(close = true, rename = true),
+        sessions = AgentSessionCapabilities(
+            load = sessionCatalog != null,
+            list = sessionCatalog != null,
+            close = true,
+            rename = true,
+        ),
     )
     private val modelsById = models.associateBy(PiModel::selectionId)
     private var state = initialState
@@ -153,8 +167,54 @@ private class PiRpcConnection(
             snapshot().also { announceReady(it.id) }
         }
 
-    override suspend fun loadSession(request: AgentExistingSessionRequest) = AgentOperationResult.Unsupported("session/load")
-    override suspend fun listSessions(request: AgentSessionListRequest) = AgentOperationResult.Unsupported("session/list")
+    override suspend fun loadSession(
+        request: AgentExistingSessionRequest,
+    ): AgentOperationResult<AgentSessionSnapshot> {
+        val catalog = sessionCatalog ?: return AgentOperationResult.Unsupported("session/load")
+        val previousState = state
+        val previousSessionId = activeSessionId
+        return try {
+            val record = catalog.find(state.sessionFile, request.sessionId)
+                ?: return AgentOperationResult.Failure("Pi 会话不存在: ${request.sessionId}")
+            val switched = rpc.request(
+                "switch_session",
+                JSONObject().put("sessionPath", record.agentPath),
+            )
+            if (switched.optJSONObject("data")?.optBoolean("cancelled") == true) {
+                return AgentOperationResult.Failure("Pi 取消了会话切换")
+            }
+            state = rpc.request("get_state").toPiState() ?: error("Pi RPC 未返回会话状态")
+            check(state.sessionId == request.sessionId) {
+                "Pi 返回了不匹配的会话: ${state.sessionId}"
+            }
+            activeSessionId = state.sessionId
+            availableThinkingLevels = loadThinkingLevels(rpc)
+            replayMessages(state.sessionId)
+            endpoint.eventSink.onEvent(
+                state.sessionId,
+                AgentSessionEvent.SessionInfoChanged(
+                    title = state.sessionName ?: record.summary.title,
+                    updatedAt = record.summary.updatedAt,
+                ),
+            )
+            AgentOperationResult.Success(snapshot().also { announceReady(it.id) })
+        } catch (error: Throwable) {
+            restorePreviousSession(previousState, previousSessionId)
+            AgentOperationResult.Failure("加载 Pi 会话失败: ${error.message}", error)
+        }
+    }
+
+    override suspend fun listSessions(
+        request: AgentSessionListRequest,
+    ): AgentOperationResult<AgentSessionPage> {
+        val catalog = sessionCatalog ?: return AgentOperationResult.Unsupported("session/list")
+        if (request.cursor != null) return AgentOperationResult.Success(AgentSessionPage(emptyList()))
+        return operation("列出 Pi 会话") {
+            AgentSessionPage(
+                sessions = catalog.list(state.sessionFile, request.cwd).map(PiRpcSessionRecord::summary),
+            )
+        }
+    }
     override suspend fun resumeSession(request: AgentExistingSessionRequest) = AgentOperationResult.Unsupported("session/resume")
     override suspend fun forkSession(request: AgentExistingSessionRequest) = AgentOperationResult.Unsupported("session/fork")
 
@@ -316,6 +376,132 @@ private class PiRpcConnection(
 
     private fun snapshot() = AgentSessionSnapshot(state.sessionId, configuration())
 
+    private suspend fun replayMessages(sessionId: String) {
+        val messages = rpc.request("get_messages")
+            .optJSONObject("data")
+            ?.optJSONArray("messages")
+            ?: JSONArray()
+        for (index in 0 until messages.length()) {
+            val message = messages.optJSONObject(index) ?: continue
+            val messageId = "pi-history-$index"
+            when (message.optString("role")) {
+                "user" -> emitPersistedContent(
+                    sessionId = sessionId,
+                    role = AgentMessageRole.User,
+                    content = message.opt("content"),
+                    messageId = messageId,
+                )
+                "assistant" -> emitPersistedAssistant(sessionId, message, messageId)
+                "toolResult" -> emitPersistedToolResult(sessionId, message)
+                "bashExecution" -> endpoint.eventSink.onEvent(
+                    sessionId,
+                    AgentSessionEvent.ToolCallStarted(
+                        AgentToolCall(
+                            id = "$messageId:bash",
+                            title = "运行命令",
+                            kind = AgentToolKind("bash"),
+                            status = AgentToolStatus(if (message.optBoolean("cancelled")) "failed" else "completed"),
+                            rawInput = message.optString("command").takeIf(String::isNotBlank),
+                            rawOutput = message.optString("output").takeIf(String::isNotBlank),
+                        ),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun emitPersistedAssistant(sessionId: String, message: JSONObject, messageId: String) {
+        val content = message.optJSONArray("content") ?: return
+        for (index in 0 until content.length()) {
+            val block = content.optJSONObject(index) ?: continue
+            when (block.optString("type")) {
+                "text" -> emitText(
+                    sessionId,
+                    AgentMessageRole.Assistant,
+                    block.optString("text"),
+                    "$messageId:text",
+                )
+                "thinking" -> emitText(
+                    sessionId,
+                    AgentMessageRole.Thought,
+                    block.optString("thinking"),
+                    "$messageId:thinking",
+                )
+                "toolCall" -> {
+                    val toolCallId = block.optString("id").takeIf(String::isNotBlank)
+                        ?: "$messageId:tool:$index"
+                    val toolName = block.optString("name").ifBlank { "工具" }
+                    endpoint.eventSink.onEvent(
+                        sessionId,
+                        AgentSessionEvent.ToolCallStarted(
+                            AgentToolCall(
+                                id = toolCallId,
+                                title = toolName,
+                                kind = AgentToolKind(toolName),
+                                status = AgentToolStatus("in_progress"),
+                                rawInput = block.optJSONObject("arguments")?.toString(),
+                            ),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun emitPersistedToolResult(sessionId: String, message: JSONObject) {
+        val id = message.optString("toolCallId").takeIf(String::isNotBlank) ?: return
+        endpoint.eventSink.onEvent(
+            sessionId,
+            AgentSessionEvent.ToolCallUpdated(
+                AgentToolCallPatch(
+                    id = id,
+                    status = AgentToolStatus(if (message.optBoolean("isError")) "failed" else "completed"),
+                    rawOutput = message.opt("content").persistedText(),
+                ),
+            ),
+        )
+    }
+
+    private fun emitPersistedContent(
+        sessionId: String,
+        role: AgentMessageRole,
+        content: Any?,
+        messageId: String,
+    ) {
+        when (content) {
+            is String -> emitText(sessionId, role, content, messageId)
+            is JSONArray -> for (index in 0 until content.length()) {
+                val block = content.optJSONObject(index) ?: continue
+                when (block.optString("type")) {
+                    "text" -> emitText(sessionId, role, block.optString("text"), messageId)
+                    "image" -> {
+                        val data = block.optString("data").takeIf(String::isNotBlank) ?: continue
+                        val mimeType = block.optString("mimeType").ifBlank { "image/png" }
+                        endpoint.eventSink.onEvent(
+                            sessionId,
+                            AgentSessionEvent.MessageChunk(
+                                role,
+                                AgentContent.Image(data = data, mimeType = mimeType),
+                                messageId,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun restorePreviousSession(previousState: PiState, previousSessionId: String?) {
+        val previousFile = previousState.sessionFile
+        if (previousFile != null) {
+            runCatching {
+                rpc.request("switch_session", JSONObject().put("sessionPath", previousFile))
+            }
+        }
+        state = previousState
+        activeSessionId = previousSessionId
+    }
+
     private fun configuration(): List<AgentConfigOption> = buildList {
         val currentModel = state.model
         if (modelsById.isNotEmpty() && currentModel != null) add(
@@ -351,10 +537,15 @@ private class PiRpcConnection(
         )
     }
 
-    private fun emitText(sessionId: String, role: AgentMessageRole, text: String) {
+    private fun emitText(
+        sessionId: String,
+        role: AgentMessageRole,
+        text: String,
+        messageId: String? = null,
+    ) {
         if (text.isNotEmpty()) endpoint.eventSink.onEvent(
             sessionId,
-            AgentSessionEvent.MessageChunk(role, AgentContent.Text(text)),
+            AgentSessionEvent.MessageChunk(role, AgentContent.Text(text), messageId),
         )
     }
 
@@ -368,6 +559,20 @@ private class PiRpcConnection(
         const val MODEL_CONFIG_ID = "pi.rpc.model"
         const val THINKING_CONFIG_ID = "pi.rpc.thinking"
     }
+}
+
+private fun Any?.persistedText(): String? = when (this) {
+    is String -> trim().takeIf(String::isNotBlank)
+    is JSONArray -> buildList {
+        for (index in 0 until length()) {
+            val block = optJSONObject(index) ?: continue
+            when (block.optString("type")) {
+                "text" -> block.optString("text").takeIf(String::isNotBlank)?.let(::add)
+                "image" -> add("[图片]")
+            }
+        }
+    }.joinToString("\n").takeIf(String::isNotBlank)
+    else -> null
 }
 
 private suspend fun loadThinkingLevels(rpc: PiRpc): List<String> =
