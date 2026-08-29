@@ -470,10 +470,10 @@ internal abstract class StandardJsonMcpProtocolAgentConfigAdapter protected cons
         val SAFE_ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]{0,127}")
         val SAFE_HEADER_NAME = Regex("[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
         val DOLLAR_ENV_REFERENCE = Regex(
-            "(?:\\$([A-Za-z_][A-Za-z0-9_]{0,127})|\\$\\{([A-Za-z_][A-Za-z0-9_]{0,127})})",
+            "(?:\\$([A-Za-z_][A-Za-z0-9_]{0,127})|\\$\\{([A-Za-z_][A-Za-z0-9_]{0,127})\\})",
         )
         val CURSOR_ENV_REFERENCE = Regex(
-            "(?:Bearer\\s+)?\\$\\{env:([A-Za-z_][A-Za-z0-9_-]{0,127})}",
+            "(?:Bearer\\s+)?\\$\\{env:([A-Za-z_][A-Za-z0-9_-]{0,127})\\}",
             RegexOption.IGNORE_CASE,
         )
     }
