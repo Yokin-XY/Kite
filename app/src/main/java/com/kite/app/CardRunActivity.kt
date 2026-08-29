@@ -421,6 +421,7 @@ class CardRunActivity : AppCompatActivity() {
             agentConfigurationApi = graph.agentConfigurationApi,
             agentProviderCatalogApi = graph.agentProviderCatalogApi,
             agentSessionControlApi = graph.agentSessionControlApi,
+            acpAgentDiscoveryRepository = graph.acpAgentDiscoveryRepository,
         ).also { agentSurfaceBinding = it }
         RunSurfaceContent.InstallWizard -> createInstallWizardBinding()
         else -> StaticRunSurfaceBinding(placeholder(state.title, state.statusLabel))

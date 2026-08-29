@@ -121,6 +121,7 @@ internal class AcpAgentDiscoveryRepository(
                     fallback(cached, bundled, error.message ?: "目录内容无效")
                 }
                 AcpAgentCatalogFetchResult.NotModified -> (cached ?: bundled).copy(
+                    source = if (cached != null) AcpAgentCatalogSource.Live else AcpAgentCatalogSource.Bundled,
                     refreshedAtMs = now,
                     warning = null,
                 )

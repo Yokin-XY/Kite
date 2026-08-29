@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "aliases": [
+    {"registryId": "claude-acp", "agentId": "claude-code"},
+    {"registryId": "codex-acp", "agentId": "codex"},
+    {"registryId": "gemini", "agentId": "gemini"},
+    {"registryId": "kimi", "agentId": "kimi"},
+    {"registryId": "opencode", "agentId": "opencode"},
+    {"registryId": "pi-acp", "agentId": "pi"},
+    {"registryId": "qwen-code", "agentId": "qwen"}
+  ]
+}

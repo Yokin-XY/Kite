@@ -64,6 +64,13 @@ import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSummary
+import com.kite.app.agent.discovery.AcpAgentCatalogSource
+import com.kite.app.agent.discovery.AcpAgentCompatibilityCatalog
+import com.kite.app.agent.discovery.AcpAgentCompatibilityEntry
+import com.kite.app.agent.discovery.AcpAgentCompatibilitySnapshot
+import com.kite.app.agent.discovery.AcpAgentDiscoveryRepository
+import com.kite.app.agent.discovery.AcpAgentDistributionKind
+import com.kite.app.agent.discovery.AcpAgentIntegrationState
 import com.kite.app.agent.config.AgentConfigApplyResult
 import com.kite.app.agent.config.AgentConfigReadResult
 import com.kite.app.agent.config.AgentConfigScope
@@ -181,6 +188,8 @@ internal class RunAgentSurfaceBinding(
     private val agentConfigurationApi: AgentConfigurationApi,
     private val agentProviderCatalogApi: AgentProviderCatalogApi,
     private val agentSessionControlApi: AgentSessionControlApi = RuntimeBackedAgentSessionControlApi(),
+    private val acpAgentDiscoveryRepository: AcpAgentDiscoveryRepository =
+        AcpAgentDiscoveryRepository(context),
 ) : RunSurfaceBinding {
     private val isDark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
         Configuration.UI_MODE_NIGHT_YES
@@ -277,6 +286,8 @@ internal class RunAgentSurfaceBinding(
     private var persistentConfigResult: AgentConfigReadResult? = null
     private var defaultPermissionPendingProfileId: String? = null
     private var settingsRegistrySnapshot: AgentRegistrySnapshot? = null
+    private var settingsCompatibilitySnapshot: AcpAgentCompatibilitySnapshot? = null
+    private val acpAgentCompatibilityCatalog = AcpAgentCompatibilityCatalog(context)
     private var settingsLoadRevision: Long = 0L
     private var providerPageAgentId: String? = null
     private var providerPageTarget: AgentConfigurationTarget? = null
@@ -573,6 +584,10 @@ internal class RunAgentSurfaceBinding(
         }
         AgentNavigationScreen.Settings -> {
             if (settingsReturnsToDrawer) showSessionDrawer() else closeNavigation()
+            true
+        }
+        AgentNavigationScreen.AgentCatalog -> {
+            returnToAgentSettings()
             true
         }
         AgentNavigationScreen.Drawer -> {
@@ -2148,7 +2163,9 @@ internal class RunAgentSurfaceBinding(
                 gravity = Gravity.CENTER
                 setTextColor(tokens.textPrimary)
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(iconButton(context, R.drawable.ic_refresh_light, "刷新 Agent 状态", ::loadAgentRegistry),
+            addView(iconButton(context, R.drawable.ic_refresh_light, "刷新 Agent 目录与状态") {
+                loadAgentRegistry(refreshPublicCatalog = true)
+            },
                 LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
         addView(ScrollView(context).apply {
@@ -2161,20 +2178,28 @@ internal class RunAgentSurfaceBinding(
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
-    private fun loadAgentRegistry() {
+    private fun loadAgentRegistry(refreshPublicCatalog: Boolean = false) {
         settingsContentHost.removeAllViews()
-        settingsContentHost.addView(settingsMessage("正在读取已登记 Agent…"))
+        settingsContentHost.addView(settingsMessage(
+            if (refreshPublicCatalog) "正在刷新 Agent 公共目录…" else "正在读取已登记 Agent…",
+        ))
         val requestedAgentId = selectedSettingsAgentId ?: agentId
         val requestRevision = ++settingsLoadRevision
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val loaded = withContext(Dispatchers.IO) {
                 val snapshot = agentRegistry.snapshot()
+                val publicCatalog = if (refreshPublicCatalog) {
+                    acpAgentDiscoveryRepository.refresh()
+                } else {
+                    acpAgentDiscoveryRepository.cachedSnapshot()
+                }
+                val compatibility = acpAgentCompatibilityCatalog.resolve(publicCatalog, snapshot)
                 val selected = snapshot.entry(requestedAgentId.orEmpty())
                     ?: snapshot.entry(agentId.orEmpty())
                     ?: snapshot.entries.firstOrNull()
                 val target = selected?.configurationTarget()
                 val configResult = target?.let { agentConfigurationApi.read(it) }
-                AgentSettingsLoad(snapshot, target?.agentId, configResult)
+                AgentSettingsLoad(snapshot, compatibility, target?.agentId, configResult)
             }
             if (
                 navigationScreen == AgentNavigationScreen.Settings &&
@@ -2183,7 +2208,16 @@ internal class RunAgentSurfaceBinding(
                 persistentConfigAgentId = loaded.agentId
                 persistentConfigResult = loaded.configResult
                 settingsRegistrySnapshot = loaded.registry
+                settingsCompatibilitySnapshot = loaded.compatibility
                 renderAgentSettings(loaded.registry)
+                if (refreshPublicCatalog) {
+                    val warning = loaded.compatibility.catalog.warning
+                    Toast.makeText(
+                        context,
+                        warning ?: "Agent 公共目录已刷新",
+                        if (warning == null) Toast.LENGTH_SHORT else Toast.LENGTH_LONG,
+                    ).show()
+                }
                 val migratedSnapshot = (loaded.configResult as? AgentConfigReadResult.Ready)?.snapshot
                 if (migratedSnapshot?.runtimeReloadRequired == true && loaded.agentId != null) {
                     Toast.makeText(
@@ -2208,6 +2242,19 @@ internal class RunAgentSurfaceBinding(
         }
         selectedSettingsAgentId = selected.registration.definition.agentId
         settingsContentHost.addView(buildAgentSelector(selected, snapshot))
+        settingsCompatibilitySnapshot?.let { compatibility ->
+            settingsContentHost.addView(buildSettingsSection(
+                title = "Agent 公共目录",
+                description = "公共目录只负责发现版本；安装、配置和运行仍由 Kite 兼容层验证。",
+                rows = listOf(
+                    SettingsRow(
+                        title = "ACP Agent 目录",
+                        subtitle = compatibility.summaryLabel(),
+                        onClick = { showPublicAgentCatalog(compatibility) },
+                    ),
+                ),
+            ))
+        }
         renderPersistentConfigurationSection(selected)
         settingsContentHost.addView(persistentConfigSettingsHost)
         if (snapshot.conflicts.isNotEmpty()) {
@@ -2301,6 +2348,94 @@ internal class RunAgentSurfaceBinding(
                 selectedSettingsAgentId = snapshot.entries[index].registration.definition.agentId
                 loadAgentRegistry()
         }
+    }
+
+    private fun showPublicAgentCatalog(snapshot: AcpAgentCompatibilitySnapshot) {
+        navigationJob?.cancel()
+        navigationScreen = AgentNavigationScreen.AgentCatalog
+        navigationHost.removeAllViews()
+        navigationHost.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(agentPageBackground)
+            addView(
+                buildAgentSubpageHeader(
+                    title = "ACP Agent 目录",
+                    backDescription = "返回 Agent 设置",
+                    onBack = ::returnToAgentSettings,
+                ),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)),
+            )
+            addView(ScrollView(context).apply {
+                isFillViewport = true
+                overScrollMode = View.OVER_SCROLL_NEVER
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(24))
+                    addView(buildSettingsSection(
+                        title = "目录状态",
+                        description = snapshot.catalog.warning
+                            ?: "候选信息来自 ACP 公共 Registry；它不会绕过 Kite 安装与兼容验证。",
+                        rows = listOf(
+                            SettingsRow(
+                                title = "${snapshot.entries.size} 个 Android 候选",
+                                subtitle = "${snapshot.integratedCount} 个已接入 · ${snapshot.catalog.source.userLabel()} · 目录 ${snapshot.catalog.version}",
+                            ),
+                        ),
+                    ))
+                    val integrated = snapshot.entries.filter {
+                        it.state == AcpAgentIntegrationState.Integrated
+                    }
+                    if (integrated.isNotEmpty()) addView(buildSettingsSection(
+                        title = "已经接入 Kite",
+                        description = "这些 Agent 继续使用现有资源、Adapter 和真实安装状态。",
+                        rows = integrated.map { it.settingsRow() },
+                    ))
+                    val candidates = snapshot.entries.filter {
+                        it.state != AcpAgentIntegrationState.Integrated
+                    }
+                    if (candidates.isNotEmpty()) addView(buildSettingsSection(
+                        title = "待验证候选",
+                        description = "已经发现版本和分发形式，但通过 Android/PRoot 验证前不会显示为可安装。",
+                        rows = candidates.map { it.settingsRow() },
+                    ))
+                }, ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ))
+        navigationHost.visibility = View.VISIBLE
+    }
+
+    private fun AcpAgentCompatibilitySnapshot.summaryLabel(): String =
+        "${entries.size} 个候选 · $integratedCount 个已适配 · ${catalog.source.userLabel()}"
+
+    private fun AcpAgentCompatibilityEntry.settingsRow(): SettingsRow {
+        val distribution = candidate.distributions.joinToString(" / ") { item ->
+            when (item.kind) {
+                AcpAgentDistributionKind.Npx -> "npm"
+                AcpAgentDistributionKind.Uvx -> "Python"
+                AcpAgentDistributionKind.LinuxArm64Binary -> "arm64"
+            }
+        }
+        val stateLabel = when (state) {
+            AcpAgentIntegrationState.Integrated -> "已接入 ${localAgentId.orEmpty()}"
+            AcpAgentIntegrationState.Declared -> "已有兼容声明，当前资源未登记"
+            AcpAgentIntegrationState.Candidate -> "新候选，尚未验证"
+        }
+        return SettingsRow(
+            title = candidate.displayName,
+            subtitle = "v${candidate.version} · $distribution · $stateLabel",
+        )
+    }
+
+    private fun AcpAgentCatalogSource.userLabel(): String = when (this) {
+        AcpAgentCatalogSource.Live -> "在线最新目录"
+        AcpAgentCatalogSource.Cache -> "上次成功目录"
+        AcpAgentCatalogSource.Bundled -> "随应用目录"
     }
 
     private fun showArchivedContentManager(selected: AgentRegistryEntry) {
@@ -8857,6 +8992,7 @@ internal class RunAgentSurfaceBinding(
 
     private data class AgentSettingsLoad(
         val registry: AgentRegistrySnapshot,
+        val compatibility: AcpAgentCompatibilitySnapshot,
         val agentId: String?,
         val configResult: AgentConfigReadResult?
     )

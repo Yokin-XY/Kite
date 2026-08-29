@@ -10,6 +10,7 @@ import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentExistingSessionRequest
+import com.kite.app.agent.contract.AgentFailures
 import com.kite.app.agent.contract.AgentMessageRole
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentNewSessionRequest
@@ -72,7 +73,7 @@ class PiRpcAgentProvider(
         val process = try {
             launcher.launch()
         } catch (error: Throwable) {
-            return AgentOperationResult.Failure("无法启动 ${descriptor.name}: ${error.message}", error)
+            return AgentFailures.launch("无法启动 ${descriptor.name}: ${error.message}", error)
         }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineName("PiRpc-${descriptor.id}"))
         val rpc = PiRpc(process, scope, diagnosticSink)
@@ -102,7 +103,7 @@ class PiRpcAgentProvider(
             rpc.close(error)
             runCatching { process.stop() }
             scope.cancel("Pi RPC initialize failed", error)
-            AgentOperationResult.Failure("${descriptor.name} RPC 初始化失败: ${error.message}", error)
+            AgentFailures.initialize("${descriptor.name} RPC 初始化失败: ${error.message}", error)
         }
     }
 }

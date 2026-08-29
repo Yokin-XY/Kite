@@ -32,6 +32,7 @@ import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentExistingSessionRequest
+import com.kite.app.agent.contract.AgentFailures
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentNewSessionRequest
 import com.kite.app.agent.contract.AgentOperationResult
@@ -108,7 +109,7 @@ class AcpProcessAgentProvider(
         val process = try {
             launcher.launch()
         } catch (error: Throwable) {
-            return AgentOperationResult.Failure("无法启动 ${descriptor.name}: ${error.message}", error)
+            return AgentFailures.launch("无法启动 ${descriptor.name}: ${error.message}", error)
         }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineName("Acp-${descriptor.id}"))
         val inlineSessionUpdates = AcpInlineSessionUpdateBuffer()
@@ -177,7 +178,7 @@ class AcpProcessAgentProvider(
             protocol.close()
             runCatching { process.stop() }
             scope.cancel("ACP initialize failed", error)
-            AgentOperationResult.Failure("${descriptor.name} ACP 初始化失败: ${error.message}", error)
+            AgentFailures.initialize("${descriptor.name} ACP 初始化失败: ${error.message}", error)
         }
     }
 

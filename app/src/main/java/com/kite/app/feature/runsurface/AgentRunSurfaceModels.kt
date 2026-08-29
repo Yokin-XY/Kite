@@ -26,6 +26,7 @@ internal enum class AgentNavigationScreen {
     Drawer,
     SessionSearch,
     Settings,
+    AgentCatalog,
     DefaultPermission,
     ProviderList,
     ProviderEditor,

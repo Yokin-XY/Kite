@@ -35,6 +35,7 @@ import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentContentAnnotations
 import com.kite.app.agent.contract.AgentCost
 import com.kite.app.agent.contract.AgentFailureCode
+import com.kite.app.agent.contract.AgentFailures
 import com.kite.app.agent.contract.AgentMcpCapabilities
 import com.kite.app.agent.contract.AgentMessageRole
 import com.kite.app.agent.contract.AgentPermissionKind
@@ -143,13 +144,13 @@ object AcpAgentMapper {
                 source.data?.let { put("data", it) }
             }.toString()
         }
-        return AgentOperationResult.Failure(
+        return AgentFailures.protocol(
             message = "$label 失败: ${error.message}",
             cause = error,
             code = when {
                 rpcError?.isAuthenticationRequired() == true -> AgentFailureCode.AuthenticationRequired
                 rpcError != null -> AgentFailureCode("acp_json_rpc_${rpcError.code}")
-                else -> null
+                else -> AgentFailureCode.ProtocolFailure
             },
             extension = protocolPayload?.let {
                 AgentProtocolExtension(

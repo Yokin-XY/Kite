@@ -46,3 +46,13 @@ Windows、macOS 和其他架构不会进入 Android 候选。二进制摘要即�
 5. 通过 Android/PRoot 结果验证后，兼容目录才把候选映射为 Kite 正式 Agent。
 
 这条路径让其他项目维护版本和分发信息，Kite 只维护 Android 兼容结论；Codex、Hermes 已修复的公共协议、进程和错误语义则由共享层复用。
+
+## 公共失败合同
+
+`AgentOperationResult.Failure` 在保留协议原文、异常和原有错误码的同时，可以携带 `AgentFailureDetails`：
+
+- `phase` 区分安装、启动、初始化、协议、认证、配置、会话、网络和运行时。
+- `retryable` 表示原操作是否适合直接重试。
+- `recovery` 统一为重试、登录、重新配置、修复运行环境或无自动恢复动作。
+
+ACP、Codex App Server 和 Pi RPC 的进程启动及初始化已经经过同一 `AgentFailures` 工厂。错误分类只依据真实操作阶段、协议错误码和异常类型，不读取产品显示名，也不匹配某个 Agent 的错误文案。后续 Agent Adapter 应复用这一入口，使页面、日志和“修复”动作可以消费同一种语义。

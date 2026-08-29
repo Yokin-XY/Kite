@@ -74,6 +74,20 @@ class AcpAgentDiscoveryRepositoryTest {
     }
 
     @Test
+    fun `服务器确认目录未变化时仍标记为在线最新`() = runTest {
+        AcpAgentDiscoveryRepository(context) {
+            AcpAgentCatalogFetchResult.Updated(CATALOG_WITH_ALL_DISTRIBUTIONS, "catalog-v2")
+        }.refresh()
+
+        val confirmed = AcpAgentDiscoveryRepository(context) {
+            AcpAgentCatalogFetchResult.NotModified
+        }.refresh()
+
+        assertEquals(AcpAgentCatalogSource.Live, confirmed.source)
+        assertNull(confirmed.warning)
+    }
+
+    @Test
     fun `损坏缓存不会阻断随包目录`() {
         cacheDirectory.mkdirs()
         File(cacheDirectory, "registry.json").writeText("{broken")
