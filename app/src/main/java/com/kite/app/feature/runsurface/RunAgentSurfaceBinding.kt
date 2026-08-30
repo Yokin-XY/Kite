@@ -3918,6 +3918,33 @@ internal class RunAgentSurfaceBinding(
         }
         showProviderManager(selected, target, projection)
         renderSessionConfigurationControls()
+        val requestRevision = ++providerCatalogLoadRevision
+        providerCatalogRefreshJob?.cancel()
+        providerCatalogRefreshJob = lifecycleOwner.lifecycleScope.launch {
+            val warnings = withContext(Dispatchers.IO) {
+                agentProviderCatalogApi.migrateLegacyUserProviders(target)
+            }
+            if (
+                requestRevision != providerCatalogLoadRevision ||
+                navigationScreen != AgentNavigationScreen.ProviderList ||
+                providerPageAgentId != targetAgentId
+            ) return@launch
+            val migratedCatalog = agentProviderCatalogApi.snapshot(target)
+            if (migratedCatalog != catalog) {
+                val migratedProjection = migratedCatalog.toConfigurationProjection(target)
+                providerPageSnapshot = migratedProjection
+                if (targetAgentId == agentId) {
+                    draftProviderCatalogSnapshot = migratedCatalog
+                    draftModelSnapshot = migratedProjection
+                    applyDraftModelDefault(targetAgentId, migratedProjection)
+                }
+                showProviderManager(selected, target, migratedProjection)
+                renderSessionConfigurationControls()
+            }
+            warnings.firstOrNull()?.let { warning ->
+                Toast.makeText(context, warning, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun refreshProviderCatalog(

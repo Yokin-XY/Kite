@@ -11,8 +11,10 @@ import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderCatalogSyncMetadata
+import com.kite.app.agent.config.AgentProviderCatalogSyncPolicy
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
+import com.kite.app.agent.config.AgentProviderPresetCatalog
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.contract.AgentConfigOption
@@ -245,21 +247,55 @@ class StoreBackedAgentProviderCatalogApi(
 
     override suspend fun migrateLegacyUserProviders(target: AgentConfigurationTarget): List<String> {
         val adapter = adapters.adapter(target.adapterId) ?: return listOf("当前 Agent 没有可用的配置 Adapter")
-        val importId = "${adapter.adapterId}:native-provider-v1"
+        val importId = "${adapter.adapterId}:native-provider-v2"
         if (store.hasCompletedImport(target.agentId, importId)) return emptyList()
         return when (val imported = adapter.readUserProviderImport(target.agentId)) {
             is AgentUserProviderImportResult.Ready -> {
-                val before = store.snapshot(target.agentId)
+                val presets = AgentProviderPresetCatalog.presetsFor(adapter.adapterId)
                 imported.import.providers.forEach { provider ->
-                    if (before.providers.none { it.id == provider.id }) {
-                        store.saveUserProvider(
-                            target.agentId,
-                            provider.toCatalogProvider(
-                                policy = AgentProviderCatalogPolicy.UserManaged,
-                                source = AgentModelSource.UserConfigured,
-                            ),
-                            imported.import.credentials[provider.id].toCatalogCredentialChange(),
+                    val existing = store.snapshot(target.agentId).providers
+                        .firstOrNull { candidate -> candidate.id == provider.id }
+                    if (existing != null && existing.policy != AgentProviderCatalogPolicy.UserManaged) {
+                        return@forEach
+                    }
+                    val nativeProvider = provider.toCatalogProvider(
+                        policy = AgentProviderCatalogPolicy.UserManaged,
+                        source = AgentModelSource.UserConfigured,
+                    )
+                    val base = existing ?: nativeProvider
+                    val matchingPreset = if (base.catalogSync == null) {
+                        AgentProviderCatalogSyncPolicy.matchingPresets(
+                            providerId = base.id,
+                            baseUrl = base.baseUrl.orEmpty(),
+                            presets = presets,
+                        ).singleOrNull()
+                    } else null
+                    val adopted = matchingPreset?.let { preset ->
+                        AgentProviderCatalogSyncPolicy.merge(
+                            currentModels = base.models.map { model ->
+                                AgentProviderModelSummary(model.id, model.displayName)
+                            },
+                            metadata = AgentProviderCatalogSyncMetadata(preset.id, emptySet()),
+                            preset = preset,
                         )
+                    }
+                    val next = if (adopted == null) base else base.copy(
+                        models = adopted.models.map { model -> AgentCatalogModel(model.id, model.displayName) },
+                        catalogSync = adopted.metadata,
+                    )
+                    val importedCredential = imported.import.credentials[provider.id]
+                    val credential = if (existing?.credentialPresent == true) {
+                        AgentCatalogCredentialChange.Keep
+                    } else {
+                        importedCredential.toCatalogCredentialChange()
+                    }
+                    if (existing == null || next != existing || importedCredential != null) {
+                        store.saveUserProvider(target.agentId, next, credential)
+                    }
+                    val nativePublicConfigurationMatches = next.baseUrl == nativeProvider.baseUrl &&
+                        next.models.associate { model -> model.id to model.displayName } ==
+                        nativeProvider.models.associate { model -> model.id to model.displayName }
+                    if (nativePublicConfigurationMatches) {
                         store.markProviderPrepared(target.agentId, provider.id)
                     }
                 }
