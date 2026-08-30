@@ -14,11 +14,16 @@ import com.kite.app.application.settings.SettingsFeatureDependenciesOwner
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapDependenciesOwner
 import com.kite.app.R
 import com.kite.app.feature.startupreport.StartupReportActivity
+import com.kite.app.foundation.devicebridge.DeviceBridgeBackendMode
+import com.kite.app.foundation.devicebridge.DeviceBridgeBackendStateOwner
+import com.kite.app.foundation.devicebridge.DeviceBridgeLifecycleStatus
+import com.kite.app.foundation.devicebridge.ShizukuBridgeStateOwner
 import com.kite.app.ui.terminal.TerminalUiPreferences
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import rikka.shizuku.ShizukuProvider
 
 /** 设置二级页骨架。具体偏好迁移按类别分批接入，状态仍来自原 Owner。 */
 internal class SettingsCategoryFragment : Fragment() {
@@ -48,11 +53,14 @@ internal class SettingsCategoryFragment : Fragment() {
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?,
-    ): View = SettingsCategoryScreen(
+    ): View {
+        DeviceBridgeBackendStateOwner.start(requireContext())
+        return SettingsCategoryScreen(
         context = requireContext(),
         destination = destination,
         initialState = controller.state.value,
         initialRuntimeSnapshot = runtimeGateway.currentSnapshot(),
+        initialDeviceBridgeSnapshot = DeviceBridgeBackendStateOwner.current(),
         initialProotViewSnapshot = prootViewInspectionGateway.currentSnapshot(),
         appInfo = readAppInfo(),
         initialTerminalFontSize = TerminalUiPreferences.loadFontSizeDp(requireContext()),
@@ -91,6 +99,8 @@ internal class SettingsCategoryFragment : Fragment() {
         },
         onOpenAllFilesSettings = { send(SettingsFeatureRequest.OpenAllFilesSettings) },
         onOpenProcesses = { send(SettingsFeatureRequest.OpenProcesses) },
+        onSelectDeviceBridgeMode = { mode -> selectDeviceBridgeMode(mode) },
+        onManageDeviceBridge = { manageDeviceBridge() },
         onOpenStartupReport = {
             startActivity(Intent(requireContext(), StartupReportActivity::class.java))
         },
@@ -123,7 +133,8 @@ internal class SettingsCategoryFragment : Fragment() {
                 prootViewInspectionGateway.runEnvironmentIsolationVerification()
             }
         },
-    ).also { screen = it }.root
+        ).also { screen = it }.root
+    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -139,6 +150,15 @@ internal class SettingsCategoryFragment : Fragment() {
                 viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                     runtimeGateway.snapshots.collect { snapshot ->
                         screen?.renderRuntimeSnapshot(snapshot)
+                    }
+                }
+            }
+        }
+        if (destination == SettingsCategoryDestination.RuntimeEnvironment) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    DeviceBridgeBackendStateOwner.state.collect { snapshot ->
+                        screen?.renderDeviceBridgeSnapshot(snapshot)
                     }
                 }
             }
@@ -181,6 +201,9 @@ internal class SettingsCategoryFragment : Fragment() {
         ) {
             runtimeGateway.refresh()
         }
+        if (destination == SettingsCategoryDestination.RuntimeEnvironment) {
+            DeviceBridgeBackendStateOwner.refreshSelected()
+        }
         if (destination == SettingsCategoryDestination.Engineering) {
             prootViewInspectionGateway.refresh()
         }
@@ -215,6 +238,59 @@ internal class SettingsCategoryFragment : Fragment() {
         SettingsFeatureResultContract.send(this, request)
     }
 
+    private fun selectDeviceBridgeMode(mode: DeviceBridgeBackendMode) {
+        if (!DeviceBridgeBackendStateOwner.select(mode)) {
+            Toast.makeText(
+                requireContext(),
+                R.string.settings_device_bridge_mode_save_failed,
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    private fun manageDeviceBridge() {
+        val snapshot = DeviceBridgeBackendStateOwner.current()
+        when (snapshot.selectedMode) {
+            DeviceBridgeBackendMode.RootExperimental -> DeviceBridgeBackendStateOwner.probeRoot()
+            DeviceBridgeBackendMode.Shizuku -> when {
+                !snapshot.managerInstalled -> openShizukuResource()
+                !snapshot.binderAlive -> openShizukuManagerOrResource()
+                snapshot.lifecycle == DeviceBridgeLifecycleStatus.PermissionRequired ||
+                    snapshot.lifecycle == DeviceBridgeLifecycleStatus.Revoked -> requestShizukuAuthorization()
+                else -> DeviceBridgeBackendStateOwner.refreshSelected()
+            }
+        }
+    }
+
+    private fun requestShizukuAuthorization() {
+        when (ShizukuBridgeStateOwner.requestAuthorization()) {
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.ServiceNotRunning ->
+                openShizukuManagerOrResource()
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.Failed,
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.NotStarted -> Toast.makeText(
+                requireContext(),
+                R.string.settings_device_bridge_authorization_failed,
+                Toast.LENGTH_SHORT,
+            ).show()
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.Requested,
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.AlreadyReady,
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.AlreadyRequesting -> Unit
+        }
+    }
+
+    private fun openShizukuManagerOrResource() {
+        val launchIntent = requireContext().packageManager.getLaunchIntentForPackage(
+            ShizukuProvider.MANAGER_APPLICATION_ID,
+        )
+        if (launchIntent == null || runCatching { startActivity(launchIntent) }.isFailure) {
+            openShizukuResource()
+        }
+    }
+
+    private fun openShizukuResource() {
+        send(SettingsFeatureRequest.OpenResource(SHIZUKU_RESOURCE_ID))
+    }
+
     private fun readAppInfo(): SettingsAppInfo {
         val context = requireContext()
         val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -228,6 +304,7 @@ internal class SettingsCategoryFragment : Fragment() {
 
     companion object {
         private const val ARG_DESTINATION = "settings_category_destination"
+        private const val SHIZUKU_RESOURCE_ID = "kite.shizuku"
 
         fun newInstance(destination: SettingsCategoryDestination): SettingsCategoryFragment =
             SettingsCategoryFragment().apply {

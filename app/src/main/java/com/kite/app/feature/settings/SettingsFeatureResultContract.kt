@@ -16,6 +16,7 @@ internal sealed interface SettingsFeatureRequest {
     data object OpenAllFilesSettings : SettingsFeatureRequest
     data object OpenProcesses : SettingsFeatureRequest
     data object OpenLogs : SettingsFeatureRequest
+    data class OpenResource(val resourceId: String) : SettingsFeatureRequest
     data class OpenAboutPage(val page: SettingsAboutPage) : SettingsFeatureRequest
     data class OpenExternalLink(val url: String) : SettingsFeatureRequest
     data class OpenDropZone(val available: Boolean) : SettingsFeatureRequest
@@ -42,6 +43,9 @@ internal object SettingsFeatureResultContract {
         KIND_ALL_FILES -> SettingsFeatureRequest.OpenAllFilesSettings
         KIND_PROCESSES -> SettingsFeatureRequest.OpenProcesses
         KIND_LOGS -> SettingsFeatureRequest.OpenLogs
+        KIND_RESOURCE -> bundle.getString(KEY_RESOURCE_ID)
+            ?.takeIf(String::isNotBlank)
+            ?.let(SettingsFeatureRequest::OpenResource)
         KIND_ABOUT_PAGE -> bundle.getString(KEY_ABOUT_PAGE)
             ?.let { value -> runCatching { SettingsAboutPage.valueOf(value) }.getOrNull() }
             ?.let(SettingsFeatureRequest::OpenAboutPage)
@@ -69,6 +73,10 @@ internal object SettingsFeatureResultContract {
             SettingsFeatureRequest.OpenAllFilesSettings -> putString(KEY_KIND, KIND_ALL_FILES)
             SettingsFeatureRequest.OpenProcesses -> putString(KEY_KIND, KIND_PROCESSES)
             SettingsFeatureRequest.OpenLogs -> putString(KEY_KIND, KIND_LOGS)
+            is SettingsFeatureRequest.OpenResource -> {
+                putString(KEY_KIND, KIND_RESOURCE)
+                putString(KEY_RESOURCE_ID, request.resourceId)
+            }
             is SettingsFeatureRequest.OpenAboutPage -> {
                 putString(KEY_KIND, KIND_ABOUT_PAGE)
                 putString(KEY_ABOUT_PAGE, request.page.name)
@@ -89,6 +97,7 @@ internal object SettingsFeatureResultContract {
     private const val KEY_AVAILABLE = "available"
     private const val KEY_CATEGORY = "category"
     private const val KEY_ABOUT_PAGE = "about_page"
+    private const val KEY_RESOURCE_ID = "resource_id"
     private const val KEY_URL = "url"
     private const val KIND_BACK = "back"
     private const val KIND_OPEN_CATEGORY = "open_category"
@@ -99,6 +108,7 @@ internal object SettingsFeatureResultContract {
     private const val KIND_ALL_FILES = "all_files"
     private const val KIND_PROCESSES = "processes"
     private const val KIND_LOGS = "logs"
+    private const val KIND_RESOURCE = "resource"
     private const val KIND_ABOUT_PAGE = "about_page"
     private const val KIND_EXTERNAL_LINK = "external_link"
     private const val KIND_DROP_ZONE = "drop_zone"

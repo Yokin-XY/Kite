@@ -17,6 +17,10 @@ import com.kite.app.application.runtimemanagement.ProotViewAcceptanceCheck
 import com.kite.app.application.runtimemanagement.ProotViewAcceptanceResult
 import com.kite.app.application.runtimemanagement.ProotViewInspectionSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.foundation.devicebridge.DeviceBridgeBackendMode
+import com.kite.app.foundation.devicebridge.DeviceBridgeBackendSnapshot
+import com.kite.app.foundation.devicebridge.DeviceBridgeIdentity
+import com.kite.app.foundation.devicebridge.DeviceBridgeLifecycleStatus
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeColorSeed
 import com.kite.app.theme.ThemeCommand
@@ -225,6 +229,78 @@ class SettingsScreenTest {
             ?.clickableAncestor()
             ?.performClick()
         assertEquals(1, reportOpenCount)
+    }
+
+    @Test
+    fun `运行环境页统一选择设备能力模式并局部投影连接状态`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val selectedModes = mutableListOf<DeviceBridgeBackendMode>()
+        var manageCount = 0
+        val shizukuReady = DeviceBridgeBackendSnapshot(
+            selectedMode = DeviceBridgeBackendMode.Shizuku,
+            lifecycle = DeviceBridgeLifecycleStatus.Ready,
+            identity = DeviceBridgeIdentity.Shell,
+            uid = 2_000,
+            managerInstalled = true,
+            binderAlive = true,
+            serverVersion = 13,
+        )
+        val screen = SettingsCategoryScreen(
+            context = activity,
+            destination = SettingsCategoryDestination.RuntimeEnvironment,
+            initialState = state(),
+            initialDeviceBridgeSnapshot = shizukuReady,
+            onBack = {},
+            onSelectDeviceBridgeMode = selectedModes::add,
+            onManageDeviceBridge = { manageCount += 1 },
+        )
+        activity.setContentView(screen.root)
+        val topBar = (screen.root as ViewGroup).getChildAt(0)
+
+        val texts = screen.root.allTexts()
+        assertTrue(texts.contains(activity.getString(R.string.settings_device_bridge_mode_title)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_device_bridge_mode_shizuku)))
+        assertTrue(texts.contains(activity.getString(
+            R.string.settings_device_bridge_shizuku_ready,
+            activity.getString(R.string.settings_device_bridge_identity_shell),
+            "2000",
+            "13",
+        )))
+
+        screen.root.findTextView(activity.getString(R.string.settings_device_bridge_mode_title))
+            ?.clickableAncestor()
+            ?.performClick()
+        val dialog = ShadowDialog.getLatestDialog()
+        dialog.findViewById<ViewGroup>(android.R.id.content)
+            .findTextView(activity.getString(R.string.settings_device_bridge_mode_root))
+            ?.clickableAncestor()
+            ?.performClick()
+        assertEquals(listOf(DeviceBridgeBackendMode.RootExperimental), selectedModes)
+
+        val rootChecking = DeviceBridgeBackendSnapshot(
+            selectedMode = DeviceBridgeBackendMode.RootExperimental,
+            lifecycle = DeviceBridgeLifecycleStatus.Connecting,
+            checking = true,
+        )
+        screen.renderDeviceBridgeSnapshot(rootChecking)
+        assertSame(topBar, (screen.root as ViewGroup).getChildAt(0))
+        assertTrue(screen.root.allTexts().contains(activity.getString(R.string.settings_device_bridge_root_checking)))
+        assertFalse(
+            screen.root.findTextView(activity.getString(R.string.settings_device_bridge_action_title))
+                ?.clickableAncestor()
+                ?.isEnabled ?: true,
+        )
+
+        screen.renderDeviceBridgeSnapshot(rootChecking.copy(
+            lifecycle = DeviceBridgeLifecycleStatus.Ready,
+            identity = DeviceBridgeIdentity.Root,
+            uid = 0,
+            checking = false,
+        ))
+        screen.root.findTextView(activity.getString(R.string.settings_device_bridge_action_title))
+            ?.clickableAncestor()
+            ?.performClick()
+        assertEquals(1, manageCount)
     }
 
     @Test

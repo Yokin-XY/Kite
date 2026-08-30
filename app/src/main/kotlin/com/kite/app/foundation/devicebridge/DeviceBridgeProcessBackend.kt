@@ -47,13 +47,12 @@ object DeviceBridgeBackendModeStore {
             .getString(KEY_BACKEND_MODE, null)
     )
 
-    fun select(context: Context, mode: DeviceBridgeBackendMode) {
+    fun select(context: Context, mode: DeviceBridgeBackendMode): Boolean =
         context.applicationContext
             .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_BACKEND_MODE, mode.storageValue)
-            .apply()
-    }
+            .commit()
 }
 
 object DeviceBridgeProcessBackend {
