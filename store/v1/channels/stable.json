@@ -261,6 +261,232 @@
           "--allow-scripts=@anthropic-ai/claude-code"
         ],
         "package": "@anthropic-ai/claude-code",
+        "registries": [
+          "https://registry.npmmirror.com",
+          "https://registry.npmjs.org"
+        ],
+        "type": "npm"
+      }
+    },
+    "kite.codebuddy.code": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "codebuddy",
+              "cbc",
+              "codebuddy-code",
+              "cbc-prewarm"
+            ],
+            "steps": [
+              {
+                "args": [
+                  "--no-audit",
+                  "--no-fund"
+                ],
+                "id": "install-codebuddy-package",
+                "packages": [
+                  "@tencent-ai/codebuddy-code@latest"
+                ],
+                "registries": [
+                  "https://registry.npmmirror.com",
+                  "https://registry.npmjs.org"
+                ],
+                "type": "npm"
+              }
+            ],
+            "timeoutMs": 900000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v codebuddy >/dev/null 2>&1 && codebuddy --version",
+                "id": "codebuddy-command"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 CodeBuddy Code Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "CodeBuddy Code"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "codebuddy",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "codebuddy",
+              "cbc",
+              "codebuddy-code",
+              "cbc-prewarm"
+            ],
+            "npmUninstallPackage": "@tencent-ai/codebuddy-code",
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "configuration": {
+            "adapter": "codebuddy-code",
+            "required": false
+          },
+          "description": "CodeBuddy Code 原生 ACP 会话",
+          "id": "codebuddy",
+          "launch": {
+            "argv": [
+              "codebuddy",
+              "--acp"
+            ],
+            "initializeTimeoutMs": 90000,
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "codebuddy",
+            "title": "CodeBuddy Code",
+            "transport": "stdio"
+          },
+          "name": "CodeBuddy Code"
+        }
+      ],
+      "base": {
+        "description": "腾讯 CodeBuddy 的终端编码 Agent",
+        "icon": {
+          "type": "text",
+          "value": "CB"
+        },
+        "name": "CodeBuddy Code",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "blue",
+        "category": "AI",
+        "longDescription": "CodeBuddy Code 是腾讯官方跨平台终端编码 Agent。Kite 通过官方 npm 包安装 Linux ARM64 运行核心，并使用原生 ACP 接入会话、历史、流式消息、工具审批、实时模型和推理档；六种执行权限、MCP、Skill 与认证仍遵循 CodeBuddy 自己的协议和用户目录。",
+        "order": 107,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.qoder.cli"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.qwen.code"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "下载约 50 MB，安装约 220 MB",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "codebuddy",
+          "tencent",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "acp",
+          "mcp",
+          "skills"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "CodeBuddy Code",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 CodeBuddy Code Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "CodeBuddy Code"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "codebuddy",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.codebuddy.code",
+      "management": {
+        "managedCommands": [
+          "codebuddy",
+          "cbc",
+          "codebuddy-code",
+          "cbc-prewarm"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "codebuddy --version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.codebuddy.code",
+        "installRoot": "/workspace/.kf/software/kite.codebuddy.code"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.codebuddy",
+          "agent.codebuddy.code"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "@tencent-ai/codebuddy-code",
+        "registries": [
+          "https://registry.npmmirror.com",
+          "https://registry.npmjs.org"
+        ],
+        "repository": "https://www.codebuddy.ai/docs/cli/quickstart",
         "type": "npm"
       }
     },
@@ -726,6 +952,775 @@
         "type": "bundled"
       }
     },
+    "kite.cursor.cli": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "cursor-agent"
+            ],
+            "steps": [
+              {
+                "destination": "$install_root/.kite-downloads/cursor-arm64.tar.gz",
+                "id": "download-cursor-arm64",
+                "maxBytes": 134217728,
+                "retryAttempts": 4,
+                "retryDelaySeconds": 2,
+                "sha256": "ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed",
+                "type": "download",
+                "url": "https://downloads.cursor.com/lab/2026.08.11-e8db854/linux/arm64/agent-cli-package.tar.gz"
+              },
+              {
+                "cmd": "tar -xzf \"$install_root/.kite-downloads/cursor-arm64.tar.gz\" -C \"$install_root\"\nmkdir -p \"$install_root/bin\"\nchmod 755 \"$install_root/dist-package/cursor-agent\"\nln -sfn ../dist-package/cursor-agent \"$install_root/bin/cursor-agent\"",
+                "id": "extract-cursor-arm64",
+                "type": "shell"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v cursor-agent >/dev/null 2>&1 && cursor-agent --version",
+                "id": "cursor-command"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 Cursor CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Cursor CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "cursor",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "cursor-agent"
+            ],
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "accounts": [
+            {
+              "id": "cursor",
+              "login": {
+                "argv": [
+                  "/usr/bin/env",
+                  "NO_OPEN_BROWSER=1",
+                  "cursor-agent",
+                  "login"
+                ],
+                "timeoutMs": 300000
+              },
+              "logout": {
+                "argv": [
+                  "cursor-agent",
+                  "logout"
+                ],
+                "timeoutMs": 30000
+              },
+              "modelGroupIds": [
+                "cursor"
+              ],
+              "name": "Cursor 官方",
+              "status": {
+                "argv": [
+                  "cursor-agent",
+                  "status"
+                ],
+                "loggedInPatterns": [
+                  "logged in",
+                  "authenticated"
+                ],
+                "loggedOutPatterns": [
+                  "not logged in",
+                  "not authenticated"
+                ],
+                "timeoutMs": 15000
+              }
+            }
+          ],
+          "configuration": {
+            "adapter": "cursor-cli",
+            "required": false
+          },
+          "description": "Cursor CLI 原生 ACP 会话",
+          "id": "cursor",
+          "launch": {
+            "argv": [
+              "cursor-agent",
+              "acp"
+            ],
+            "initializeTimeoutMs": 60000,
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "cursor",
+            "title": "Cursor CLI",
+            "transport": "stdio"
+          },
+          "name": "Cursor CLI"
+        }
+      ],
+      "base": {
+        "description": "Cursor 的终端编码 Agent",
+        "icon": {
+          "type": "text",
+          "value": "Cu"
+        },
+        "name": "Cursor CLI",
+        "version": "2026.08.11"
+      },
+      "display": {
+        "accent": "blue",
+        "category": "AI",
+        "longDescription": "Cursor CLI 是 Cursor 官方终端编码 Agent。Kite 固定下载 ACP Registry 公布的 Linux arm64 制品并校验 SHA-256，通过原生 ACP 提供会话加载、模型、Agent/计划/问答模式和工具审批；MCP 与 Skill 保持 Cursor 原生目录。",
+        "order": 108,
+        "recommendations": [
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.codex.cli"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.claude.code"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "约 80 MB",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "cursor",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "acp",
+          "mcp",
+          "skills"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Cursor CLI",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 Cursor CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Cursor CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "cursor",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.cursor.cli",
+      "management": {
+        "managedCommands": [
+          "cursor-agent"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "cursor-agent --version",
+          "pattern": "v?([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.cursor.cli",
+        "installRoot": "/workspace/.kf/software/kite.cursor.cli"
+      },
+      "relations": {
+        "base": [
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.cursor.agent",
+          "agent.cursor.cli"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "archiveType": "tar.gz",
+        "binaryPath": "dist-package/cursor-agent",
+        "maxBytes": 134217728,
+        "repository": "https://cursor.com/docs/cli/acp",
+        "tag": "2026.08.11",
+        "type": "acp_registry_binary",
+        "url": "https://downloads.cursor.com/lab/2026.08.11-e8db854/linux/arm64/agent-cli-package.tar.gz"
+      }
+    },
+    "kite.deepseek.harness": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "dsh",
+              "dsh-acp",
+              "kite-dsh-acp"
+            ],
+            "steps": [
+              {
+                "args": [
+                  "--no-audit",
+                  "--no-fund",
+                  "--allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs"
+                ],
+                "id": "install-deepseek-harness-pair",
+                "packages": [
+                  "@deepseek-ai/dsh@0.1.1-rc.2",
+                  "@openma/deepseek-harness-acp@0.4.26"
+                ],
+                "registries": [
+                  "https://registry.npmmirror.com",
+                  "https://registry.npmjs.org"
+                ],
+                "type": "npm"
+              },
+              {
+                "cmd": "set -eu\npersistence_js=\"$install_root/npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js\"\ntest -f \"$persistence_js\"\nif grep -Fq 'await link(tmp, finalPath);' \"$persistence_js\"; then\n  sed -i 's/import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate }/import { mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, truncate }/' \"$persistence_js\"\n  sed -i 's/await link(tmp, finalPath);/await rename(tmp, finalPath);/' \"$persistence_js\"\nfi\ngrep -Fq 'await rename(tmp, finalPath);' \"$persistence_js\"\ngrep -Fq 'realpath, rename, rm' \"$persistence_js\"",
+                "id": "patch-deepseek-harness-android-session-persistence",
+                "type": "shell"
+              },
+              {
+                "cmd": "set -eu\nacp_root=\"$install_root/npm-global/lib/node_modules/@openma/deepseek-harness-acp/dist\"\nfor acp_js in \"$acp_root/bridge.js\" \"$acp_root/plugin.js\" \"$acp_root/server.js\"; do\n  test -f \"$acp_js\"\n  if grep -Fq 'requireCredential(config.provider)' \"$acp_js\"; then\n    sed -i 's/requireCredential(config.provider)/requireCredential(defaultProvider())/g' \"$acp_js\"\n  fi\n  if grep -Fq 'requireCredential(record.provider ?? config.provider)' \"$acp_js\"; then\n    sed -i 's/requireCredential(record.provider ?? config.provider)/requireCredential(routeOf(record).provider)/g' \"$acp_js\"\n  fi\n  test \"$(grep -Fc 'requireCredential(defaultProvider())' \"$acp_js\")\" -eq 2\n  test \"$(grep -Fc 'requireCredential(routeOf(record).provider)' \"$acp_js\")\" -eq 2\n  ! grep -Fq 'requireCredential(config.provider)' \"$acp_js\"\n  ! grep -Fq 'requireCredential(record.provider ?? config.provider)' \"$acp_js\"\ndone",
+                "id": "patch-deepseek-harness-acp-selected-provider-auth",
+                "type": "shell"
+              },
+              {
+                "cmd": "set -eu\nmkdir -p \"$install_root/bin\" \"$install_root/user-home/.dsh\"\ncat > \"$install_root/bin/kite-dsh-acp\" <<EOF\n#!/usr/bin/env bash\nset -eu\nexport HOME=\"$install_root/user-home\"\nexport DSH_HOME=\"$install_root/user-home/.dsh\"\ndsh_bin=\"\\$(command -v dsh)\"\n[ -n \"\\$dsh_bin\" ] || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=deepseek-harness-host reason=dsh-missing' >&2; exit 127; }\nexport DSH_PATH=\"\\$dsh_bin\"\nexec dsh-acp \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/kite-dsh-acp\"",
+                "id": "install-deepseek-harness-launcher",
+                "type": "shell"
+              }
+            ],
+            "timeoutMs": 900000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v dsh >/dev/null 2>&1 && test \"$(dsh --version)\" = '0.1.1-rc.2'",
+                "id": "deepseek-harness-official-version"
+              },
+              {
+                "cmd": "command -v dsh-acp >/dev/null 2>&1 && test \"$(dsh-acp --version)\" = '@openma/deepseek-harness-acp 0.4.26'",
+                "id": "deepseek-harness-acp-version"
+              },
+              {
+                "cmd": "persistence_js=\"$install_root/npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js\" && grep -Fq 'await rename(tmp, finalPath);' \"$persistence_js\" && grep -Fq 'realpath, rename, rm' \"$persistence_js\"",
+                "id": "deepseek-harness-android-session-persistence"
+              },
+              {
+                "cmd": "acp_root=\"$install_root/npm-global/lib/node_modules/@openma/deepseek-harness-acp/dist\" && for acp_js in \"$acp_root/bridge.js\" \"$acp_root/plugin.js\" \"$acp_root/server.js\"; do test \"$(grep -Fc 'requireCredential(defaultProvider())' \"$acp_js\")\" -eq 2 && test \"$(grep -Fc 'requireCredential(routeOf(record).provider)' \"$acp_js\")\" -eq 2 && ! grep -Fq 'requireCredential(config.provider)' \"$acp_js\" && ! grep -Fq 'requireCredential(record.provider ?? config.provider)' \"$acp_js\" || exit 1; done",
+                "id": "deepseek-harness-acp-selected-provider-auth"
+              },
+              {
+                "cmd": "command -v kite-dsh-acp >/dev/null 2>&1 && test \"$(kite-dsh-acp --version)\" = '@openma/deepseek-harness-acp 0.4.26' && grep -q 'export DSH_PATH=' \"$install_root/bin/kite-dsh-acp\"",
+                "id": "deepseek-harness-launcher"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 DeepSeek Harness Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "DeepSeek Harness"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "deepseek-harness",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "dsh",
+              "dsh-acp",
+              "kite-dsh-acp"
+            ],
+            "npmUninstallPackages": [
+              "@deepseek-ai/dsh",
+              "@openma/deepseek-harness-acp"
+            ],
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "accounts": [
+            {
+              "id": "deepseek",
+              "login": {
+                "argv": [
+                  "kite-dsh-acp",
+                  "login"
+                ],
+                "timeoutMs": 300000
+              },
+              "modelGroupIds": [
+                "deepseek"
+              ],
+              "name": "DeepSeek 官方 API"
+            }
+          ],
+          "configuration": {
+            "adapter": "deepseek-harness",
+            "required": false
+          },
+          "description": "DeepSeek Harness 完整 ACP 会话",
+          "id": "deepseek-harness",
+          "launch": {
+            "argv": [
+              "kite-dsh-acp"
+            ],
+            "initializeTimeoutMs": 120000,
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "deepseek-harness",
+            "title": "DeepSeek Harness",
+            "transport": "stdio"
+          },
+          "name": "DeepSeek Harness"
+        }
+      ],
+      "base": {
+        "description": "DeepSeek 官方开源 Agent Harness",
+        "icon": {
+          "type": "text",
+          "value": "DS"
+        },
+        "name": "DeepSeek Harness",
+        "version": "0.1.1-rc.2"
+      },
+      "display": {
+        "accent": "blue",
+        "category": "AI",
+        "longDescription": "DeepSeek Harness 是 DeepSeek 官方开源的 Agent Harness。Kite 固定安装官方 Harness 0.1.1-rc.2，并通过独立维护的完整 ACP 桥接层提供会话创建、列表、恢复、历史加载、流式消息、工具审批、实时模型、推理强度和三种执行权限；MCP、Skill、模型供应商、登录凭据与会话日志仍由 Harness 自己管理。安装时会把 Harness 的会话首次发布从硬链接切换为原子重命名，避开 Android PRoot 的 link2symlink 语义冲突。官方当前提供的 ACP Demo 仅支持新会话，因此不作为 Kite 的运行入口。",
+        "order": 115,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.hermes.core"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.opencode"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "deepseek",
+          "dsh",
+          "harness",
+          "coding-agent",
+          "acp",
+          "mcp",
+          "skills"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "DeepSeek Harness",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 DeepSeek Harness Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "DeepSeek Harness"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "deepseek-harness",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.deepseek.harness",
+      "management": {
+        "managedCommands": [
+          "dsh",
+          "dsh-acp",
+          "kite-dsh-acp"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "dsh --version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+(?:-rc\\.[0-9]+)?)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.deepseek.harness",
+        "installRoot": "/workspace/.kf/software/kite.deepseek.harness"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.deepseek.harness",
+          "agent.deepseek.harness"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "companionPackages": [
+          "@openma/deepseek-harness-acp"
+        ],
+        "package": "@deepseek-ai/dsh",
+        "registries": [
+          "https://registry.npmmirror.com",
+          "https://registry.npmjs.org"
+        ],
+        "repository": "https://github.com/deepseek-ai/deepseek-harness",
+        "tag": "0.1.1-rc.2",
+        "type": "npm"
+      }
+    },
+    "kite.devin.cli": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "devin"
+            ],
+            "steps": [
+              {
+                "destination": "$install_root/.kite-downloads/devin-arm64.tar.gz",
+                "id": "download-devin-arm64",
+                "maxBytes": 104857600,
+                "retryAttempts": 4,
+                "retryDelaySeconds": 2,
+                "sha256": "8de95ec3623d93e6f3cb0834fa659fd7d6698d4feff3fb7e752e977abc40a6e0",
+                "type": "download",
+                "url": "https://static.devin.ai/cli/3000.6.7/devin-3000.6.7-aarch64-unknown-linux.tar.gz"
+              },
+              {
+                "cmd": "tar -xzf \"$install_root/.kite-downloads/devin-arm64.tar.gz\" -C \"$install_root\"\nchmod 755 \"$install_root/bin/devin\"",
+                "id": "extract-devin-arm64",
+                "type": "shell"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v devin >/dev/null 2>&1 && devin --version",
+                "id": "devin-command"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 Devin CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Devin CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "devin",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "devin"
+            ],
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "accounts": [
+            {
+              "id": "cognition",
+              "login": {
+                "argv": [
+                  "devin",
+                  "auth",
+                  "login",
+                  "--force-manual-token-flow"
+                ],
+                "timeoutMs": 300000
+              },
+              "logout": {
+                "argv": [
+                  "devin",
+                  "auth",
+                  "logout"
+                ],
+                "timeoutMs": 30000
+              },
+              "modelGroupIds": [
+                "devin",
+                "cognition"
+              ],
+              "name": "Cognition 官方",
+              "status": {
+                "argv": [
+                  "devin",
+                  "auth",
+                  "status"
+                ],
+                "loggedInPatterns": [
+                  "logged in",
+                  "authenticated"
+                ],
+                "loggedOutPatterns": [
+                  "not logged in",
+                  "not authenticated"
+                ],
+                "timeoutMs": 15000
+              }
+            }
+          ],
+          "configuration": {
+            "adapter": "devin-cli",
+            "required": false
+          },
+          "description": "Devin CLI 原生 ACP 会话",
+          "id": "devin",
+          "launch": {
+            "argv": [
+              "devin",
+              "acp"
+            ],
+            "initializeTimeoutMs": 60000,
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "devin",
+            "title": "Devin CLI",
+            "transport": "stdio"
+          },
+          "name": "Devin CLI"
+        }
+      ],
+      "base": {
+        "description": "Cognition 的终端编码 Agent",
+        "icon": {
+          "type": "text",
+          "value": "Dv"
+        },
+        "name": "Devin CLI",
+        "version": "3000.6.7"
+      },
+      "display": {
+        "accent": "green",
+        "category": "AI",
+        "longDescription": "Devin CLI 是 Cognition 官方终端编码 Agent。Kite 固定下载 ACP Registry 公布的 Linux arm64 制品并校验 SHA-256，通过原生 ACP 接入会话、模型、推理与工具交互；MCP、Skill 和官方账号继续由 Devin 自己持久化。",
+        "order": 112,
+        "recommendations": [
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.cursor.cli"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.claude.code"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "约 50 MB",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "devin",
+          "cognition",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "acp",
+          "mcp",
+          "skills"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Devin CLI",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 Devin CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Devin CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "devin",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.devin.cli",
+      "management": {
+        "managedCommands": [
+          "devin"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "devin --version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.devin.cli",
+        "installRoot": "/workspace/.kf/software/kite.devin.cli"
+      },
+      "relations": {
+        "base": [
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.devin",
+          "agent.cognition.devin"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "archiveType": "tar.gz",
+        "binaryPath": "bin/devin",
+        "maxBytes": 104857600,
+        "repository": "https://github.com/CognitionAI/devin-cli",
+        "tag": "3000.6.7",
+        "type": "acp_registry_binary",
+        "url": "https://static.devin.ai/cli/3000.6.7/devin-3000.6.7-aarch64-unknown-linux.tar.gz"
+      }
+    },
     "kite.gemini.cli": {
       "actions": {
         "open": {
@@ -1006,6 +2001,230 @@
       "source": {
         "asset": "toolchain/ai-dev-pack",
         "type": "bundled"
+      }
+    },
+    "kite.github.copilot": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "copilot",
+              "kite-copilot-acp"
+            ],
+            "steps": [
+              {
+                "args": [
+                  "--no-update-notifier",
+                  "--no-audit",
+                  "--no-fund"
+                ],
+                "id": "install-copilot-package",
+                "packages": [
+                  "@github/copilot@latest"
+                ],
+                "registries": [
+                  "https://registry.npmmirror.com",
+                  "https://registry.npmjs.org"
+                ],
+                "type": "npm"
+              },
+              {
+                "cmd": "cat > \"$install_root/bin/kite-copilot-acp\" <<'KITE_COPILOT_ACP'\n#!/usr/bin/env bash\nset -eu\nsecret_root='/workspace/.kf/secrets'\nread_optional() {\n  variable_name=\"$1\"\n  file_name=\"$2\"\n  file_path=\"$secret_root/$file_name\"\n  if [ -s \"$file_path\" ]; then\n    value=\"$(tr -d '\\r\\n' < \"$file_path\")\"\n    if [ -n \"$value\" ]; then export \"$variable_name=$value\"; fi\n  fi\n}\nread_optional COPILOT_PROVIDER_BASE_URL kite.copilot-provider-base-url\nread_optional COPILOT_PROVIDER_API_KEY kite.copilot-provider-api-key\nread_optional COPILOT_PROVIDER_TYPE kite.copilot-provider-type\nread_optional COPILOT_MODEL kite.copilot-model\nexec copilot --acp --stdio \"$@\"\nKITE_COPILOT_ACP\nchmod 755 \"$install_root/bin/kite-copilot-acp\"",
+                "id": "install-kite-copilot-launcher",
+                "type": "shell"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v copilot >/dev/null 2>&1 && command -v kite-copilot-acp >/dev/null 2>&1 && copilot --version",
+                "id": "copilot-commands"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 GitHub Copilot CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "GitHub Copilot CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "copilot",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "copilot",
+              "kite-copilot-acp"
+            ],
+            "npmUninstallPackage": "@github/copilot",
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "configuration": {
+            "adapter": "github-copilot",
+            "required": false
+          },
+          "description": "GitHub Copilot CLI 原生 ACP 会话",
+          "id": "copilot",
+          "launch": {
+            "argv": [
+              "kite-copilot-acp"
+            ],
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "copilot",
+            "title": "GitHub Copilot CLI",
+            "transport": "stdio"
+          },
+          "name": "GitHub Copilot CLI"
+        }
+      ],
+      "base": {
+        "description": "GitHub 的终端编码 Agent",
+        "icon": {
+          "type": "text",
+          "value": "Co"
+        },
+        "name": "GitHub Copilot CLI",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "purple",
+        "category": "AI",
+        "longDescription": "GitHub Copilot CLI 是 GitHub 官方终端编码 Agent。Kite 使用官方 npm 包安装 Linux arm64 版本，并通过 Copilot 原生 ACP stdio 服务建立统一会话。它既可使用 GitHub Copilot 账号，也支持通过 COPILOT_PROVIDER_* 环境变量连接 OpenAI-compatible、Azure OpenAI 或 Anthropic 模型供应商。",
+        "order": 80,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.codex.cli"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.opencode"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "github",
+          "copilot",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "acp",
+          "byok"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "GitHub Copilot CLI",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 GitHub Copilot CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "GitHub Copilot CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "copilot",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.github.copilot",
+      "management": {
+        "managedCommands": [
+          "copilot",
+          "kite-copilot-acp"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "copilot --version",
+          "pattern": "v?([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.github.copilot",
+        "installRoot": "/workspace/.kf/software/kite.github.copilot"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.github.copilot",
+          "agent.github.copilot"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "installArguments": [
+          "--no-update-notifier",
+          "--no-audit",
+          "--no-fund"
+        ],
+        "package": "@github/copilot",
+        "registries": [
+          "https://registry.npmmirror.com",
+          "https://registry.npmjs.org"
+        ],
+        "repository": "https://github.com/github/copilot-cli",
+        "type": "npm"
       }
     },
     "kite.google.antigravity": {
@@ -1762,7 +2981,7 @@
                 "type": "npm"
               }
             ],
-            "timeoutMs": 600000,
+            "timeoutMs": 900000,
             "type": "managed",
             "verify": [
               {
@@ -2109,7 +3328,7 @@
                 "type": "shell"
               }
             ],
-            "timeoutMs": 600000,
+            "timeoutMs": 900000,
             "type": "managed",
             "verify": [
               {
@@ -2775,6 +3994,237 @@
         "type": "bundled"
       }
     },
+    "kite.qoder.cli": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "qoder",
+              "qodercli"
+            ],
+            "steps": [
+              {
+                "args": [
+                  "--no-audit",
+                  "--no-fund"
+                ],
+                "id": "install-qoder-package",
+                "packages": [
+                  "@qoder-ai/qodercli@latest"
+                ],
+                "registries": [
+                  "https://registry.npmmirror.com",
+                  "https://registry.npmjs.org"
+                ],
+                "type": "npm"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "command -v qoder >/dev/null 2>&1 && qoder --version",
+                "id": "qoder-command"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 Qoder CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Qoder CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "qoder",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "qoder",
+              "qodercli"
+            ],
+            "npmUninstallPackage": "@qoder-ai/qodercli",
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "accounts": [
+            {
+              "id": "qoder",
+              "login": {
+                "argv": [
+                  "qoder",
+                  "login"
+                ],
+                "timeoutMs": 300000
+              },
+              "modelGroupIds": [
+                "qoder"
+              ],
+              "name": "Qoder 官方"
+            }
+          ],
+          "configuration": {
+            "adapter": "qoder-cli",
+            "required": false
+          },
+          "description": "Qoder CLI 原生 ACP 会话",
+          "id": "qoder",
+          "launch": {
+            "argv": [
+              "qoder",
+              "--acp"
+            ],
+            "initializeTimeoutMs": 60000,
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "qoder",
+            "title": "Qoder CLI",
+            "transport": "stdio"
+          },
+          "name": "Qoder CLI"
+        }
+      ],
+      "base": {
+        "description": "Qoder 的终端编码 Agent",
+        "icon": {
+          "type": "text",
+          "value": "Qd"
+        },
+        "name": "Qoder CLI",
+        "version": "npm"
+      },
+      "display": {
+        "accent": "purple",
+        "category": "AI",
+        "longDescription": "Qoder CLI 是 Qoder 官方终端编码 Agent。Kite 通过官方 npm 包安装 Linux arm64 可用命令，并使用原生 ACP 接入会话、模型和两档权限；MCP 与 Skill 继续写入 Qoder 官方用户目录。",
+        "order": 105,
+        "recommendations": [
+          {
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.qwen.code"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.codex.cli"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "网络包",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "qoder",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "acp",
+          "mcp",
+          "skills"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "Qoder CLI",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 Qoder CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "Qoder CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "qoder",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.qoder.cli",
+      "management": {
+        "managedCommands": [
+          "qoder",
+          "qodercli"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "qoder --version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.qoder.cli",
+        "installRoot": "/workspace/.kf/software/kite.qoder.cli"
+      },
+      "relations": {
+        "base": [
+          "kite.nodejs",
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.qoder",
+          "agent.qoder.cli"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "package": "@qoder-ai/qodercli",
+        "registries": [
+          "https://registry.npmmirror.com",
+          "https://registry.npmjs.org"
+        ],
+        "repository": "https://qoder.com",
+        "type": "npm"
+      }
+    },
     "kite.qwen.code": {
       "actions": {
         "install": [
@@ -2792,7 +4242,7 @@
                 "type": "npm"
               }
             ],
-            "timeoutMs": 600000,
+            "timeoutMs": 900000,
             "type": "managed",
             "verify": [
               {
@@ -3286,6 +4736,273 @@
         "type": "bundled"
       }
     },
+    "kite.trae.code": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "managedCommands": [
+              "traecli",
+              "traex",
+              "trae-cli",
+              "trae-agent",
+              "ta"
+            ],
+            "steps": [
+              {
+                "destination": "$install_root/.kite-downloads/traex-linux-aarch64.gz",
+                "id": "download-trae-linux-arm64",
+                "maxBytes": 157286400,
+                "retryAttempts": 4,
+                "retryDelaySeconds": 2,
+                "sha256": "e2ddc587cb813473c4f2635bb14c5a3da9a5eb944991600d4bdefe8267a4b1c5",
+                "type": "download",
+                "url": "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/releases/0.201.6-tob/traex-linux-aarch64.gz"
+              },
+              {
+                "cmd": "set -eu\narchive=\"$install_root/.kite-downloads/traex-linux-aarch64.gz\"\nmkdir -p \"$install_root/runtime\" \"$install_root/bin\" \"$install_root/user-home\"\ngzip -dc \"$archive\" > \"$install_root/runtime/traex\"\nchmod 755 \"$install_root/runtime/traex\"\ncat > \"$install_root/bin/traecli\" <<EOF\n#!/usr/bin/env bash\nset -eu\nexport HOME=\"$install_root/user-home\"\nexport USER=root\nexec \"$install_root/runtime/traex\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/traecli\"\nfor alias in traex trae-cli trae-agent ta; do ln -sfn traecli \"$install_root/bin/$alias\"; done\nprintf '%s\\n' '0.201.6-tob' > \"$install_root/.kite-version\"\nrm -f \"$archive\"",
+                "id": "extract-trae-linux-arm64",
+                "type": "shell"
+              }
+            ],
+            "timeoutMs": 900000,
+            "type": "managed",
+            "verify": [
+              {
+                "cmd": "test -x \"$install_root/runtime/traex\" && test -s \"$install_root/runtime/traex\" && test \"$(cat \"$install_root/.kite-version\")\" = '0.201.6-tob'",
+                "id": "trae-arm64-runtime"
+              }
+            ]
+          }
+        ],
+        "open": {
+          "recipe": {
+            "base": {
+              "description": "启动 TraeCode CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "TraeCode CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "trae",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          },
+          "runtime": "kite_recipe"
+        },
+        "uninstall": [
+          {
+            "cmd": ":",
+            "managedCommands": [
+              "traecli",
+              "traex",
+              "trae-cli",
+              "trae-agent",
+              "ta"
+            ],
+            "timeoutMs": 180000,
+            "type": "shell"
+          }
+        ]
+      },
+      "agents": [
+        {
+          "accounts": [
+            {
+              "id": "trae",
+              "login": {
+                "argv": [
+                  "traecli",
+                  "login"
+                ],
+                "hardLinkMode": "native",
+                "timeoutMs": 300000
+              },
+              "logout": {
+                "argv": [
+                  "traecli",
+                  "logout"
+                ],
+                "hardLinkMode": "native",
+                "timeoutMs": 30000
+              },
+              "modelGroupIds": [
+                "trae"
+              ],
+              "name": "TRAE 官方账号",
+              "status": {
+                "argv": [
+                  "traecli",
+                  "login",
+                  "status"
+                ],
+                "hardLinkMode": "native",
+                "loggedInPatterns": [
+                  "logged in",
+                  "authenticated"
+                ],
+                "loggedOutPatterns": [
+                  "not logged in",
+                  "not authenticated"
+                ],
+                "timeoutMs": 15000
+              }
+            }
+          ],
+          "configuration": {
+            "adapter": "trae-code",
+            "required": false
+          },
+          "description": "TraeCode CLI 原生 ACP 会话",
+          "id": "trae",
+          "launch": {
+            "argv": [
+              "traecli",
+              "acp",
+              "serve"
+            ],
+            "hardLinkMode": "native",
+            "initializeTimeoutMs": 60000,
+            "mode": "managed",
+            "protocol": "acp",
+            "providerId": "trae",
+            "title": "TraeCode CLI",
+            "transport": "stdio"
+          },
+          "name": "TraeCode CLI"
+        }
+      ],
+      "base": {
+        "description": "TRAE 官方终端编码 Agent",
+        "icon": {
+          "type": "text",
+          "value": "TR"
+        },
+        "name": "TraeCode CLI",
+        "version": "0.201.6-tob"
+      },
+      "display": {
+        "accent": "blue",
+        "category": "AI",
+        "longDescription": "TraeCode CLI 是 TRAE 官方跨平台终端编码 Agent。Kite 固定下载 Linux ARM64 独立制品并校验 SHA-256，通过原生 ACP 提供会话创建、列表、恢复、分叉、模型、推理档、三种执行权限和官方登录；MCP 与 Skill 使用 TraeCode 自己的 TOML 和目录。该二进制需要真实硬链接语义，Kite 通过通用运行时声明为它关闭 PRoot 的 link2symlink 模拟。",
+        "order": 106,
+        "recommendations": [
+          {
+            "label": "源码工具",
+            "resourceId": "kite.git"
+          },
+          {
+            "label": "MCP 运行时",
+            "resourceId": "kite.nodejs"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.codebuddy.code"
+          },
+          {
+            "label": "同类 Agent",
+            "resourceId": "kite.qoder.cli"
+          }
+        ],
+        "sections": [
+          "ai-vendor"
+        ],
+        "sizeLabel": "下载约 132 MB，安装约 394 MB",
+        "tabs": [
+          "angel-cli"
+        ],
+        "tags": [
+          "trae",
+          "traecode",
+          "coding-agent",
+          "terminal",
+          "ai",
+          "acp",
+          "mcp",
+          "skills"
+        ]
+      },
+      "homeCards": [
+        {
+          "label": "TraeCode CLI",
+          "policy": "manual",
+          "recipe": {
+            "base": {
+              "description": "启动 TraeCode CLI Agent 会话",
+              "icon": {
+                "name": "bot",
+                "type": "builtin"
+              },
+              "id": "",
+              "name": "TraeCode CLI"
+            },
+            "launch": {
+              "openInstance": true
+            },
+            "recipe": [
+              {
+                "agentId": "trae",
+                "type": "agent",
+                "workdir": "/workspace"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "kite.trae.code",
+      "management": {
+        "managedCommands": [
+          "traecli",
+          "traex",
+          "trae-cli",
+          "trae-agent",
+          "ta"
+        ],
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "cat /workspace/.kf/software/kite.trae.code/.kite-version",
+          "pattern": "([0-9]+(?:\\.[0-9]+)+(?:-[A-Za-z0-9.-]+)?)"
+        }
+      },
+      "paths": {
+        "binRoot": "/workspace/.kf/bin",
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.trae.code",
+        "installRoot": "/workspace/.kf/software/kite.trae.code"
+      },
+      "relations": {
+        "base": [
+          "kite.git"
+        ],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "cli.trae.code",
+          "agent.trae.code"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "archiveType": "gzip",
+        "binaryPath": "traex",
+        "maxBytes": 157286400,
+        "repository": "https://docs.trae.cn/cli_get-started-with-trae-code-cli-2",
+        "tag": "0.201.6-tob",
+        "type": "official_release_archive",
+        "url": "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/releases/0.201.6-tob/traex-linux-aarch64.gz"
+      }
+    },
     "kite.uv": {
       "actions": {
         "install": [
@@ -3411,30 +5128,45 @@
         "type": "bundled"
       }
     },
-    "kite.zai.coding.helper": {
+    "kite.zcode": {
       "actions": {
         "install": [
           {
             "cleanInstallRoot": true,
             "managedCommands": [
-              "coding-helper",
-              "chelper"
+              "zcode"
             ],
             "steps": [
               {
-                "id": "install-zai-helper-package",
-                "packages": [
-                  "@z_ai/coding-helper"
-                ],
-                "type": "npm"
+                "destination": "$install_root/.kite-downloads/ZCode-3.10.1-linux-arm64.deb",
+                "id": "download-zcode-linux-arm64",
+                "maxBytes": 167772160,
+                "retryAttempts": 4,
+                "retryDelaySeconds": 2,
+                "sha256": "22b79babe3b00fb6fbfcf7dcc033b7564a734f53df4f28998c18556071286b2c",
+                "type": "download",
+                "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.10.1/linux-arm64/ZCode-3.10.1-linux-arm64.deb"
+              },
+              {
+                "cmd": "set -eu\narchive=\"$install_root/.kite-downloads/ZCode-3.10.1-linux-arm64.deb\"\nextract_root=\"$install_root/.kite-zcode-extract\"\nruntime_root=\"$install_root/runtime\"\ncommand -v dpkg-deb >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=install step=extract-zcode-native-runtime reason=dpkg-deb-missing'; exit 127; }\nrm -rf \"$extract_root\"\nmkdir -p \"$extract_root\" \"$runtime_root\" \"$install_root/bin\" \"$install_root/user-home\"\ndpkg-deb --fsys-tarfile \"$archive\" | tar -xf - -C \"$extract_root\" ./opt/ZCode/resources/glm/zcode.cjs ./opt/ZCode/resources/glm/.node-bundle-meta.json\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/zcode.cjs\" \"$runtime_root/zcode.cjs\"\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/.node-bundle-meta.json\" \"$runtime_root/.node-bundle-meta.json\"\ncat > \"$install_root/bin/zcode\" <<EOF\n#!/usr/bin/env bash\nset -eu\nexport ZCODE_HOME=\"$install_root/user-home\"\nexport ZCODE_DATA_BASE_DIR=\"$install_root/user-home\"\nexec node \"$install_root/runtime/zcode.cjs\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/zcode\"\nprintf '%s\\n' '3.10.1' > \"$install_root/.kite-version\"\nrm -rf \"$extract_root\"\nrm -f \"$archive\"",
+                "id": "extract-zcode-native-runtime",
+                "type": "shell"
               }
             ],
-            "timeoutMs": 600000,
+            "timeoutMs": 900000,
             "type": "managed",
             "verify": [
               {
-                "cmd": "command -v coding-helper >/dev/null 2>&1 && command -v chelper >/dev/null 2>&1",
-                "id": "zai-helper-commands"
+                "cmd": "command -v zcode >/dev/null 2>&1 && zcode version",
+                "id": "zcode-command"
+              },
+              {
+                "cmd": "test \"$(cat \"$install_root/.kite-version\")\" = '3.10.1' && grep -q '\"platform\": \"linux-arm64\"' \"$install_root/runtime/.node-bundle-meta.json\"",
+                "id": "zcode-arm64-runtime"
+              },
+              {
+                "cmd": "zcode doctor --json",
+                "id": "zcode-doctor"
               }
             ]
           }
@@ -3442,21 +5174,22 @@
         "open": {
           "recipe": {
             "base": {
-              "description": "启动 GLM Coding Plan 配置助手",
+              "description": "启动 ZCode 原生 Agent 会话",
               "icon": {
                 "name": "bot",
                 "type": "builtin"
               },
               "id": "",
-              "name": "Z.AI Helper"
+              "name": "ZCode"
             },
             "launch": {
               "openInstance": true
             },
             "recipe": [
               {
-                "text": "cd /workspace\necho \"Z.AI Coding Helper 会引导输入 GLM Coding Plan API Key，并可配置 Claude Code、OpenCode 等工具。\"\ncoding-helper\n",
-                "type": "terminal"
+                "agentId": "zcode",
+                "type": "agent",
+                "workdir": "/workspace"
               }
             ]
           },
@@ -3466,126 +5199,178 @@
           {
             "cmd": ":",
             "managedCommands": [
-              "coding-helper",
-              "chelper"
+              "zcode"
             ],
-            "npmUninstallPackage": "@z_ai/coding-helper",
             "timeoutMs": 180000,
             "type": "shell"
           }
         ]
       },
+      "agents": [
+        {
+          "accounts": [
+            {
+              "id": "zai",
+              "login": {
+                "argv": [
+                  "zcode",
+                  "login",
+                  "--no-browser"
+                ],
+                "timeoutMs": 300000
+              },
+              "logout": {
+                "argv": [
+                  "zcode",
+                  "logout"
+                ],
+                "timeoutMs": 30000
+              },
+              "modelGroupIds": [
+                "zai",
+                "bigmodel"
+              ],
+              "name": "Z.AI 官方账号"
+            }
+          ],
+          "configuration": {
+            "required": false
+          },
+          "description": "ZCode 官方原生 app-server 会话",
+          "id": "zcode",
+          "launch": {
+            "argv": [
+              "zcode",
+              "app-server",
+              "--surface",
+              "desktop"
+            ],
+            "initializeTimeoutMs": 60000,
+            "mode": "managed",
+            "protocol": "zcode-app-server",
+            "providerId": "zcode",
+            "title": "ZCode",
+            "transport": "stdio"
+          },
+          "name": "ZCode"
+        }
+      ],
       "base": {
-        "description": "GLM Coding Plan 的命令行配置助手",
+        "description": "ZCode 官方原生 Agent",
         "icon": {
           "fallbackText": "Z",
           "fit": "fullBleed",
           "type": "asset",
-          "value": "resources/kite.zai.coding.helper/icon.png"
+          "value": "resources/kite.zcode/icon.png"
         },
-        "name": "Z.AI Helper",
-        "version": "npm"
+        "name": "ZCode",
+        "version": "3.10.1"
       },
       "display": {
-        "accent": "teal",
+        "accent": "green",
         "category": "AI",
-        "longDescription": "Z.AI Coding Tool Helper 是 Z.AI 官方命令行助手，用于把 GLM Coding Plan 接入 Claude Code、OpenCode、Crush、Factory Droid 等 CLI 工具，并管理 API Key、工具安装和 MCP 配置。ZCode 桌面 ADE 和终端 CLI 是分开的；Kite 这里只接入官方 CLI helper。",
-        "order": 110,
+        "longDescription": "Kite 从 ZCode 官方 Linux ARM64 安装包中只提取原生 Agent 运行核心，不安装 Electron 图形界面。通过官方 app-server 协议提供会话创建、列表、恢复、历史加载、消息流、工具审批、实时模型、推理强度和四种执行权限；MCP、Skill、命令和登录数据仍由 ZCode 自己管理。",
+        "order": 111,
         "recommendations": [
           {
             "label": "运行时",
             "resourceId": "kite.nodejs"
           },
           {
-            "label": "可配置工具",
-            "resourceId": "kite.claude.code"
+            "label": "同类 Agent",
+            "resourceId": "kite.codex.cli"
           },
           {
-            "label": "可配置工具",
+            "label": "同类 Agent",
             "resourceId": "kite.opencode"
-          },
-          {
-            "label": "同类 CLI",
-            "resourceId": "kite.google.antigravity"
           }
         ],
         "sections": [
           "ai-vendor"
         ],
-        "sizeLabel": "网络包",
+        "sizeLabel": "下载约 134 MB，安装约 13 MB",
         "tabs": [
           "angel-cli"
         ],
         "tags": [
+          "zcode",
           "zai",
           "glm",
-          "coding-helper",
-          "terminal",
-          "ai",
-          "mcp"
+          "coding-agent",
+          "app-server",
+          "mcp",
+          "skills"
         ]
       },
       "homeCards": [
         {
-          "label": "Z.AI Helper",
+          "label": "ZCode",
           "policy": "manual",
           "recipe": {
             "base": {
-              "description": "启动 GLM Coding Plan 配置助手",
+              "description": "启动 ZCode 原生 Agent 会话",
               "icon": {
                 "name": "bot",
                 "type": "builtin"
               },
               "id": "",
-              "name": "Z.AI Helper"
+              "name": "ZCode"
             },
             "launch": {
               "openInstance": true
             },
             "recipe": [
               {
-                "text": "cd /workspace\necho \"Z.AI Coding Helper 会引导输入 GLM Coding Plan API Key，并可配置 Claude Code、OpenCode 等工具。\"\ncoding-helper\n",
-                "type": "terminal"
+                "agentId": "zcode",
+                "type": "agent",
+                "workdir": "/workspace"
               }
             ]
           }
         }
       ],
-      "id": "kite.zai.coding.helper",
+      "id": "kite.zcode",
       "management": {
         "managedCommands": [
-          "coding-helper",
-          "chelper"
+          "zcode"
         ],
-        "mode": "managed_extension"
+        "mode": "managed_extension",
+        "preservePaths": [
+          "user-home"
+        ],
+        "versionProbe": {
+          "command": "zcode version",
+          "pattern": "zcode\\s+([0-9]+(?:\\.[0-9]+)+)"
+        }
       },
       "paths": {
         "binRoot": "/workspace/.kf/bin",
-        "cacheRoot": "/workspace/.kf/cache/resources/kite.zai.coding.helper",
-        "installRoot": "/workspace/.kf/software/kite.zai.coding.helper"
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.zcode",
+        "installRoot": "/workspace/.kf/software/kite.zcode"
       },
       "relations": {
         "base": [
           "kite.nodejs"
         ],
         "defaults": [],
-        "extensions": [
-          "kite.claude.code",
-          "kite.opencode"
-        ],
+        "extensions": [],
         "provides": [
-          "cli.zai.coding-helper",
-          "tool.glm-coding-plan-helper"
+          "cli.zcode",
+          "agent.zcode"
         ]
       },
       "schemaVersion": 1,
       "source": {
-        "package": "@z_ai/coding-helper",
-        "repository": "https://docs.z.ai/devpack/extension/coding-tool-helper",
-        "type": "npm"
+        "archiveType": "deb",
+        "binaryPath": "opt/ZCode/resources/glm/zcode.cjs",
+        "maxBytes": 167772160,
+        "repository": "https://zcode.z.ai/en/docs/install",
+        "tag": "3.10.1",
+        "type": "official_release_archive",
+        "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.10.1/linux-arm64/ZCode-3.10.1-linux-arm64.deb"
       }
     }
   },
-  "revision": 8,
+  "revision": 9,
   "schemaVersion": 1
 }

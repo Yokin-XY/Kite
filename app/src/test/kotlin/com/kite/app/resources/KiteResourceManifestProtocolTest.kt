@@ -804,7 +804,6 @@ class KiteResourceManifestProtocolTest {
                 "kite.trae.code",
                 "kite.codebuddy.code",
                 "kite.cursor.cli",
-                "kite.zai.coding.helper",
                 "kite.zcode",
                 "kite.devin.cli",
                 "kite.deepseek.harness",
@@ -842,7 +841,6 @@ class KiteResourceManifestProtocolTest {
                 "kite.trae.code",
                 "kite.codebuddy.code",
                 "kite.cursor.cli",
-                "kite.zai.coding.helper",
                 "kite.zcode",
                 "kite.devin.cli",
                 "kite.deepseek.harness",
@@ -866,7 +864,7 @@ class KiteResourceManifestProtocolTest {
             .filter { it.isFile }
             .sortedBy { it.parentFile?.name }
 
-        assertEquals(28, manifests.size)
+        assertEquals(27, manifests.size)
         manifests.forEach { manifestFile ->
             val resourceId = manifestFile.parentFile?.name.orEmpty()
             val loaded = loader.parseManifestJson(manifestFile.readText())

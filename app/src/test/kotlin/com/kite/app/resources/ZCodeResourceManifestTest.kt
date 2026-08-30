@@ -6,6 +6,7 @@ import com.kite.app.agent.registration.AgentLaunchSpec
 import com.kite.app.agent.registration.AgentResourceRegistrationMapper
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,6 +22,11 @@ class ZCodeResourceManifestTest {
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(
             File(resourceRoot, "kite.zcode/manifest.json").readText(),
         )
+
+        assertEquals("resources/kite.zcode/icon.png", manifest.iconAsset)
+        assertTrue(File(resourceRoot, "kite.zcode/icon.png").isFile)
+        assertFalse(File(resourceRoot, "kite.zai.coding.helper/manifest.json").exists())
+        assertFalse(manifest.displayRecommendations.any { it.resourceId == "kite.zai.coding.helper" })
 
         val profile = manifest.agentProfiles.single()
         assertEquals("zcode", profile.agentId)

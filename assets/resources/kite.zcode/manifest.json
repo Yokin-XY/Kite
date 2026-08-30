@@ -6,8 +6,10 @@
     "description": "ZCode 官方原生 Agent",
     "version": "3.10.1",
     "icon": {
-      "type": "text",
-      "value": "ZC"
+      "type": "asset",
+      "value": "resources/kite.zcode/icon.png",
+      "fallbackText": "Z",
+      "fit": "fullBleed"
     }
   },
   "management": {
@@ -29,7 +31,6 @@
     "longDescription": "Kite 从 ZCode 官方 Linux ARM64 安装包中只提取原生 Agent 运行核心，不安装 Electron 图形界面。通过官方 app-server 协议提供会话创建、列表、恢复、历史加载、消息流、工具审批、实时模型、推理强度和四种执行权限；MCP、Skill、命令和登录数据仍由 ZCode 自己管理。",
     "recommendations": [
       {"resourceId": "kite.nodejs", "label": "运行时"},
-      {"resourceId": "kite.zai.coding.helper", "label": "Z.AI 配置助手"},
       {"resourceId": "kite.codex.cli", "label": "同类 Agent"},
       {"resourceId": "kite.opencode", "label": "同类 Agent"}
     ],
