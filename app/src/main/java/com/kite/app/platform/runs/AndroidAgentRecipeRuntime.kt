@@ -29,6 +29,7 @@ import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentSessionConfigurationOverlayProvider
 import com.kite.app.agent.config.defaultAgentConfigAdapters
+import com.kite.app.agent.config.native.ZCodeAgentConfigAdapter
 import com.kite.app.agent.config.mergeAgentSessionConfigurationOverlay
 import com.kite.app.agent.config.normalizePublishedSessionConfiguration
 import com.kite.app.agent.contract.AgentConfigCategory
@@ -629,6 +630,10 @@ internal class AndroidAgentRecipeRuntime(
                     initializeTimeoutMs = resolved.initializeTimeoutMs,
                     diagnosticSink = { line ->
                         Log.w(TAG, "Agent ${resolved.providerId}: $line")
+                    },
+                    runtimeModelCatalogSource = {
+                        (agentConfigAdapters.adapter(resolved.configAdapterId) as? ZCodeAgentConfigAdapter)
+                            ?.runtimeModelCatalog()
                     },
                 )
                 PROTOCOL_ANTIGRAVITY_STREAM_JSON -> AntigravityStreamJsonAgentProvider(

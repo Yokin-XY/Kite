@@ -118,6 +118,7 @@ class AgentProviderPresetCatalogContractTest {
             "reasonix",
             "github-copilot",
             "deepseek-harness",
+            "zcode",
         )
 
         adapters.forEach { adapterId ->

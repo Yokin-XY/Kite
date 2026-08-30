@@ -13,6 +13,10 @@ import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
+import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigChoice
+import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.contracts.ContainerStatus
 import java.io.File
@@ -281,6 +285,79 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
         assertTrue(credentialsText.contains("ZHIPU_CODING_PLAN_API_KEY"))
         assertFalse(credentialsText.contains("KITE_DSH_ZHIPU_CODING_PLAN_API_KEY"))
         assertTrue(credentialsText.contains(SECRET))
+    }
+
+    @Test
+    fun zcodeWritesNativeCliModelConfigAndBuildsRuntimeCatalog() = runTest {
+        val config = nativeFile(
+            "workspace/.kf/software/kite.zcode/user-home/.zcode/cli/config.json",
+        )
+        config.writeText("""{"ui":{"locale":"zh-CN"}}""")
+        val adapter = ZCodeAgentConfigAdapter(context, ::container)
+        assertEquals(AgentSessionConfigurationEffect.Reconnect, adapter.providerConfigurationEffect())
+
+        val before = (adapter.readLive("zcode") as AgentConfigReadResult.Ready).snapshot
+        val result = adapter.apply(
+            AgentConfigApplyRequest(
+                "zcode",
+                before.revision,
+                listOf(
+                    AgentPersistentConfigChange.ConfigureProvider(
+                        AgentProviderDraft(
+                            "zhipu-coding-plan",
+                            "智谱 Coding Plan",
+                            "https://open.bigmodel.cn/api/coding/paas/v4",
+                            listOf(
+                                AgentProviderModelSummary("glm-5.3-flash", "GLM-5.3 Flash"),
+                                AgentProviderModelSummary("glm-5.3", "GLM-5.3"),
+                            ),
+                        ),
+                        AgentProviderCredentialChange.replace(SECRET),
+                    ),
+                ),
+            ),
+        ) as AgentConfigApplyResult.Applied
+
+        assertEquals("zhipu-coding-plan", result.snapshot.activeProviderId)
+        assertEquals("zhipu-coding-plan/glm-5.3-flash", result.snapshot.defaultModel)
+        assertEquals(2, result.snapshot.providers.single().models.size)
+        assertTrue(config.readText().contains("\"main\""))
+        assertTrue(config.readText().contains("\"available\""))
+        assertTrue(config.readText().contains("\"locale\""))
+        assertFalse(result.snapshot.toString().contains(SECRET))
+
+        val runtime = requireNotNull(adapter.runtimeModelCatalog())
+            .selectedRuntimeModel()
+        assertEquals("zhipu-coding-plan", runtime?.getJSONObject("model")?.getString("providerId"))
+        assertEquals("glm-5.3-flash", runtime?.getJSONObject("model")?.getString("modelId"))
+        assertEquals(2, runtime?.getJSONObject("provider")?.getJSONArray("models")?.length())
+
+        val officialSelection = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "builtin:zai-coding-plan/glm-5.3-flash",
+            choices = listOf(
+                AgentConfigChoice(
+                    value = "builtin:zai-coding-plan/glm-5.3-flash",
+                    name = "GLM-5.3 Flash",
+                    modelSource = AgentModelSource.OfficialLogin,
+                ),
+            ),
+        )
+        val officialChange = requireNotNull(adapter.defaultModelChange(officialSelection))
+        assertTrue(officialChange.clearProviderOverride)
+        val switched = adapter.apply(
+            AgentConfigApplyRequest(
+                "zcode",
+                result.snapshot.revision,
+                listOf(officialChange),
+            ),
+        ) as AgentConfigApplyResult.Applied
+        assertEquals(null, switched.snapshot.activeProviderId)
+        assertEquals(null, switched.snapshot.defaultModel)
+        assertEquals(2, switched.snapshot.providers.single().models.size)
+        assertEquals(null, adapter.runtimeModelCatalog()?.selectedRuntimeModel())
     }
 
     private suspend fun configure(

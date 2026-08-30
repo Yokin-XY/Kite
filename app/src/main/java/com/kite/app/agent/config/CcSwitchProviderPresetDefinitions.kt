@@ -11,6 +11,7 @@ import com.kite.app.agent.config.native.OpenClawAgentConfigAdapter
 import com.kite.app.agent.config.native.PiCodingAgentConfigAdapter
 import com.kite.app.agent.config.native.QwenCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.ReasonixAgentConfigAdapter
+import com.kite.app.agent.config.native.ZCodeAgentConfigAdapter
 import com.kite.app.agent.config.opencode.OpenCodeAgentConfigAdapter
 
 /**
@@ -32,6 +33,7 @@ internal object CcSwitchProviderPresetDefinitions {
         ReasonixAgentConfigAdapter.ADAPTER_ID,
         CopilotAgentConfigAdapter.ADAPTER_ID,
         DeepSeekHarnessAgentConfigAdapter.ADAPTER_ID,
+        ZCodeAgentConfigAdapter.ADAPTER_ID,
     )
 
     private val definitions = listOf(

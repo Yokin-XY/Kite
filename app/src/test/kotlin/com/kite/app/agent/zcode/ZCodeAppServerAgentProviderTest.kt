@@ -9,6 +9,7 @@ import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentExistingSessionRequest
 import com.kite.app.agent.contract.AgentMessageRole
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentNewSessionRequest
 import com.kite.app.agent.contract.AgentOperationResult
 import com.kite.app.agent.contract.AgentPermissionOutcome
@@ -42,6 +43,8 @@ class ZCodeAppServerAgentProviderTest {
         val permission = created.value.configuration.select(AgentConfigCategory.Permission)
         assertEquals("zai/glm-5.3", model.currentValue)
         assertEquals(listOf("zai/glm-5.3", "zai/glm-5.3-flash"), model.choices.map { it.value })
+        assertEquals(listOf("Z.AI", "Z.AI"), model.choices.map { it.groupName })
+        assertEquals(listOf(AgentModelSource.OfficialLogin, AgentModelSource.OfficialLogin), model.choices.map { it.modelSource })
         assertEquals("high", reasoning.currentValue)
         assertEquals("build", permission.currentValue)
 
@@ -55,6 +58,47 @@ class ZCodeAppServerAgentProviderTest {
         assertTrue(events.filterIsInstance<AgentSessionEvent.MessageChunk>().any { event ->
             event.role == AgentMessageRole.Assistant && (event.content as? AgentContent.Text)?.text == "你好"
         })
+        connection.disconnect()
+    }
+
+    @Test
+    fun `创建会话前通过官方workspace协议注入Kite供应商和runtimeModel`() = runBlocking {
+        val channel = FakeZCodeChannel()
+        val catalog = ZCodeRuntimeModelCatalog(
+            revision = "sha256:test",
+            generatedAt = 123L,
+            providers = listOf(
+                ZCodeRuntimeModelProvider(
+                    providerId = "zhipu-coding-plan",
+                    label = "智谱 Coding Plan",
+                    kind = "openai-compatible",
+                    apiFormat = "openai-chat-completions",
+                    baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4",
+                    apiKey = "test-secret",
+                    models = listOf(
+                        com.kite.app.agent.config.AgentProviderModelSummary("glm-5.3", "GLM-5.3"),
+                        com.kite.app.agent.config.AgentProviderModelSummary("glm-5.3-flash", "GLM-5.3 Flash"),
+                    ),
+                )
+            ),
+            selectedProviderId = "zhipu-coding-plan",
+            selectedModelId = "glm-5.3-flash",
+        )
+        val connection = connect(channel, runtimeModelCatalogSource = { catalog }) { }
+
+        val created = connection.newSession(AgentNewSessionRequest("/workspace"))
+        assertTrue(created is AgentOperationResult.Success)
+
+        val requests = channel.requests()
+        val upsert = requests.single { it.optString("method") == "workspace/upsertModelProvider" }
+        val provider = upsert.getJSONObject("params").getJSONObject("provider")
+        assertEquals("zhipu-coding-plan", provider.getString("providerId"))
+        assertEquals(2, provider.getJSONArray("models").length())
+        assertEquals("inline", provider.getJSONObject("apiKey").getString("source"))
+        val create = requests.single { it.optString("method") == "session/create" }
+        val runtimeModel = create.getJSONObject("params").getJSONObject("runtimeModel")
+        assertEquals("zhipu-coding-plan", runtimeModel.getJSONObject("model").getString("providerId"))
+        assertEquals("glm-5.3-flash", runtimeModel.getJSONObject("model").getString("modelId"))
         connection.disconnect()
     }
 
@@ -86,10 +130,12 @@ class ZCodeAppServerAgentProviderTest {
 
     private suspend fun connect(
         channel: FakeZCodeChannel,
+        runtimeModelCatalogSource: suspend () -> ZCodeRuntimeModelCatalog? = { null },
         onEvent: (AgentSessionEvent) -> Unit,
     ) = (ZCodeAppServerAgentProvider(
         ZCodeAppServerProviderDescriptor("zcode", "ZCode"),
         ZCodeAppServerProcessLauncher { channel },
+        runtimeModelCatalogSource = runtimeModelCatalogSource,
     ).connect(
         AgentConnectionRequest(AgentClientInfo("kite", "test")),
         AgentClientEndpoint(
@@ -116,6 +162,7 @@ class ZCodeAppServerAgentProviderTest {
             val method = request.getString("method")
             val result = when (method) {
                 "session/list" -> JSONObject().put("sessions", JSONArray())
+                "workspace/upsertModelProvider" -> JSONObject().put("status", "applied")
                 "session/create", "session/resume" -> snapshot()
                 "session/messages" -> history()
                 "session/subscribe", "session/send", "session/stop", "session/close",
@@ -186,9 +233,10 @@ class ZCodeAppServerAgentProviderTest {
             )
 
         private fun model(id: String, name: String) = JSONObject()
-            .put("providerId", "zai")
-            .put("modelId", id)
-            .put("displayName", name)
+            .put("ref", JSONObject().put("providerId", "zai").put("modelId", id))
+            .put("label", name)
+            .put("providerLabel", "Z.AI")
+            .put("providerSource", "builtin")
 
         private fun history() = JSONObject().put(
             "messages",

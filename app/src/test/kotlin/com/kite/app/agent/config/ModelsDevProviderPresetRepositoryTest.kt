@@ -38,10 +38,12 @@ class ModelsDevProviderPresetRepositoryTest {
     @Test
     fun `adapter protocol filters incompatible provider families`() {
         val hermes = ModelsDevProviderPresetParser.presetsFor(MODELS_DEV_PAYLOAD, "hermes")
+        val zcode = ModelsDevProviderPresetParser.presetsFor(MODELS_DEV_PAYLOAD, "zcode")
         val claude = ModelsDevProviderPresetParser.presetsFor(MODELS_DEV_PAYLOAD, "claude-code")
 
         assertFalse(hermes.any { it.id == "anthropic" })
         assertFalse(hermes.any { it.vendorId == "minimax" })
+        assertEquals(hermes.map { it.id }, zcode.map { it.id })
         assertEquals(
             setOf("anthropic", "minimax", "minimax-cn"),
             claude.map { it.id }.toSet(),

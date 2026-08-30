@@ -19,9 +19,8 @@ class ZCodeResourceManifestTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val resourceRoot = sequenceOf(File("../assets/resources"), File("assets/resources"))
             .first(File::isDirectory)
-        val manifest = KiteResourceManifestLoader(context).parseManifestJson(
-            File(resourceRoot, "kite.zcode/manifest.json").readText(),
-        )
+        val raw = File(resourceRoot, "kite.zcode/manifest.json").readText()
+        val manifest = KiteResourceManifestLoader(context).parseManifestJson(raw)
 
         assertEquals("resources/kite.zcode/icon.png", manifest.iconAsset)
         assertTrue(File(resourceRoot, "kite.zcode/icon.png").isFile)
@@ -29,10 +28,13 @@ class ZCodeResourceManifestTest {
         assertFalse(manifest.displayRecommendations.any { it.resourceId == "kite.zai.coding.helper" })
 
         val profile = manifest.agentProfiles.single()
+
         assertEquals("zcode", profile.agentId)
         assertEquals("zcode-app-server", profile.protocol)
         assertEquals(listOf("zcode", "app-server", "--surface", "desktop"), profile.argv)
+        assertEquals("zcode", profile.configAdapterId)
         assertTrue(AgentResourceRegistrationMapper.registrations(manifest).single().launch is AgentLaunchSpec.Managed)
+        assertTrue(profile.officialAccounts.single().modelGroupIds.contains("builtin:zai-coding-plan"))
 
         val action = manifest.installActions.single()
         val download = action.installSteps.first()
@@ -44,6 +46,11 @@ class ZCodeResourceManifestTest {
         val script = KiteResourceInstallPlanCompiler.compile(action)
         assertTrue(script.contains("dpkg-deb --fsys-tarfile"))
         assertTrue(script.contains("resources/glm/zcode.cjs"))
-        assertTrue(!script.contains("dpkg-deb -x"))
+        assertFalse(script.contains("dpkg-deb -x"))
+
+        val launcher = action.installSteps.last().cmd
+        assertTrue(launcher.contains("export HOME=\"\\${'$'}managed_home\""))
+        assertTrue(launcher.contains("export ZCODE_DATA_BASE_DIR=\"\\${'$'}managed_home\""))
+        assertTrue(launcher.contains(".zcode/cli/config.json"))
     }
 }

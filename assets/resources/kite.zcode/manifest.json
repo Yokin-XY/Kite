@@ -62,13 +62,21 @@
       "name": "ZCode",
       "description": "ZCode 官方原生 app-server 会话",
       "configuration": {
-        "required": false
+        "required": false,
+        "adapter": "zcode"
       },
       "accounts": [
         {
           "id": "zai",
           "name": "Z.AI 官方账号",
-          "modelGroupIds": ["zai", "bigmodel"],
+          "modelGroupIds": [
+            "zai",
+            "bigmodel",
+            "builtin:zai-coding-plan",
+            "builtin:zai-start-plan",
+            "builtin:bigmodel-coding-plan",
+            "builtin:bigmodel-start-plan"
+          ],
           "login": {
             "argv": ["zcode", "login", "--no-browser"],
             "timeoutMs": 300000
@@ -108,7 +116,7 @@
           {
             "id": "extract-zcode-native-runtime",
             "type": "shell",
-            "cmd": "set -eu\narchive=\"$install_root/.kite-downloads/ZCode-3.10.1-linux-arm64.deb\"\nextract_root=\"$install_root/.kite-zcode-extract\"\nruntime_root=\"$install_root/runtime\"\ncommand -v dpkg-deb >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=install step=extract-zcode-native-runtime reason=dpkg-deb-missing'; exit 127; }\nrm -rf \"$extract_root\"\nmkdir -p \"$extract_root\" \"$runtime_root\" \"$install_root/bin\" \"$install_root/user-home\"\ndpkg-deb --fsys-tarfile \"$archive\" | tar -xf - -C \"$extract_root\" ./opt/ZCode/resources/glm/zcode.cjs ./opt/ZCode/resources/glm/.node-bundle-meta.json\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/zcode.cjs\" \"$runtime_root/zcode.cjs\"\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/.node-bundle-meta.json\" \"$runtime_root/.node-bundle-meta.json\"\ncat > \"$install_root/bin/zcode\" <<EOF\n#!/usr/bin/env bash\nset -eu\nexport ZCODE_HOME=\"$install_root/user-home\"\nexport ZCODE_DATA_BASE_DIR=\"$install_root/user-home\"\nexec node \"$install_root/runtime/zcode.cjs\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/zcode\"\nprintf '%s\\n' '3.10.1' > \"$install_root/.kite-version\"\nrm -rf \"$extract_root\"\nrm -f \"$archive\""
+            "cmd": "set -eu\narchive=\"$install_root/.kite-downloads/ZCode-3.10.1-linux-arm64.deb\"\nextract_root=\"$install_root/.kite-zcode-extract\"\nruntime_root=\"$install_root/runtime\"\ncommand -v dpkg-deb >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=install step=extract-zcode-native-runtime reason=dpkg-deb-missing'; exit 127; }\nrm -rf \"$extract_root\"\nmkdir -p \"$extract_root\" \"$runtime_root\" \"$install_root/bin\" \"$install_root/user-home/.zcode/cli\" \"$install_root/user-home/.zcode/v2\"\ndpkg-deb --fsys-tarfile \"$archive\" | tar -xf - -C \"$extract_root\" ./opt/ZCode/resources/glm/zcode.cjs ./opt/ZCode/resources/glm/.node-bundle-meta.json\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/zcode.cjs\" \"$runtime_root/zcode.cjs\"\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/.node-bundle-meta.json\" \"$runtime_root/.node-bundle-meta.json\"\ncat > \"$install_root/bin/zcode\" <<EOF\n#!/usr/bin/env bash\nset -eu\nmanaged_home=\"$install_root/user-home\"\nlegacy_home=\"\\${HOME:-/root}\"\nmkdir -p \"\\$managed_home/.zcode/cli\" \"\\$managed_home/.zcode/v2\"\nif [ ! -e \"\\$managed_home/.zcode/cli/config.json\" ] && [ \"\\$legacy_home\" != \"\\$managed_home\" ] && [ -f \"\\$legacy_home/.zcode/cli/config.json\" ]; then\n  cp \"\\$legacy_home/.zcode/cli/config.json\" \"\\$managed_home/.zcode/cli/config.json\"\nfi\nexport HOME=\"\\$managed_home\"\nexport ZCODE_HOME=\"\\$managed_home/.zcode\"\nexport ZCODE_DATA_BASE_DIR=\"\\$managed_home\"\nexec node \"$install_root/runtime/zcode.cjs\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/zcode\"\nprintf '%s\\n' '3.10.1' > \"$install_root/.kite-version\"\nrm -rf \"$extract_root\"\nrm -f \"$archive\""
           }
         ],
         "managedCommands": ["zcode"],

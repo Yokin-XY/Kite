@@ -1,6 +1,8 @@
 package com.kite.app.agent.zcode
 
 import com.kite.app.agent.contract.AgentContent
+import com.kite.app.agent.contract.AgentModelSource
+import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentReasoningMode
 import com.kite.app.agent.contract.AgentReasoningSemantics
@@ -129,6 +131,8 @@ internal data class ZCodeModel(
     val providerId: String,
     val modelId: String,
     val displayName: String,
+    val providerName: String = providerId,
+    val modelSource: AgentModelSource = AgentModelSource.UserConfigured,
     val variant: String? = null,
 ) {
     val selectionId: String = "$providerId/$modelId" + variant?.let { "#$it" }.orEmpty()
@@ -140,14 +144,82 @@ internal data class ZCodeModel(
 }
 
 internal fun JSONObject.toZCodeModel(): ZCodeModel? {
-    val providerId = nullableString("providerId") ?: nullableString("provider") ?: return null
-    val modelId = nullableString("modelId") ?: nullableString("id") ?: return null
+    val ref = optJSONObject("ref") ?: this
+    val providerId = ref.nullableString("providerId") ?: ref.nullableString("provider") ?: return null
+    val modelId = ref.nullableString("modelId") ?: ref.nullableString("id") ?: return null
+    val providerSource = nullableString("providerSource")
     return ZCodeModel(
         providerId = providerId,
         modelId = modelId,
-        displayName = nullableString("displayName") ?: nullableString("name") ?: modelId,
-        variant = nullableString("variant"),
+        displayName = nullableString("label") ?: nullableString("displayName") ?: nullableString("name") ?: modelId,
+        providerName = nullableString("providerLabel") ?: providerId,
+        modelSource = if (providerSource == "builtin" || providerId.startsWith("builtin:")) {
+            AgentModelSource.OfficialLogin
+        } else {
+            AgentModelSource.UserConfigured
+        },
+        variant = ref.nullableString("variant"),
     )
+}
+
+/** ZCode 官方 runtimeModel/workspace Provider 协议所需的内存态，不向 UI 暴露凭据。 */
+internal class ZCodeRuntimeModelProvider(
+    val providerId: String,
+    val label: String,
+    val kind: String,
+    val apiFormat: String,
+    val baseUrl: String?,
+    private val apiKey: String?,
+    val models: List<AgentProviderModelSummary>,
+) {
+    fun toProtocol(): JSONObject = JSONObject()
+        .put("providerId", providerId)
+        .put("kind", kind)
+        .put("apiFormat", apiFormat)
+        .put("label", label)
+        .put("source", "user")
+        .put(
+            "models",
+            JSONArray().also { array ->
+                models.forEach { model ->
+                    array.put(
+                        JSONObject()
+                            .put("modelId", model.id)
+                            .put("label", model.displayName.ifBlank { model.id }),
+                    )
+                }
+            },
+        )
+        .apply {
+            baseUrl?.takeIf(String::isNotBlank)?.let { put("baseURL", it) }
+            apiKey?.takeIf(String::isNotBlank)?.let { key ->
+                put("apiKey", JSONObject().put("source", "inline").put("value", key))
+            }
+        }
+}
+
+internal class ZCodeRuntimeModelCatalog(
+    val revision: String,
+    val generatedAt: Long,
+    val providers: List<ZCodeRuntimeModelProvider>,
+    private val selectedProviderId: String?,
+    private val selectedModelId: String?,
+) {
+    fun selectedRuntimeModel(): JSONObject? {
+        val providerId = selectedProviderId ?: return null
+        val modelId = selectedModelId ?: return null
+        return runtimeModel(providerId, modelId)
+    }
+
+    fun runtimeModel(providerId: String, modelId: String): JSONObject? {
+        val provider = providers.firstOrNull { it.providerId == providerId } ?: return null
+        if (provider.models.none { it.id == modelId }) return null
+        return JSONObject()
+            .put("revision", revision)
+            .put("generatedAt", generatedAt)
+            .put("model", JSONObject().put("providerId", providerId).put("modelId", modelId))
+            .put("provider", provider.toProtocol())
+    }
 }
 
 internal fun zcodeReasoningSemantics(value: String): AgentReasoningSemantics? = when (value.lowercase()) {

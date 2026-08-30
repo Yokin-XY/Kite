@@ -19,6 +19,7 @@ import com.kite.app.agent.config.native.QwenCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.QoderCliAgentConfigAdapter
 import com.kite.app.agent.config.native.ReasonixAgentConfigAdapter
 import com.kite.app.agent.config.native.TraeCodeAgentConfigAdapter
+import com.kite.app.agent.config.native.ZCodeAgentConfigAdapter
 import com.kite.app.agent.config.opencode.OpenCodeAgentConfigAdapter
 
 /** 进程内唯一的默认配置适配器集合；页面与 Runtime 共享相同登记，不按 Agent 名称分支。 */
@@ -45,6 +46,7 @@ internal fun defaultAgentConfigAdapters(
     QwenCodeAgentConfigAdapter(context.applicationContext),
     ReasonixAgentConfigAdapter(context.applicationContext),
     TraeCodeAgentConfigAdapter(context.applicationContext),
+    ZCodeAgentConfigAdapter(context.applicationContext),
     CursorCliAgentConfigAdapter(context.applicationContext),
     QoderCliAgentConfigAdapter(context.applicationContext),
     DevinCliAgentConfigAdapter(context.applicationContext),

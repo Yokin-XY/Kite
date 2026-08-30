@@ -68,11 +68,12 @@ fun interface ZCodeAppServerProcessLauncher {
 }
 
 /** ZCode 原生 app-server 到 Kite Agent SDK 的专用适配器。 */
-class ZCodeAppServerAgentProvider(
+class ZCodeAppServerAgentProvider internal constructor(
     private val descriptor: ZCodeAppServerProviderDescriptor,
     private val launcher: ZCodeAppServerProcessLauncher,
     private val initializeTimeoutMs: Long = DEFAULT_INITIALIZE_TIMEOUT_MS,
     private val diagnosticSink: (String) -> Unit = {},
+    private val runtimeModelCatalogSource: suspend () -> ZCodeRuntimeModelCatalog? = { null },
 ) : KiteAgentProvider {
     override val id: String = descriptor.id
 
@@ -97,7 +98,14 @@ class ZCodeAppServerAgentProvider(
                     JSONObject().put("includeArchived", false).put("limit", 1),
                 )
             }
-            val connection = ZCodeAppServerConnection(descriptor, process, scope, rpc, client)
+            val connection = ZCodeAppServerConnection(
+                descriptor,
+                process,
+                scope,
+                rpc,
+                client,
+                runtimeModelCatalogSource,
+            )
             rpc.notificationHandler = connection::onNotification
             rpc.serverRequestHandler = connection::onServerRequest
             AgentOperationResult.Success(connection)
@@ -130,6 +138,7 @@ private class ZCodeAppServerConnection(
     private val scope: CoroutineScope,
     private val rpc: ZCodeAppServerRpc,
     private val endpoint: AgentClientEndpoint,
+    private val runtimeModelCatalogSource: suspend () -> ZCodeRuntimeModelCatalog?,
 ) : KiteAgentConnection {
     override val provider = AgentProviderInfo(descriptor.id, descriptor.name, descriptor.version, descriptor.title)
     override val capabilities = AgentCapabilities(
@@ -142,6 +151,7 @@ private class ZCodeAppServerConnection(
     private val streamedAssistant = ConcurrentHashMap.newKeySet<String>()
     private val startedTools = ConcurrentHashMap.newKeySet<String>()
     private val subscribed = ConcurrentHashMap.newKeySet<String>()
+    private val preparedWorkspaceRevisions = ConcurrentHashMap<String, String>()
     private val disconnecting = AtomicBoolean(false)
 
     init {
@@ -162,10 +172,14 @@ private class ZCodeAppServerConnection(
 
     override suspend fun newSession(request: AgentNewSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
         operation("创建 ZCode 会话") {
-            val workspace = JSONObject()
-                .put("workspaceKey", request.cwd)
-                .put("workspacePath", request.cwd)
-            val response = rpc.request(METHOD_SESSION_CREATE, JSONObject().put("workspace", workspace))
+            val workspace = workspace(request.cwd)
+            val catalog = prepareWorkspace(request.cwd, workspace)
+            val params = JSONObject().put("workspace", workspace)
+            catalog?.selectedRuntimeModel()?.let { runtimeModel ->
+                params.put("runtimeModel", runtimeModel)
+                params.put("model", runtimeModel.getJSONObject("model"))
+            }
+            val response = rpc.request(METHOD_SESSION_CREATE, params)
             val state = response.toSessionState(request.cwd)
                 ?: error("ZCode session/create 未返回会话")
             sessions[state.id] = state
@@ -183,9 +197,15 @@ private class ZCodeAppServerConnection(
         request: AgentExistingSessionRequest,
         label: String,
     ): AgentOperationResult<AgentSessionSnapshot> = operation(label) {
+        val workspace = workspace(request.cwd)
+        val catalog = prepareWorkspace(request.cwd, workspace)
+        val params = JSONObject()
+            .put("sessionId", request.sessionId)
+            .put("workspace", workspace)
+        catalog?.selectedRuntimeModel()?.let { params.put("runtimeModel", it) }
         val response = rpc.request(
             METHOD_SESSION_RESUME,
-            JSONObject().put("sessionId", request.sessionId),
+            params,
         )
         val state = response.toSessionState(request.cwd)
             ?: error("ZCode session/resume 未返回会话")
@@ -295,10 +315,16 @@ private class ZCodeAppServerConnection(
                 MODEL_CONFIG_ID -> {
                     val model = state.models.firstOrNull { it.selectionId == selected }
                         ?: error("ZCode 未提供该模型")
+                    val catalog = prepareWorkspace(state.cwd, workspace(state.cwd))
+                    val runtimeModel = catalog?.runtimeModel(model.providerId, model.modelId)
                     rpc.request(
                         METHOD_SESSION_SET_MODEL,
-                        JSONObject().put("sessionId", sessionId).put("model", model.toProtocol()),
+                        JSONObject()
+                            .put("sessionId", sessionId)
+                            .put("model", model.toProtocol())
+                            .apply { runtimeModel?.let { put("runtimeModel", it) } },
                     )
+                    state.model = model
                 }
                 THOUGHT_CONFIG_ID -> {
                     if (selected !in state.thoughtLevels) error("当前模型不支持该推理强度")
@@ -344,6 +370,7 @@ private class ZCodeAppServerConnection(
             endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Closed))
         }
         sessions.clear()
+        preparedWorkspaceRevisions.clear()
         rpc.close()
         process.stop()
         scope.cancel("ZCode app-server disconnected")
@@ -498,7 +525,15 @@ private class ZCodeAppServerConnection(
     }
 
     private suspend fun refreshSession(state: ZCodeSessionState) {
-        val response = rpc.request(METHOD_SESSION_RESUME, JSONObject().put("sessionId", state.id))
+        val workspace = workspace(state.cwd)
+        val catalog = prepareWorkspace(state.cwd, workspace)
+        val params = JSONObject()
+            .put("sessionId", state.id)
+            .put("workspace", workspace)
+        state.model?.let { model ->
+            catalog?.runtimeModel(model.providerId, model.modelId)?.let { params.put("runtimeModel", it) }
+        }
+        val response = rpc.request(METHOD_SESSION_RESUME, params)
         response.toSessionState(state.cwd)?.let { refreshed ->
             state.cwd = refreshed.cwd
             state.model = refreshed.model
@@ -508,6 +543,32 @@ private class ZCodeAppServerConnection(
             state.mode = refreshed.mode
         }
     }
+
+    /**
+     * ZCode 把 workspace model catalog 作为 app-server 的运行态事实源。Kite 仅在 revision
+     * 变化时逐项 upsert 自己管理的 Provider，从而保留 ZCode 官方登录产生的内置 Provider。
+     */
+    private suspend fun prepareWorkspace(
+        cwd: String,
+        workspace: JSONObject,
+    ): ZCodeRuntimeModelCatalog? {
+        val catalog = runtimeModelCatalogSource() ?: return null
+        if (preparedWorkspaceRevisions[cwd] == catalog.revision) return catalog
+        catalog.providers.forEach { provider ->
+            rpc.request(
+                METHOD_WORKSPACE_UPSERT_PROVIDER,
+                JSONObject()
+                    .put("workspace", workspace)
+                    .put("provider", provider.toProtocol()),
+            )
+        }
+        preparedWorkspaceRevisions[cwd] = catalog.revision
+        return catalog
+    }
+
+    private fun workspace(cwd: String): JSONObject = JSONObject()
+        .put("workspaceKey", cwd)
+        .put("workspacePath", cwd)
 
     private suspend fun subscribe(sessionId: String) {
         if (!subscribed.add(sessionId)) return
@@ -574,8 +635,8 @@ private class ZCodeAppServerConnection(
                             value = model.selectionId,
                             name = model.displayName,
                             groupId = model.providerId,
-                            groupName = model.providerId,
-                            modelSource = AgentModelSource.UserConfigured,
+                            groupName = model.providerName,
+                            modelSource = model.modelSource,
                         )
                     },
                 )
@@ -647,6 +708,7 @@ private class ZCodeAppServerConnection(
         const val METHOD_SESSION_SET_MODEL = "session/setModel"
         const val METHOD_SESSION_SET_THOUGHT = "session/setThoughtLevel"
         const val METHOD_SESSION_SET_MODE = "session/setMode"
+        const val METHOD_WORKSPACE_UPSERT_PROVIDER = "workspace/upsertModelProvider"
         const val METHOD_SESSION_EVENT = "session/event"
         const val METHOD_RUNTIME_PREFERENCES = "session/requestRuntimePreferences"
         const val METHOD_PERMISSION_REQUEST = "interaction/requestPermission"
