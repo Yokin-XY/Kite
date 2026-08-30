@@ -9,6 +9,7 @@ import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderSummary
+import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
@@ -58,6 +59,9 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
 
     override fun displayName(): String = "DeepSeek Harness"
 
+    override fun providerConfigurationEffect(): AgentSessionConfigurationEffect =
+        AgentSessionConfigurationEffect.Reconnect
+
     override fun nativeCapabilities(): AgentConfigCapabilities = AgentConfigCapabilities(
         supported = setOf(
             AgentPersistentConfigCapability.DefaultModel,
@@ -70,7 +74,7 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
 
     override fun decode(files: Map<String, ByteArray>): NativeState {
         val settings = yamlMap(files.getValue(SETTINGS_KEY))
-        val credentials = yamlMap(files.getValue(CREDENTIALS_KEY))
+        val credentialRefs = credentialRefs(files.getValue(CREDENTIALS_KEY))
         val providerEntries = settings.map(LLM_PI_AI_SECTION).map(PROVIDERS_KEY)
         val providers = providerEntries.mapNotNull { (providerId, value) ->
             val provider = value.asStringMap() ?: return@mapNotNull null
@@ -89,7 +93,7 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
                 displayName = provider.string(DISPLAY_NAME_KEY)?.takeIf(String::isNotBlank) ?: providerId,
                 baseUrl = provider.string(BASE_URL_KEY),
                 models = models,
-                credentialPresence = if (!credentialRef.isNullOrBlank() && !credentials.string(credentialRef).isNullOrBlank()) {
+                credentialPresence = if (!credentialRef.isNullOrBlank() && !credentialRefs.string(credentialRef).isNullOrBlank()) {
                     AgentCredentialPresence.Present
                 } else {
                     AgentCredentialPresence.Missing
@@ -113,7 +117,8 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
     ): Map<String, ByteArray> {
         val originalSettings = files.getValue(SETTINGS_KEY).toString(Charsets.UTF_8)
         val settings = yamlMap(files.getValue(SETTINGS_KEY)).deepMutableMap()
-        val credentials = yamlMap(files.getValue(CREDENTIALS_KEY)).deepMutableMap()
+        val credentials = credentialDocument(files.getValue(CREDENTIALS_KEY))
+        val credentialRefs = credentials.mutableMap(CREDENTIAL_REFS_KEY)
 
         changes.forEach { change ->
             when (change) {
@@ -137,7 +142,11 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
                     val llm = settings.mutableMap(LLM_PI_AI_SECTION)
                     val providers = llm.mutableMap(PROVIDERS_KEY)
                     val current = providers.mutableMap(draft.id)
-                    val credentialRef = current.string(API_KEY_ENV_KEY) ?: credentialEnvironment(draft.id)
+                    val previousCredentialRef = current.string(API_KEY_ENV_KEY)
+                    val credentialRef = when (previousCredentialRef) {
+                        null, legacyCredentialEnvironment(draft.id) -> credentialEnvironment(draft.id)
+                        else -> previousCredentialRef
+                    }
                     val existingModels = current.list(MODELS_KEY).mapNotNull { value ->
                         value.asStringMap()?.let { model -> model.string(ID_KEY)?.let { it to model.deepMutableMap() } }
                     }.toMap()
@@ -162,9 +171,19 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
                     llm[PROVIDERS_KEY] = providers
                     settings[LLM_PI_AI_SECTION] = llm
                     when (val credential = change.credential) {
-                        AgentProviderCredentialChange.Keep -> Unit
-                        is AgentProviderCredentialChange.Replace -> credentials[credentialRef] = credential.secret
-                        AgentProviderCredentialChange.Remove -> credentials.remove(credentialRef)
+                        AgentProviderCredentialChange.Keep -> if (previousCredentialRef != null && previousCredentialRef != credentialRef) {
+                            credentialRefs.remove(previousCredentialRef)?.let { previousSecret ->
+                                credentialRefs[credentialRef] = previousSecret
+                            }
+                        }
+                        is AgentProviderCredentialChange.Replace -> {
+                            previousCredentialRef?.takeIf { it != credentialRef }?.let(credentialRefs::remove)
+                            credentialRefs[credentialRef] = credential.secret
+                        }
+                        AgentProviderCredentialChange.Remove -> {
+                            previousCredentialRef?.let(credentialRefs::remove)
+                            credentialRefs.remove(credentialRef)
+                        }
                     }
                     settings[DEFAULT_MODEL_SECTION] = linkedMapOf(
                         PROVIDER_KEY to draft.id,
@@ -176,7 +195,7 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
                     val providers = llm.mutableMap(PROVIDERS_KEY)
                     val removed = providers.remove(change.providerId).asStringMap()
                     if (change.removeCredential) {
-                        removed?.string(API_KEY_ENV_KEY)?.let(credentials::remove)
+                        removed?.string(API_KEY_ENV_KEY)?.let(credentialRefs::remove)
                     }
                     llm[PROVIDERS_KEY] = providers
                     settings[LLM_PI_AI_SECTION] = llm
@@ -203,9 +222,8 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
 
     override fun validateBytes(key: String, bytes: ByteArray): String? = runCatching {
         require(bytes.size <= MAX_DOCUMENT_BYTES)
-        val root = yamlMap(bytes)
         if (key == CREDENTIALS_KEY) {
-            require(root.all { (name, value) -> SAFE_ENV_NAME.matches(name) && value is String && value.isNotBlank() })
+            validateCredentialDocument(yamlMap(bytes))
         }
         null
     }.getOrElse { "DeepSeek Harness 原生 YAML 配置格式无效" }
@@ -222,6 +240,61 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
         ByteArray(0)
     } else {
         yaml.dump(value).trimEnd().plus("\n").toByteArray(Charsets.UTF_8)
+    }
+
+    /**
+     * 0.1.1-rc.2 起凭据文件使用 version/refs/records 文档；更早的平铺预发布格式
+     * 只在读取时兼容，并在下一次写入时迁移，和 Harness 自身的迁移规则保持一致。
+     */
+    private fun credentialDocument(bytes: ByteArray): LinkedHashMap<String, Any?> {
+        val root = yamlMap(bytes)
+        if (root.isEmpty()) {
+            return linkedMapOf(
+                CREDENTIAL_VERSION_KEY to CREDENTIAL_DOCUMENT_VERSION,
+                CREDENTIAL_REFS_KEY to linkedMapOf<String, Any?>(),
+            )
+        }
+        if (CREDENTIAL_VERSION_KEY !in root) {
+            require(root.all { (name, value) ->
+                SAFE_ENV_NAME.matches(name) && value is String && value.isNotBlank()
+            })
+            return linkedMapOf(
+                CREDENTIAL_VERSION_KEY to CREDENTIAL_DOCUMENT_VERSION,
+                CREDENTIAL_REFS_KEY to root.deepMutableMap(),
+            )
+        }
+        validateCredentialDocument(root)
+        return root.deepMutableMap().also { document ->
+            if (CREDENTIAL_REFS_KEY !in document) {
+                document[CREDENTIAL_REFS_KEY] = linkedMapOf<String, Any?>()
+            }
+        }
+    }
+
+    private fun credentialRefs(bytes: ByteArray): Map<String, Any?> {
+        val root = yamlMap(bytes)
+        if (root.isEmpty()) return emptyMap()
+        if (CREDENTIAL_VERSION_KEY !in root) {
+            require(root.all { (name, value) ->
+                SAFE_ENV_NAME.matches(name) && value is String && value.isNotBlank()
+            })
+            return root
+        }
+        validateCredentialDocument(root)
+        return root.map(CREDENTIAL_REFS_KEY)
+    }
+
+    private fun validateCredentialDocument(root: Map<String, Any?>) {
+        if (root.isEmpty()) return
+        require(root.keys.all { it in CREDENTIAL_DOCUMENT_KEYS })
+        require((root[CREDENTIAL_VERSION_KEY] as? Number)?.toInt() == CREDENTIAL_DOCUMENT_VERSION)
+        val refs = root[CREDENTIAL_REFS_KEY]
+        require(refs == null || refs is Map<*, *>)
+        require(root.map(CREDENTIAL_REFS_KEY).all { (name, value) ->
+            SAFE_ENV_NAME.matches(name) && value is String && value.isNotBlank()
+        })
+        val records = root[CREDENTIAL_RECORDS_KEY]
+        require(records == null || records is Map<*, *>)
     }
 
     private fun replaceYamlSections(
@@ -254,7 +327,15 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
         return startMatch.range.first until endExclusive
     }
 
-    private fun credentialEnvironment(providerId: String): String =
+    /** 与 deepseek-harness-acp 的 Provider 凭据门禁使用同一通用命名合同。 */
+    private fun credentialEnvironment(providerId: String): String = when {
+        providerId == DEEPSEEK_PROVIDER_ID || providerId == DEEPSEEK_OFFICIAL_PROVIDER_ID -> DEEPSEEK_API_KEY_ENV
+        providerId == ANTHROPIC_PROVIDER_ID -> ANTHROPIC_API_KEY_ENV
+        providerId.startsWith(OPENAI_PROVIDER_PREFIX) -> OPENAI_API_KEY_ENV
+        else -> "${providerId.uppercase().replace(Regex("[^A-Z0-9]"), "_")}_API_KEY"
+    }
+
+    private fun legacyCredentialEnvironment(providerId: String): String =
         "KITE_DSH_${providerId.uppercase().replace(Regex("[^A-Z0-9]"), "_")}_API_KEY"
 
     private fun isZhipuEndpoint(baseUrl: String): Boolean = runCatching {
@@ -293,6 +374,10 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
         private const val HARNESS_HOME = "/workspace/.kf/software/kite.deepseek.harness/user-home/.dsh"
         private const val SETTINGS_PATH = "$HARNESS_HOME/settings.yaml"
         private const val CREDENTIALS_PATH = "$HARNESS_HOME/.credentials.yaml"
+        private const val CREDENTIAL_VERSION_KEY = "version"
+        private const val CREDENTIAL_REFS_KEY = "refs"
+        private const val CREDENTIAL_RECORDS_KEY = "records"
+        private const val CREDENTIAL_DOCUMENT_VERSION = 1
         private const val LLM_PI_AI_SECTION = "llm-pi-ai"
         private const val DEFAULT_MODEL_SECTION = "agent-default-model"
         private const val PROVIDERS_KEY = "providers"
@@ -310,7 +395,19 @@ internal class DeepSeekHarnessAgentConfigAdapter internal constructor(
         private const val MAX_TOKENS_FIELD_KEY = "maxTokensField"
         private const val MAX_TOKENS_FIELD_VALUE = "max_tokens"
         private const val OPENAI_COMPLETIONS_API = "openai-completions"
+        private const val DEEPSEEK_PROVIDER_ID = "deepseek"
+        private const val DEEPSEEK_OFFICIAL_PROVIDER_ID = "deepseek-official"
+        private const val ANTHROPIC_PROVIDER_ID = "anthropic"
+        private const val OPENAI_PROVIDER_PREFIX = "openai"
+        private const val DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
+        private const val ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
+        private const val OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
         private const val MAX_DOCUMENT_BYTES = 8 * 1024 * 1024
         private val SAFE_ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]{0,127}")
+        private val CREDENTIAL_DOCUMENT_KEYS = setOf(
+            CREDENTIAL_VERSION_KEY,
+            CREDENTIAL_REFS_KEY,
+            CREDENTIAL_RECORDS_KEY,
+        )
     }
 }

@@ -26,7 +26,7 @@
     "category": "AI",
     "accent": "blue",
     "sizeLabel": "网络包",
-    "longDescription": "DeepSeek Harness 是 DeepSeek 官方开源的 Agent Harness。Kite 固定安装官方 Harness 0.1.1-rc.2，并通过独立维护的完整 ACP 桥接层提供会话创建、列表、恢复、历史加载、流式消息、工具审批、实时模型、推理强度和三种执行权限；MCP、Skill、模型供应商、登录凭据与会话日志仍由 Harness 自己管理。官方当前提供的 ACP Demo 仅支持新会话，因此不作为 Kite 的运行入口。",
+    "longDescription": "DeepSeek Harness 是 DeepSeek 官方开源的 Agent Harness。Kite 固定安装官方 Harness 0.1.1-rc.2，并通过独立维护的完整 ACP 桥接层提供会话创建、列表、恢复、历史加载、流式消息、工具审批、实时模型、推理强度和三种执行权限；MCP、Skill、模型供应商、登录凭据与会话日志仍由 Harness 自己管理。安装时会把 Harness 的会话首次发布从硬链接切换为原子重命名，避开 Android PRoot 的 link2symlink 语义冲突。官方当前提供的 ACP Demo 仅支持新会话，因此不作为 Kite 的运行入口。",
     "recommendations": [
       {"resourceId": "kite.nodejs", "label": "运行时"},
       {"resourceId": "kite.git", "label": "源码工具"},
@@ -111,6 +111,16 @@
             ]
           },
           {
+            "id": "patch-deepseek-harness-android-session-persistence",
+            "type": "shell",
+            "cmd": "set -eu\npersistence_js=\"$install_root/npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js\"\ntest -f \"$persistence_js\"\nif grep -Fq 'await link(tmp, finalPath);' \"$persistence_js\"; then\n  sed -i 's/import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate }/import { mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, truncate }/' \"$persistence_js\"\n  sed -i 's/await link(tmp, finalPath);/await rename(tmp, finalPath);/' \"$persistence_js\"\nfi\ngrep -Fq 'await rename(tmp, finalPath);' \"$persistence_js\"\ngrep -Fq 'realpath, rename, rm' \"$persistence_js\""
+          },
+          {
+            "id": "patch-deepseek-harness-acp-selected-provider-auth",
+            "type": "shell",
+            "cmd": "set -eu\nacp_root=\"$install_root/npm-global/lib/node_modules/@openma/deepseek-harness-acp/dist\"\nfor acp_js in \"$acp_root/bridge.js\" \"$acp_root/plugin.js\" \"$acp_root/server.js\"; do\n  test -f \"$acp_js\"\n  if grep -Fq 'requireCredential(config.provider)' \"$acp_js\"; then\n    sed -i 's/requireCredential(config.provider)/requireCredential(defaultProvider())/g' \"$acp_js\"\n  fi\n  if grep -Fq 'requireCredential(record.provider ?? config.provider)' \"$acp_js\"; then\n    sed -i 's/requireCredential(record.provider ?? config.provider)/requireCredential(routeOf(record).provider)/g' \"$acp_js\"\n  fi\n  test \"$(grep -Fc 'requireCredential(defaultProvider())' \"$acp_js\")\" -eq 2\n  test \"$(grep -Fc 'requireCredential(routeOf(record).provider)' \"$acp_js\")\" -eq 2\n  ! grep -Fq 'requireCredential(config.provider)' \"$acp_js\"\n  ! grep -Fq 'requireCredential(record.provider ?? config.provider)' \"$acp_js\"\ndone"
+          },
+          {
             "id": "install-deepseek-harness-launcher",
             "type": "shell",
             "cmd": "set -eu\nmkdir -p \"$install_root/bin\" \"$install_root/user-home/.dsh\"\ncat > \"$install_root/bin/kite-dsh-acp\" <<EOF\n#!/usr/bin/env bash\nset -eu\nexport HOME=\"$install_root/user-home\"\nexport DSH_HOME=\"$install_root/user-home/.dsh\"\ndsh_bin=\"\\$(command -v dsh)\"\n[ -n \"\\$dsh_bin\" ] || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=deepseek-harness-host reason=dsh-missing' >&2; exit 127; }\nexport DSH_PATH=\"\\$dsh_bin\"\nexec dsh-acp \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/kite-dsh-acp\""
@@ -126,6 +136,14 @@
           {
             "id": "deepseek-harness-acp-version",
             "cmd": "command -v dsh-acp >/dev/null 2>&1 && test \"$(dsh-acp --version)\" = '@openma/deepseek-harness-acp 0.4.26'"
+          },
+          {
+            "id": "deepseek-harness-android-session-persistence",
+            "cmd": "persistence_js=\"$install_root/npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js\" && grep -Fq 'await rename(tmp, finalPath);' \"$persistence_js\" && grep -Fq 'realpath, rename, rm' \"$persistence_js\""
+          },
+          {
+            "id": "deepseek-harness-acp-selected-provider-auth",
+            "cmd": "acp_root=\"$install_root/npm-global/lib/node_modules/@openma/deepseek-harness-acp/dist\" && for acp_js in \"$acp_root/bridge.js\" \"$acp_root/plugin.js\" \"$acp_root/server.js\"; do test \"$(grep -Fc 'requireCredential(defaultProvider())' \"$acp_js\")\" -eq 2 && test \"$(grep -Fc 'requireCredential(routeOf(record).provider)' \"$acp_js\")\" -eq 2 && ! grep -Fq 'requireCredential(config.provider)' \"$acp_js\" && ! grep -Fq 'requireCredential(record.provider ?? config.provider)' \"$acp_js\" || exit 1; done"
           },
           {
             "id": "deepseek-harness-launcher",

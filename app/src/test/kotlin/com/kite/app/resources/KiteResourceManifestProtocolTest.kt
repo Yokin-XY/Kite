@@ -695,6 +695,12 @@ class KiteResourceManifestProtocolTest {
         val installAction = manifest.installActions.single()
         val packageStep = installAction.installSteps.first()
         val launcherStep = installAction.installSteps.last()
+        val androidPersistenceStep = installAction.installSteps.single {
+            it.id == "patch-deepseek-harness-android-session-persistence"
+        }
+        val selectedProviderAuthStep = installAction.installSteps.single {
+            it.id == "patch-deepseek-harness-acp-selected-provider-auth"
+        }
 
         assertEquals("npm", manifest.sourceType)
         assertEquals("@deepseek-ai/dsh", manifest.source.packageName)
@@ -723,6 +729,26 @@ class KiteResourceManifestProtocolTest {
         assertTrue(launcherStep.cmd.contains("export DSH_HOME=\"\$install_root/user-home/.dsh\""))
         assertTrue(launcherStep.cmd.contains("export DSH_PATH=\"\\\$dsh_bin\""))
         assertTrue(launcherStep.cmd.contains("exec dsh-acp \"\\\$@\""))
+        assertTrue(androidPersistenceStep.cmd.contains("await link(tmp, finalPath);"))
+        assertTrue(androidPersistenceStep.cmd.contains("await rename(tmp, finalPath);"))
+        assertTrue(androidPersistenceStep.cmd.contains("realpath, rename, rm"))
+        assertTrue(selectedProviderAuthStep.cmd.contains("requireCredential(config.provider)"))
+        assertTrue(selectedProviderAuthStep.cmd.contains("requireCredential(defaultProvider())"))
+        assertTrue(selectedProviderAuthStep.cmd.contains("requireCredential(record.provider ?? config.provider)"))
+        assertTrue(selectedProviderAuthStep.cmd.contains("requireCredential(routeOf(record).provider)"))
+        assertTrue(selectedProviderAuthStep.cmd.contains("bridge.js"))
+        assertTrue(selectedProviderAuthStep.cmd.contains("plugin.js"))
+        assertTrue(selectedProviderAuthStep.cmd.contains("server.js"))
+        assertTrue(
+            installAction.verifications.single {
+                it.id == "deepseek-harness-android-session-persistence"
+            }.cmd.contains("await rename(tmp, finalPath);"),
+        )
+        assertTrue(
+            installAction.verifications.single {
+                it.id == "deepseek-harness-acp-selected-provider-auth"
+            }.cmd.contains("requireCredential(defaultProvider())"),
+        )
         assertTrue(
             installAction.verifications
                 .filter { it.id in setOf("deepseek-harness-acp-version", "deepseek-harness-launcher") }

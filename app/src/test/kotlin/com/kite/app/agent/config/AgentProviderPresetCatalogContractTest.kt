@@ -24,7 +24,18 @@ class AgentProviderPresetCatalogContractTest {
         assertEquals(AgentProviderAccessChannel.Api, general.accessChannel)
         assertEquals(AgentProviderAccessChannel.CodingPlan, coding.accessChannel)
         assertEquals(
-            listOf("glm-5.2", "glm-5-turbo", "glm-4.7"),
+            listOf(
+                "glm-5.3-flash",
+                "glm-5.3",
+                "glm-5.2",
+                "glm-5.1",
+                "glm-5",
+                "glm-5-turbo",
+                "glm-4.7",
+                "glm-4.6",
+                "glm-4.5",
+                "glm-4.5-air",
+            ),
             coding.models.map { it.id },
         )
         assertUniqueAndComplete(presets)
@@ -95,7 +106,7 @@ class AgentProviderPresetCatalogContractTest {
             val codingPlan = AgentProviderPresetCatalog.presetsFor(adapterId)
                 .single { it.id == "zhipu-coding-plan" }
             assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", codingPlan.baseUrl)
-            assertTrue(codingPlan.models.any { it.id == "glm-5.2" })
+            assertTrue(codingPlan.models.any { it.id == "glm-5.3-flash" })
         }
     }
 

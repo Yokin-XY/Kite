@@ -12,6 +12,7 @@ import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
+import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.contracts.ContainerStatus
 import java.io.File
@@ -172,8 +173,21 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
         val credentials = nativeFile(
             "workspace/.kf/software/kite.deepseek.harness/user-home/.dsh/.credentials.yaml",
         )
-        credentials.writeText("KEEP_ME: \"yes\"\n")
+        credentials.writeText(
+            """
+            version: 1
+            refs:
+              KEEP_ME: "yes"
+            records:
+              llm-pi-ai/existing:
+                kind: api-key
+            """.trimIndent() + "\n",
+        )
         val adapter = DeepSeekHarnessAgentConfigAdapter(context, ::container)
+        assertEquals(
+            AgentSessionConfigurationEffect.Reconnect,
+            adapter.providerConfigurationEffect(),
+        )
 
         val applied = configure(
             adapter,
@@ -193,10 +207,80 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
         assertTrue(settingsText.contains("agent-default-model:"))
         assertTrue(settingsText.contains("supportsDeveloperRole: false"))
         assertTrue(settingsText.contains("maxTokensField: max_tokens"))
+        assertTrue(settingsText.contains("apiKeyEnv: ZHIPU_CODING_PLAN_API_KEY"))
+        assertFalse(settingsText.contains("KITE_DSH_ZHIPU_CODING_PLAN_API_KEY"))
         assertFalse(settingsText.contains(SECRET))
-        assertTrue(credentials.readText().contains("KEEP_ME"))
-        assertTrue(credentials.readText().contains(SECRET))
+        val credentialsText = credentials.readText()
+        assertTrue(credentialsText.contains("version: 1"))
+        assertTrue(credentialsText.contains("refs:"))
+        assertTrue(credentialsText.contains("KEEP_ME"))
+        assertTrue(credentialsText.contains("ZHIPU_CODING_PLAN_API_KEY"))
+        assertFalse(credentialsText.contains("KITE_DSH_ZHIPU_CODING_PLAN_API_KEY"))
+        assertTrue(credentialsText.contains(SECRET))
+        assertTrue(credentialsText.contains("records:"))
+        assertTrue(credentialsText.contains("llm-pi-ai/existing"))
         assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
+    @Test
+    fun deepSeekHarnessMigratesLegacyKiteCredentialRefToAcpGateName() = runTest {
+        val settings = nativeFile(
+            "workspace/.kf/software/kite.deepseek.harness/user-home/.dsh/settings.yaml",
+        )
+        settings.writeText(
+            """
+            llm-pi-ai:
+              providers:
+                zhipu-coding-plan:
+                  apiKeyEnv: KITE_DSH_ZHIPU_CODING_PLAN_API_KEY
+                  displayName: Zhipu
+                  api: openai-completions
+                  baseURL: https://open.bigmodel.cn/api/coding/paas/v4
+                  models:
+                    - id: glm-5.3-flash
+                      name: GLM-5.3-Flash
+            agent-default-model:
+              provider: zhipu-coding-plan
+              model: glm-5.3-flash
+            """.trimIndent() + "\n",
+        )
+        val credentials = nativeFile(
+            "workspace/.kf/software/kite.deepseek.harness/user-home/.dsh/.credentials.yaml",
+        )
+        credentials.writeText(
+            """
+            version: 1
+            refs:
+              KITE_DSH_ZHIPU_CODING_PLAN_API_KEY: $SECRET
+            """.trimIndent() + "\n",
+        )
+        val adapter = DeepSeekHarnessAgentConfigAdapter(context, ::container)
+        val before = (adapter.readLive("deepseek-harness") as AgentConfigReadResult.Ready).snapshot
+
+        val result = adapter.apply(
+            AgentConfigApplyRequest(
+                "deepseek-harness",
+                before.revision,
+                listOf(
+                    AgentPersistentConfigChange.ConfigureProvider(
+                        AgentProviderDraft(
+                            "zhipu-coding-plan",
+                            "智谱 Coding Plan",
+                            "https://open.bigmodel.cn/api/coding/paas/v4",
+                            listOf(AgentProviderModelSummary("glm-5.3-flash", "GLM-5.3-Flash")),
+                        ),
+                        AgentProviderCredentialChange.Keep,
+                    ),
+                ),
+            ),
+        ) as AgentConfigApplyResult.Applied
+
+        assertEquals(AgentCredentialPresence.Present, result.snapshot.credentialPresence)
+        assertTrue(settings.readText().contains("apiKeyEnv: ZHIPU_CODING_PLAN_API_KEY"))
+        val credentialsText = credentials.readText()
+        assertTrue(credentialsText.contains("ZHIPU_CODING_PLAN_API_KEY"))
+        assertFalse(credentialsText.contains("KITE_DSH_ZHIPU_CODING_PLAN_API_KEY"))
+        assertTrue(credentialsText.contains(SECRET))
     }
 
     private suspend fun configure(
