@@ -1206,7 +1206,12 @@ object KFContainerManager {
             putAll(AndroidRuntimeHttpProxy.environment())
             // 暂留桥接：启动入口要直接拿到标准工作面 env，等独立 launcher 落地后再完全迁出建房层。
             putAll(WorkspaceBuildSupport.buildWorkSurfaceEnvironment())
-            putAll(AdbBridgeContract.buildEnvironment(ShizukuBridgeStatus.snapshot(context)))
+            putAll(
+                AdbBridgeContract.buildEnvironment(
+                    ShizukuBridgeStatus.snapshot(context),
+                    com.kite.app.foundation.devicebridge.DeviceBridgeBackendModeStore.current(context)
+                )
+            )
             put(
                 "KF_PROCFS_PROJECTION_ROOT",
                 WorkspaceBuildSupport.runtimeProcProjectionDir(File(container.workspacePath)).absolutePath

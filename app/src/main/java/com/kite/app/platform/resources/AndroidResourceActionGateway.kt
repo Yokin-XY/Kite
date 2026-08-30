@@ -111,6 +111,10 @@ internal class AndroidResourceActionGateway(
         installStore = installStore,
         installedStateProbe = installedStateProbe,
     )
+    private val androidPackageResourceFactsReconciler = AndroidPackageResourceFactsReconciler(
+        androidContext = appContext,
+        installStore = installStore,
+    )
     private val preparationFlights = ResourceInstallPreparationFlights(backgroundScope)
     private val planLifecycleGate = ResourcePlanLifecycleGate()
     private val openRunStarter = ResourceOpenRunStarter(
@@ -1010,10 +1014,15 @@ internal class AndroidResourceActionGateway(
                 )
                 SystemManagedResourceFactsConvergence()
             }
+        val androidPackageConvergence = androidPackageResourceFactsReconciler.reconcile(
+            manifests = allManifests,
+            environmentId = environmentId,
+        )
         reconcileInstalledResources(
             manifests = manifests,
             environmentId = environmentId,
-            alreadyVerifiedResourceIds = systemConvergence.readyResourceIds,
+            alreadyVerifiedResourceIds = systemConvergence.readyResourceIds +
+                androidPackageConvergence.readyResourceIds,
         )
         val byId = manifests.associateBy(KiteResourceManifest::id)
         val installedIds = manifests.filter { isInstalled(it, environmentId) }

@@ -1,0 +1,17 @@
+[package]
+name = "kite-device-cli"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Kite Device Bridge client for Agent runtimes"
+
+[[bin]]
+name = "kite-device"
+path = "src/main.rs"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

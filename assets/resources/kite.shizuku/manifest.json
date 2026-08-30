@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.shizuku",
+  "base": {
+    "name": "Shizuku",
+    "description": "把 Android 系统能力安全桥接给 Kite",
+    "version": "13.6.0.r1086",
+    "icon": {
+      "type": "asset",
+      "value": "resources/kite.shizuku/icon.png",
+      "fallbackText": "Sh",
+      "fit": "contain"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": []
+  },
+  "display": {
+    "sections": ["more"],
+    "order": 10,
+    "category": "系统工具",
+    "accent": "green",
+    "sizeLabel": "约 2.5 MB",
+    "longDescription": "Shizuku 是 Kite 设备能力桥的 Android 权限后端。Kite 会从官方发布页下载并校验 APK，再交给系统安装器由用户确认；应用安装、Shizuku 服务运行和 Kite 授权是三个独立事实，不会互相冒充成功。服务就绪后，Ubuntu 中的 Agent 可通过 kite-device 使用经过统一策略约束的设备能力。",
+    "requirementRows": [
+      {"label": "应用安装", "value": "由 Android 系统安装器确认"},
+      {"label": "服务运行", "value": "在 Shizuku 中启动"},
+      {"label": "Kite 授权", "value": "在 Shizuku 中单独允许"}
+    ],
+    "tags": ["shizuku", "android", "device-bridge", "adb", "agent"]
+  },
+  "relations": {
+    "provides": ["android.device.bridge.shizuku"],
+    "base": [],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "android_apk",
+    "package": "moe.shizuku.privileged.api",
+    "repository": "https://github.com/RikkaApps/Shizuku",
+    "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk",
+    "tag": "v13.6.0",
+    "maxBytes": 5242880
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.shizuku",
+    "installRoot": "/workspace/.kf/software/kite.shizuku"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "download-shizuku-apk",
+            "type": "download",
+            "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk",
+            "destination": "$install_root/shizuku.apk",
+            "sha256": "6e273ab0e991c4e79bc8b1bbb9b9dd739ccac1a8712a541a214078886b7b790f",
+            "retryAttempts": 4,
+            "retryDelaySeconds": 2,
+            "maxBytes": 5242880
+          }
+        ],
+        "cleanInstallRoot": true,
+        "writeScopes": ["android-package:moe.shizuku.privileged.api"],
+        "handoff": {
+          "type": "android_apk",
+          "path": "/workspace/.kf/software/kite.shizuku/shizuku.apk",
+          "packageName": "moe.shizuku.privileged.api",
+          "waitTimeoutMs": 300000
+        },
+        "timeoutMs": 600000
+      }
+    ],
+    "update": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "download-shizuku-apk",
+            "type": "download",
+            "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk",
+            "destination": "$install_root/shizuku.apk",
+            "sha256": "6e273ab0e991c4e79bc8b1bbb9b9dd739ccac1a8712a541a214078886b7b790f",
+            "retryAttempts": 4,
+            "retryDelaySeconds": 2,
+            "maxBytes": 5242880
+          }
+        ],
+        "cleanInstallRoot": true,
+        "writeScopes": ["android-package:moe.shizuku.privileged.api"],
+        "handoff": {
+          "type": "android_apk",
+          "path": "/workspace/.kf/software/kite.shizuku/shizuku.apk",
+          "packageName": "moe.shizuku.privileged.api",
+          "waitTimeoutMs": 300000
+        },
+        "timeoutMs": 600000
+      }
+    ]
+  }
+}

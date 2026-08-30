@@ -43,6 +43,10 @@ class CapabilityCatalogRoutingTest {
         assertEquals(CapabilityResultOwner.EXTERNAL_ANDROID_INSTALLER, entry.resultOwner)
         assertEquals(CapabilityCompletionKind.EXTERNAL_HANDOFF, entry.completion)
         assertTrue(CapabilityPermissionGate.USER_CONFIRMATION in entry.permissionGates)
+        val await = CapabilityCatalog.routableEntryForLegacyAction(KiteRecipe.ANDROID_ACTION_AWAIT_PACKAGE)!!
+        assertEquals(CapabilityCatalog.CAPABILITY_AWAIT_ANDROID_PACKAGE, await.id)
+        assertEquals(CapabilityCompletionKind.RESULT, await.completion)
+        assertEquals(CapabilityResultOwner.CARD_RUN_STORE, await.resultOwner)
     }
 
     @Test

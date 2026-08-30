@@ -26,6 +26,31 @@ class AndroidResourceRecipeFactoryTest {
     )
 
     @Test
+    fun `Android APK资源先下载校验再交接并等待真实包事实`() {
+        val recipe = factory.recipe("kite.shizuku", KiteResourceInstallRecipes.OP_INSTALL)
+        val steps = recipe?.steps.orEmpty()
+
+        assertNotNull(recipe)
+        assertEquals(
+            listOf(
+                KiteRecipe.STEP_NATIVE_CAPABILITY,
+                KiteRecipe.STEP_SHELL,
+                KiteRecipe.STEP_ANDROID_ACTION,
+                KiteRecipe.STEP_ANDROID_ACTION,
+            ),
+            steps.map { it.type },
+        )
+        assertEquals(KiteRecipe.ANDROID_ACTION_INSTALL_APK, steps[2].action)
+        assertEquals(KiteRecipe.ANDROID_ACTION_AWAIT_PACKAGE, steps[3].action)
+        assertEquals("moe.shizuku.privileged.api", steps[3].params?.optString("packageName"))
+        assertEquals(
+            "android-package:moe.shizuku.privileged.api",
+            factory.writeScopes("kite.shizuku", KiteResourceInstallRecipes.OP_INSTALL)
+                .single { it.startsWith("android-package:") },
+        )
+    }
+
+    @Test
     fun `网络资源安装和卸载都由清单编译为有限配方`() {
         val install = factory.recipe("kite.opencode", KiteResourceInstallRecipes.OP_INSTALL)
         val uninstall = factory.recipe("kite.opencode", KiteResourceInstallRecipes.OP_UNINSTALL)

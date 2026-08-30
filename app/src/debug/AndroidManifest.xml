@@ -2,6 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
         <receiver
+            android:name="com.kite.app.foundation.devicebridge.DeviceBridgeSmokeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.DEVICE_BRIDGE_SMOKE" />
+                <action android:name="com.kite.app.debug.DEVICE_BRIDGE_CANCEL_SMOKE" />
+                <action android:name="com.kite.app.debug.DEVICE_BRIDGE_PROOT_CLI_SMOKE" />
+            </intent-filter>
+        </receiver>
+        <receiver
             android:name="com.kite.app.foundation.runtime.WarmProotRunnerBenchmarkReceiver"
             android:exported="true">
             <intent-filter>

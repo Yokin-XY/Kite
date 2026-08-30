@@ -121,6 +121,10 @@ android {
         jvmTarget = "17"
     }
 
+    buildFeatures {
+        aidl true
+    }
+
     sourceSets {
         main {
             assets.srcDir "../assets"

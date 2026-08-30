@@ -139,7 +139,20 @@ data class KiteResourceShellAction(
     val npmUninstallPackages: List<String>,
     val writeScopes: List<String> = emptyList(),
     val installSteps: List<KiteResourceInstallStep> = emptyList(),
-    val verifications: List<KiteResourceInstallVerification> = emptyList()
+    val verifications: List<KiteResourceInstallVerification> = emptyList(),
+    val androidPackageHandoff: KiteResourceAndroidPackageHandoff? = null,
+)
+
+/**
+ * 资源制品交给 Android 系统安装器后的事实确认合同。
+ *
+ * 下载、摘要校验和资源事务仍由统一资源运行通道负责；这里不保存安装状态，只声明交接文件与
+ * PackageManager 应当确认的包身份。
+ */
+data class KiteResourceAndroidPackageHandoff(
+    val path: String,
+    val packageName: String,
+    val waitTimeoutMs: Long = 300_000L,
 )
 
 data class KiteResourceInstallStep(
@@ -1097,7 +1110,20 @@ class KiteResourceManifestLoader private constructor(
                 .filter(String::isNotBlank)
                 .distinct(),
             installSteps = installSteps,
-            verifications = parseInstallVerifications(action.optJSONArray("verify"))
+            verifications = parseInstallVerifications(action.optJSONArray("verify")),
+            androidPackageHandoff = parseAndroidPackageHandoff(action.optJSONObject("handoff")),
+        )
+    }
+
+    private fun parseAndroidPackageHandoff(json: JSONObject?): KiteResourceAndroidPackageHandoff? {
+        if (json?.optString("type")?.trim() != "android_apk") return null
+        val path = json.optString("path").trim()
+        val packageName = json.optString("packageName").trim()
+        if (path.isBlank() || packageName.isBlank()) return null
+        return KiteResourceAndroidPackageHandoff(
+            path = path,
+            packageName = packageName,
+            waitTimeoutMs = json.optLong("waitTimeoutMs", 300_000L).coerceIn(10_000L, 600_000L),
         )
     }
 

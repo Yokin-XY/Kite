@@ -2,6 +2,7 @@ package com.kite.app.platform.runs
 
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import androidx.core.content.FileProvider
 import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeExecutor
@@ -737,6 +738,10 @@ internal class AndroidRecipeExecutor(
         request: RecipeStepExecutionRequest,
         callback: (RecipeExecutionEvent) -> Unit
     ) {
+        if (request.step.action == KiteRecipe.ANDROID_ACTION_AWAIT_PACKAGE) {
+            awaitAndroidPackage(request, callback)
+            return
+        }
         runCatching {
             when (request.step.action) {
                 KiteRecipe.ANDROID_ACTION_PREPARE_AI_ENV -> {
@@ -781,14 +786,13 @@ internal class AndroidRecipeExecutor(
     }
 
     private fun installApk(step: KiteRecipeStep): String {
-        val path = step.params?.optString("path")?.takeIf { it.isNotBlank() }
-            ?: step.params?.optString("apk")?.takeIf { it.isNotBlank() }
-            ?: step.cmd?.takeIf { it.isNotBlank() }
-            ?: step.text?.takeIf { it.isNotBlank() }
-            ?: error("install_apk_missing_path")
-        val file = ContainerVisibleFileResolver.resolve(appContext, path)
-            ?: error("install_apk_path_not_allowed")
-        if (!file.isFile) error("install_apk_missing_file")
+        val file = resolveApkFile(step)
+        step.params?.optString(PARAM_PACKAGE_NAME)?.trim()?.takeIf(String::isNotBlank)?.let { packageName ->
+            val archive = archivePackage(file, packageName)
+            require(archive.packageName == packageName) {
+                "install_apk_package_mismatch:expected=$packageName actual=${archive.packageName}"
+            }
+        }
         val uri = FileProvider.getUriForFile(appContext, "${appContext.packageName}.fileprovider", file)
         appContext.startActivity(
             Intent(Intent.ACTION_VIEW)
@@ -797,6 +801,91 @@ internal class AndroidRecipeExecutor(
         )
         return "已打开安装器：${file.absolutePath}"
     }
+
+    private fun awaitAndroidPackage(
+        request: RecipeStepExecutionRequest,
+        callback: (RecipeExecutionEvent) -> Unit,
+    ) {
+        val expected = runCatching {
+            val packageName = request.step.params?.optString(PARAM_PACKAGE_NAME)?.trim().orEmpty()
+            require(packageName.isNotBlank()) { "await_android_package_missing_name" }
+            archivePackage(resolveApkFile(request.step), packageName)
+        }.getOrElse { error ->
+            callback(request.failed(error.message ?: "await_android_package_invalid_apk"))
+            return
+        }
+        val timeoutMs = request.step.params?.optLong(PARAM_WAIT_TIMEOUT_MS, DEFAULT_APK_WAIT_TIMEOUT_MS)
+            ?.coerceIn(MIN_APK_WAIT_TIMEOUT_MS, MAX_APK_WAIT_TIMEOUT_MS)
+            ?: DEFAULT_APK_WAIT_TIMEOUT_MS
+        val startedAt = SystemClock.elapsedRealtime()
+
+        fun poll() {
+            if (isPackageInstalled(expected)) {
+                val entry = CapabilityCatalog.routableEntryForLegacyAction(KiteRecipe.ANDROID_ACTION_AWAIT_PACKAGE)
+                    ?.takeIf { it.invocation == CapabilityInvocationKind.ANDROID_ACTION }
+                    ?: run {
+                        callback(request.failed("android_action_capability_not_catalogued:${request.step.action}"))
+                        return
+                    }
+                callback(
+                    RecipeExecutionEvent.Completed(
+                        request.instanceId,
+                        request.generation,
+                        request.stepIndex,
+                        RunStateMutation(
+                            status = CardRunStatus.Running,
+                            surface = CardRunSurface.Report,
+                            currentStepIndex = request.stepIndex,
+                            runtimeLane = "android_native",
+                            runtimeFallbackReason = "android_capability:${entry.id}",
+                            lastMeaningfulOutput = "已确认 Android 包：${expected.packageName}",
+                            clearNextActionUrl = true,
+                        ),
+                    )
+                )
+                return
+            }
+            if (SystemClock.elapsedRealtime() - startedAt >= timeoutMs) {
+                callback(request.failed("系统安装未完成或已取消：${expected.packageName}"))
+                return
+            }
+            scheduler.schedule(::poll, APK_POLL_INTERVAL_MS, TimeUnit.MILLISECONDS)
+        }
+
+        scheduler.execute(::poll)
+    }
+
+    private fun resolveApkFile(step: KiteRecipeStep): File {
+        val path = step.params?.optString("path")?.takeIf { it.isNotBlank() }
+            ?: step.params?.optString("apk")?.takeIf { it.isNotBlank() }
+            ?: step.cmd?.takeIf { it.isNotBlank() }
+            ?: step.text?.takeIf { it.isNotBlank() }
+            ?: error("install_apk_missing_path")
+        val file = ContainerVisibleFileResolver.resolve(appContext, path)
+            ?: error("install_apk_path_not_allowed")
+        if (!file.isFile) error("install_apk_missing_file")
+        return file
+    }
+
+    @Suppress("DEPRECATION")
+    private fun archivePackage(file: File, expectedPackageName: String): ExpectedAndroidPackage {
+        val info = appContext.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+            ?: error("install_apk_invalid_archive")
+        require(info.packageName == expectedPackageName) {
+            "install_apk_package_mismatch:expected=$expectedPackageName actual=${info.packageName}"
+        }
+        return ExpectedAndroidPackage(info.packageName, info.longVersionCode)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun isPackageInstalled(expected: ExpectedAndroidPackage): Boolean = runCatching {
+        appContext.packageManager.getPackageInfo(expected.packageName, 0).longVersionCode >= expected.versionCode
+    }.getOrDefault(false)
+
+    private data class ExpectedAndroidPackage(
+        val packageName: String,
+        val versionCode: Long,
+    )
 
     private fun stopRuntime(
         request: RecipeStopRequest,
@@ -1042,6 +1131,12 @@ internal class AndroidRecipeExecutor(
         ?.firstOrNull { it.isNotBlank() }
 
     companion object {
+        private const val PARAM_PACKAGE_NAME = "packageName"
+        private const val PARAM_WAIT_TIMEOUT_MS = "waitTimeoutMs"
+        private const val DEFAULT_APK_WAIT_TIMEOUT_MS = 300_000L
+        private const val MIN_APK_WAIT_TIMEOUT_MS = 10_000L
+        private const val MAX_APK_WAIT_TIMEOUT_MS = 600_000L
+        private const val APK_POLL_INTERVAL_MS = 1_000L
         internal fun requiresActiveWorkspacePreparation(environment: Map<String, String>): Boolean =
             environment[ProotViewBinding.ENV_VIEW_ID].isNullOrBlank()
 

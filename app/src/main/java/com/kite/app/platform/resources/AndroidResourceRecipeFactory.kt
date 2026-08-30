@@ -116,7 +116,31 @@ internal class AndroidResourceRecipeFactory(
             workdir = workdir,
             timeoutMs = timeoutMs,
         )
-        return nativePlan?.steps.orEmpty() + shellStep
+        val handoffSteps = shellAction.androidPackageHandoff?.let { handoff ->
+            val params = JSONObject()
+                .put(PARAM_APK_PATH, handoff.path)
+                .put(PARAM_PACKAGE_NAME, handoff.packageName)
+                .put(PARAM_WAIT_TIMEOUT_MS, handoff.waitTimeoutMs)
+            listOf(
+                KiteRecipeStep(
+                    id = "${stepId}_open_android_installer",
+                    type = KiteRecipe.STEP_ANDROID_ACTION,
+                    action = KiteRecipe.ANDROID_ACTION_INSTALL_APK,
+                    params = params,
+                    surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                    timeoutMs = handoff.waitTimeoutMs,
+                ),
+                KiteRecipeStep(
+                    id = "${stepId}_await_android_package",
+                    type = KiteRecipe.STEP_ANDROID_ACTION,
+                    action = KiteRecipe.ANDROID_ACTION_AWAIT_PACKAGE,
+                    params = params,
+                    surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                    timeoutMs = handoff.waitTimeoutMs,
+                ),
+            )
+        }.orEmpty()
+        return nativePlan?.steps.orEmpty() + shellStep + handoffSteps
     }
 
     /**
@@ -291,5 +315,8 @@ internal class AndroidResourceRecipeFactory(
 
     private companion object {
         val RESOURCE_RELATIVE_PATH = Regex("[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
+        const val PARAM_APK_PATH = "path"
+        const val PARAM_PACKAGE_NAME = "packageName"
+        const val PARAM_WAIT_TIMEOUT_MS = "waitTimeoutMs"
     }
 }
