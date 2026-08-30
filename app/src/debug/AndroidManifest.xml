@@ -159,6 +159,16 @@
             android:name="com.kite.app.foundation.runtime.NativeArchiveCapabilityBenchmarkService"
             android:exported="false" />
         <receiver
+            android:name="com.kite.app.foundation.runtime.NativeTarArchiveBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.NATIVE_TAR_ARCHIVE_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.NativeTarArchiveBenchmarkService"
+            android:exported="false" />
+        <receiver
             android:name="com.kite.app.platform.resources.ManagedCommandProofBenchmarkReceiver"
             android:exported="true">
             <intent-filter>

@@ -13,6 +13,23 @@ def generatedResourceCatalogAssetsDir = layout.buildDirectory.dir("generated/res
 def generatedNodeRuntimeAssetsDir = layout.buildDirectory.dir("generated/node-runtime-assets")
 def toolchainPackDir = rootProject.file("assets/toolchain/ai-dev-pack")
 def generatedToolchainIntegrityAssetsDir = layout.buildDirectory.dir("generated/toolchain-integrity-assets")
+def rustArchiveEnabled = providers.gradleProperty("kiteRustArchive")
+    .map { it.toBoolean() }
+    .orElse(false)
+def cargoExecutable = providers.gradleProperty("kiteCargoExecutable").orElse(
+    new File(System.getProperty("user.home"), ".cargo/bin/cargo.exe").absolutePath
+)
+def rustArchiveManifest = rootProject.file("native/kite-archive-rs/Cargo.toml")
+def rustArchiveSource = rootProject.file("native/kite-archive-rs/src")
+def rustArchiveTargetDir = rootProject.layout.buildDirectory.dir("rust-target/kite-archive-rs")
+def rustArchiveJniDir = layout.buildDirectory.dir("generated/rust-jni/debug")
+def rustArchiveNdkVersion = "28.2.13676358"
+def libarchiveBenchmarkEnabled = providers.gradleProperty("kiteLibarchiveBenchmark")
+    .map { it.toBoolean() }
+    .orElse(false)
+def libarchiveBenchmarkSource = rootProject.file("native/kite-libarchive-c")
+def libarchiveBenchmarkBuildDir = rootProject.layout.buildDirectory.dir("native/kite-libarchive-c")
+def androidCmakeVersion = "3.22.1"
 def syncLegalDocuments = tasks.register("syncLegalDocuments", Sync) {
     from(rootProject.file("LICENSE")) {
         rename { "LICENSE.txt" }
@@ -125,6 +142,12 @@ android {
         aidl true
     }
 
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = libarchiveBenchmarkEnabled.get()
+        }
+    }
+
     sourceSets {
         main {
             assets.srcDir "../assets"
@@ -132,6 +155,9 @@ android {
             assets.srcDir generatedResourceCatalogAssetsDir
             assets.srcDir generatedNodeRuntimeAssetsDir
             assets.srcDir generatedToolchainIntegrityAssetsDir
+        }
+        debug {
+            jniLibs.srcDir rustArchiveJniDir
         }
     }
 
@@ -153,6 +179,131 @@ tasks.named("preBuild").configure {
     dependsOn(generateResourceCatalogIndex)
     dependsOn(syncNodeRuntimeAssets)
     dependsOn(generateToolchainIntegrityManifest)
+}
+
+def buildRustArchive = tasks.register("buildRustArchive", Exec) {
+    onlyIf { rustArchiveEnabled.get() }
+    workingDir rootProject.projectDir
+    inputs.file(rustArchiveManifest)
+    inputs.file(rootProject.file("native/kite-archive-rs/Cargo.lock"))
+    inputs.file(rootProject.file("rust-toolchain.toml"))
+    inputs.dir(rustArchiveSource)
+    outputs.file(rustArchiveTargetDir.map {
+        it.file("aarch64-linux-android/release/libkite_archive_rs.so")
+    })
+    doFirst {
+        def androidHome = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+        if (androidHome == null || androidHome.isBlank()) {
+            throw new GradleException("ANDROID_HOME or ANDROID_SDK_ROOT is required for the Rust archive pilot")
+        }
+        def llvmBin = new File(
+            androidHome,
+            "ndk/${rustArchiveNdkVersion}/toolchains/llvm/prebuilt/windows-x86_64/bin"
+        )
+        def linker = new File(llvmBin, "aarch64-linux-android28-clang.cmd")
+        def archiver = new File(llvmBin, "llvm-ar.exe")
+        if (!linker.isFile() || !archiver.isFile()) {
+            throw new GradleException("Pinned Android NDK ${rustArchiveNdkVersion} is unavailable")
+        }
+        environment "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER", linker.absolutePath
+        environment "CARGO_TARGET_AARCH64_LINUX_ANDROID_AR", archiver.absolutePath
+        environment "CC_aarch64_linux_android", linker.absolutePath
+        environment "AR_aarch64_linux_android", archiver.absolutePath
+        environment "CARGO_TARGET_DIR", rustArchiveTargetDir.get().asFile.absolutePath
+        commandLine(
+            cargoExecutable.get(),
+            "build",
+            "--locked",
+            "--manifest-path",
+            rustArchiveManifest.absolutePath,
+            "--target",
+            "aarch64-linux-android",
+            "--release",
+        )
+    }
+}
+
+def prepareRustArchiveJniLibs = tasks.register("prepareRustArchiveJniLibs") {
+    dependsOn(buildRustArchive)
+    dependsOn("buildLibarchiveBenchmark")
+    outputs.dir(rustArchiveJniDir)
+    outputs.upToDateWhen { false }
+    doLast {
+        def output = rustArchiveJniDir.get().asFile
+        delete(output)
+        if (rustArchiveEnabled.get()) {
+            copy {
+                from(rustArchiveTargetDir.map {
+                    it.file("aarch64-linux-android/release/libkite_archive_rs.so")
+                })
+                into(new File(output, "arm64-v8a"))
+            }
+        }
+        if (libarchiveBenchmarkEnabled.get()) {
+            copy {
+                from(libarchiveBenchmarkBuildDir.map { it.file("kite_libarchive_benchmark") })
+                into(new File(output, "arm64-v8a"))
+                rename { "libkite_libarchive_benchmark.so" }
+            }
+        }
+    }
+}
+
+def configureLibarchiveBenchmark = tasks.register("configureLibarchiveBenchmark", Exec) {
+    onlyIf { libarchiveBenchmarkEnabled.get() }
+    inputs.file(rootProject.file("native/kite-libarchive-c/CMakeLists.txt"))
+    inputs.file(rootProject.file("native/kite-libarchive-c/kite_libarchive_benchmark.c"))
+    outputs.file(libarchiveBenchmarkBuildDir.map { it.file("CMakeCache.txt") })
+    doFirst {
+        def androidHome = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+        if (androidHome == null || androidHome.isBlank()) {
+            throw new GradleException("ANDROID_HOME or ANDROID_SDK_ROOT is required for the libarchive benchmark")
+        }
+        def cmake = new File(androidHome, "cmake/${androidCmakeVersion}/bin/cmake.exe")
+        def ninja = new File(androidHome, "cmake/${androidCmakeVersion}/bin/ninja.exe")
+        def toolchain = new File(
+            androidHome,
+            "ndk/${rustArchiveNdkVersion}/build/cmake/android.toolchain.cmake"
+        )
+        if (!cmake.isFile() || !ninja.isFile() || !toolchain.isFile()) {
+            throw new GradleException("Pinned Android CMake/NDK toolchain is unavailable")
+        }
+        commandLine(
+            cmake.absolutePath,
+            "-S", libarchiveBenchmarkSource.absolutePath,
+            "-B", libarchiveBenchmarkBuildDir.get().asFile.absolutePath,
+            "-G", "Ninja",
+            "-DCMAKE_MAKE_PROGRAM=${ninja.absolutePath}",
+            "-DCMAKE_TOOLCHAIN_FILE=${toolchain.absolutePath}",
+            "-DANDROID_ABI=arm64-v8a",
+            "-DANDROID_PLATFORM=android-28",
+            "-DCMAKE_BUILD_TYPE=Release",
+        )
+    }
+}
+
+tasks.register("buildLibarchiveBenchmark", Exec) {
+    onlyIf { libarchiveBenchmarkEnabled.get() }
+    dependsOn(configureLibarchiveBenchmark)
+    inputs.dir(libarchiveBenchmarkSource)
+    outputs.file(libarchiveBenchmarkBuildDir.map { it.file("kite_libarchive_benchmark") })
+    doFirst {
+        def androidHome = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+        def cmake = new File(androidHome, "cmake/${androidCmakeVersion}/bin/cmake.exe")
+        commandLine(
+            cmake.absolutePath,
+            "--build", libarchiveBenchmarkBuildDir.get().asFile.absolutePath,
+            "--target", "kite_libarchive_benchmark",
+            "--config", "Release",
+            "-j", Math.max(1, Runtime.runtime.availableProcessors().intdiv(2)),
+        )
+    }
+}
+
+tasks.configureEach { task ->
+    if (task.name == "preDebugBuild") {
+        task.dependsOn(prepareRustArchiveJniLibs)
+    }
 }
 
 dependencies {

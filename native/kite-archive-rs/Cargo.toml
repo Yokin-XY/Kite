@@ -1,0 +1,26 @@
+[package]
+name = "kite-archive-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = { version = "0.22.4", default-features = false }
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+tar = "0.4.44"
+xz2 = { version = "0.1.7", features = ["static"] }
+zip = { version = "8.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "abort"
+strip = "symbols"

@@ -6,6 +6,7 @@
 local.properties
 .externalNativeBuild/
 .cxx/
+**/target/
 captures/
 
 # 本机环境、密钥和临时配置。

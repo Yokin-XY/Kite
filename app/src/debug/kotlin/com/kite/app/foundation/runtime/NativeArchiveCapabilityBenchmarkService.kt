@@ -89,27 +89,44 @@ private object NativeArchiveCapabilityBenchmark {
             listOf(NativeFileCapabilityRoot(CONTAINER_ROOT, root, NativeFilePermission.entries.toSet()))
         )
         return try {
-            val nativeTimes = mutableListOf<Long>()
+            check(RustArchiveBridge.isAvailable) { "rust_archive_library_unavailable" }
+            val kotlinTimes = mutableListOf<Long>()
+            val rustTimes = mutableListOf<Long>()
             val prootTimes = mutableListOf<Long>()
             repeat(ROUNDS) { round ->
-                if (round % 2 == 0) {
-                    nativeTimes += runNative(providerContext, root, round)
-                    prootTimes += runProot(context, root, round)
-                } else {
-                    prootTimes += runProot(context, root, round)
-                    nativeTimes += runNative(providerContext, root, round)
+                when (round % 3) {
+                    0 -> {
+                        kotlinTimes += runNative(providerContext, root, round)
+                        rustTimes += runRust(providerContext, root, round)
+                        prootTimes += runProot(context, root, round)
+                    }
+                    1 -> {
+                        prootTimes += runProot(context, root, round)
+                        kotlinTimes += runNative(providerContext, root, round)
+                        rustTimes += runRust(providerContext, root, round)
+                    }
+                    else -> {
+                        rustTimes += runRust(providerContext, root, round)
+                        prootTimes += runProot(context, root, round)
+                        kotlinTimes += runNative(providerContext, root, round)
+                    }
                 }
             }
-            val malicious = runMalicious(providerContext, root)
-            val cancelled = runCancelled(providerContext, root)
+            val kotlinMalicious = runMalicious(providerContext, root, rust = false)
+            val rustMalicious = runMalicious(providerContext, root, rust = true)
+            val kotlinCancelled = runCancelled(providerContext, root, rust = false)
+            val rustCancelled = runCancelled(providerContext, root, rust = true)
             listOf(
                 "status=comparison bytes=$TOTAL_BYTES entries=$ENTRY_COUNT rounds=$ROUNDS " +
-                    "native_ms=${nativeTimes.joinToString(",")} proot_ms=${prootTimes.joinToString(",")} " +
-                    "native_p50_ms=${p50(nativeTimes)} proot_p50_ms=${p50(prootTimes)} " +
-                    "delta_pct=${formatDelta(nativeTimes, prootTimes)}",
-                "status=malicious reason=$malicious destination=false escape=false",
-                "status=cancelled result=$cancelled cleanup=true",
-            ) + runRecipeProbe(context, root) + "status=complete cleanup=true"
+                    "kotlin_ms=${kotlinTimes.joinToString(",")} rust_ms=${rustTimes.joinToString(",")} " +
+                    "proot_ms=${prootTimes.joinToString(",")} kotlin_p50_ms=${p50(kotlinTimes)} " +
+                    "rust_p50_ms=${p50(rustTimes)} proot_p50_ms=${p50(prootTimes)} " +
+                    "rust_vs_kotlin_pct=${formatDelta(rustTimes, kotlinTimes)} " +
+                    "rust_vs_proot_pct=${formatDelta(rustTimes, prootTimes)}",
+                "status=malicious kotlin=$kotlinMalicious rust=$rustMalicious destination=false escape=false",
+                "status=cancelled kotlin=$kotlinCancelled rust=$rustCancelled cleanup=true",
+                "status=complete cleanup=true",
+            )
         } finally {
             root.deleteRecursively()
         }
@@ -123,6 +140,20 @@ private object NativeArchiveCapabilityBenchmark {
         val elapsed = SystemClock.elapsedRealtime() - started
         check(result == NativeArchiveExecutionResult.Success(ENTRY_COUNT, TOTAL_BYTES)) {
             "native_extract_failed:$result"
+        }
+        verifyTree(destination)
+        destination.deleteRecursively()
+        return elapsed
+    }
+
+    private fun runRust(context: AndroidNativeFileCapabilityContext, root: File, round: Int): Long {
+        val destination = File(root, "rust-$round")
+        val plan = plan(context, destination.name)
+        val started = SystemClock.elapsedRealtime()
+        val result = RustArchiveBridge.execute(plan)
+        val elapsed = SystemClock.elapsedRealtime() - started
+        check(result == NativeArchiveExecutionResult.Success(ENTRY_COUNT, TOTAL_BYTES)) {
+            "rust_extract_failed:$result"
         }
         verifyTree(destination)
         destination.deleteRecursively()
@@ -143,7 +174,11 @@ private object NativeArchiveCapabilityBenchmark {
         return execution.elapsedMs
     }
 
-    private fun runMalicious(context: AndroidNativeFileCapabilityContext, root: File): String {
+    private fun runMalicious(
+        context: AndroidNativeFileCapabilityContext,
+        root: File,
+        rust: Boolean,
+    ): String {
         val malicious = File(root, "malicious.zip")
         ZipArchiveOutputStream(malicious).use { output ->
             output.putArchiveEntry(ZipArchiveEntry("../escape.txt"))
@@ -151,26 +186,40 @@ private object NativeArchiveCapabilityBenchmark {
             output.closeArchiveEntry()
             output.finish()
         }
-        val result = AndroidNativeArchiveExecutor()
-            .execute(plan(context, "malicious-out", "malicious.zip"))
+        val destinationName = if (rust) "rust-malicious-out" else "kotlin-malicious-out"
+        val archivePlan = plan(context, destinationName, "malicious.zip")
+        val result = if (rust) {
+            RustArchiveBridge.execute(archivePlan)
+        } else {
+            AndroidNativeArchiveExecutor().execute(archivePlan)
+        }
         check(result == NativeArchiveExecutionResult.Failure("native_archive_path_invalid")) {
             "malicious_archive_not_blocked:$result"
         }
-        check(!File(root, "malicious-out").exists() && !File(root, "escape.txt").exists()) {
+        check(!File(root, destinationName).exists() && !File(root, "escape.txt").exists()) {
             "malicious_archive_escaped"
         }
         malicious.delete()
         return "native_archive_path_invalid"
     }
 
-    private fun runCancelled(context: AndroidNativeFileCapabilityContext, root: File): String {
-        val destination = File(root, "cancelled-out")
-        val cancellation = NativeFileCancellationSignal()
-        val result = AndroidNativeArchiveExecutor().execute(
-            plan(context, destination.name),
-            cancellation,
-            NativeArchiveProgressListener { _, bytes -> if (bytes > 0L) cancellation.cancel() },
-        )
+    private fun runCancelled(
+        context: AndroidNativeFileCapabilityContext,
+        root: File,
+        rust: Boolean,
+    ): String {
+        val destination = File(root, if (rust) "rust-cancelled-out" else "kotlin-cancelled-out")
+        val archivePlan = plan(context, destination.name)
+        val result = if (rust) {
+            RustArchiveBridge.execute(archivePlan, cancelAfterBytes = 1L)
+        } else {
+            val cancellation = NativeFileCancellationSignal()
+            AndroidNativeArchiveExecutor().execute(
+                archivePlan,
+                cancellation,
+                NativeArchiveProgressListener { _, bytes -> if (bytes > 0L) cancellation.cancel() },
+            )
+        }
         check(result is NativeArchiveExecutionResult.Cancelled) { "archive_cancel_failed:$result" }
         check(!destination.exists() && root.listFiles().orEmpty().none { it.name.contains("cancelled-out.kite-extract") }) {
             "archive_cancel_cleanup_failed"

@@ -113,6 +113,11 @@ object AssetExtractor {
         val registryFile: File
     )
 
+    internal data class TarFileExtractionSummary(
+        val entriesExtracted: Int,
+        val compressedBytesRead: Long,
+    )
+
     private data class ProotRuntimeAssetPaths(
         val executable: String,
         val libtalloc: String,
@@ -125,6 +130,28 @@ object AssetExtractor {
         val targetName: String,
         val mode: Int
     )
+
+    /** Reuses the production rootfs tar engine without publishing rootfs UI progress. */
+    internal fun extractTarGzipFile(source: File, destinationDir: File): TarFileExtractionSummary {
+        require(source.isFile && source.length() > 0L) { "Tar source is unavailable" }
+        check(destinationDir.mkdirs() || destinationDir.isDirectory) {
+            "Unable to create tar destination: ${destinationDir.absolutePath}"
+        }
+        val countingInput = CountingInputStream(BufferedInputStream(source.inputStream()))
+        val entries = extractTarStream(
+            archiveInput = GZIPInputStream(countingInput),
+            destinationDir = destinationDir,
+            sourceLabel = source.name,
+            totalBytes = source.length(),
+            startedAt = System.currentTimeMillis(),
+            bytesRead = { countingInput.bytesRead },
+            reportRootfsProgress = false,
+        )
+        return TarFileExtractionSummary(
+            entriesExtracted = entries,
+            compressedBytesRead = countingInput.bytesRead,
+        )
+    }
 
     fun getRuntimeLayout(context: Context, profile: BaseImageProfile = BaseImageProfile.DEFAULT): RuntimeLayout {
         val runtimeRoot = File(context.filesDir, RUNTIME_DIR)
@@ -496,14 +523,16 @@ object AssetExtractor {
         sourceLabel: String,
         totalBytes: Long,
         startedAt: Long,
-        bytesRead: () -> Long
-    ) {
+        bytesRead: () -> Long,
+        reportRootfsProgress: Boolean = true,
+    ): Int {
         val deferredHardLinks = mutableListOf<DeferredHardLink>()
         var entriesExtracted = 0
         var currentEntry = ""
         var lastEmitAt = 0L
 
         fun emitProgress(force: Boolean = false) {
+            if (!reportRootfsProgress) return
             val now = System.currentTimeMillis()
             if (!force && now - lastEmitAt < PROGRESS_EMIT_INTERVAL_MS) return
             lastEmitAt = now
@@ -534,6 +563,7 @@ object AssetExtractor {
 
         materializeDeferredHardLinks(destinationDir, deferredHardLinks)
         emitProgress(force = true)
+        return entriesExtracted
     }
 
     private fun extractEntry(
