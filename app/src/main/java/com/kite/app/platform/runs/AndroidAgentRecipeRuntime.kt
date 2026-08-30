@@ -6,6 +6,11 @@ import com.kite.app.agent.acp.AcpProcessAgentProvider
 import com.kite.app.agent.acp.AcpProcessChannelLauncher
 import com.kite.app.agent.acp.AcpProcessProviderDescriptor
 import com.kite.app.agent.acp.AcpSessionPathMapper
+import com.kite.app.agent.antigravity.AntigravityProcessLauncher
+import com.kite.app.agent.antigravity.AntigravityProviderDescriptor
+import com.kite.app.agent.antigravity.AntigravitySessionFileResolver
+import com.kite.app.agent.antigravity.AntigravitySessionPathMapper
+import com.kite.app.agent.antigravity.AntigravityStreamJsonAgentProvider
 import com.kite.app.agent.codex.CodexAppServerAgentProvider
 import com.kite.app.agent.codex.CodexAppServerProcessLauncher
 import com.kite.app.agent.codex.CodexAppServerProviderDescriptor
@@ -626,6 +631,35 @@ internal class AndroidAgentRecipeRuntime(
                         Log.w(TAG, "Agent ${resolved.providerId}: $line")
                     },
                 )
+                PROTOCOL_ANTIGRAVITY_STREAM_JSON -> AntigravityStreamJsonAgentProvider(
+                    descriptor = AntigravityProviderDescriptor(
+                        id = providerId,
+                        name = resolved.displayName,
+                        title = resolved.title,
+                        version = resolved.version,
+                    ),
+                    launcher = AntigravityProcessLauncher { arguments ->
+                        val launch = managedProcessLaunchPlanner.plan(
+                            argv = resolved.argv + arguments,
+                            workingDirectory = cwd,
+                            environment = environment + resolveEnvironmentFiles(resolved.environmentFiles),
+                            runtimeGuarantees = resolved.runtimeGuarantees,
+                            runtimeGuaranteeEvidence = resolved.runtimeGuaranteeEvidence,
+                            hardLinkMode = resolved.hardLinkMode,
+                        )
+                        processFactory.start(launch.process)
+                    },
+                    initializeTimeoutMs = resolved.initializeTimeoutMs,
+                    diagnosticSink = { line ->
+                        Log.w(TAG, "Agent ${resolved.providerId}: $line")
+                    },
+                    sessionFileResolver = AntigravitySessionFileResolver { path ->
+                        agentConfigProjection.resolve(path)?.readFile
+                    },
+                    sessionPathMapper = AntigravitySessionPathMapper(
+                        processLaunch.sessionPathMapping::toAgent,
+                    ),
+                )
                 else -> error("已由 managed protocol 校验限制协议")
             }
             startConnection(
@@ -1237,6 +1271,7 @@ internal class AndroidAgentRecipeRuntime(
         const val PROTOCOL_CODEX_APP_SERVER = "codex-app-server"
         const val PROTOCOL_PI_RPC = "pi-rpc"
         const val PROTOCOL_ZCODE_APP_SERVER = "zcode-app-server"
+        const val PROTOCOL_ANTIGRAVITY_STREAM_JSON = "antigravity-stream-json"
         const val CODEX_CHATGPT_ACCOUNT_ID = "chatgpt"
         const val CODEX_OFFICIAL_PROVIDER_ID = "openai"
         const val TRANSPORT_STDIO = "stdio"
@@ -1250,6 +1285,7 @@ internal class AndroidAgentRecipeRuntime(
             PROTOCOL_CODEX_APP_SERVER,
             PROTOCOL_PI_RPC,
             PROTOCOL_ZCODE_APP_SERVER,
+            PROTOCOL_ANTIGRAVITY_STREAM_JSON,
         )
     }
 

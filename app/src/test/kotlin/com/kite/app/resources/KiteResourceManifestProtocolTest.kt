@@ -304,6 +304,35 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
+    fun antigravityUsesDedicatedStreamJsonRegistrationAndAgentRecipe() {
+        val manifestFile = File(resourceRoot(), "kite.google.antigravity/manifest.json")
+        val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
+        val profile = manifest.agentProfiles.single()
+
+        assertEquals("antigravity", profile.agentId)
+        assertEquals("antigravity", profile.providerId)
+        assertEquals("antigravity-stream-json", profile.protocol)
+        assertEquals("stdio", profile.transport)
+        assertEquals(listOf("agy"), profile.argv)
+        assertEquals(60_000L, profile.initializeTimeoutMs)
+        assertEquals("google-antigravity", profile.configAdapterId)
+        assertFalse(profile.configurationRequired)
+
+        val registration = AgentResourceRegistrationMapper.registrations(manifest).single()
+        assertEquals("antigravity", registration.definition.agentId)
+        assertEquals(AgentRegistrationSource.Resource("kite.google.antigravity"), registration.source)
+        assertEquals("google-antigravity", registration.configAdapterId)
+        assertTrue(registration.launch is AgentLaunchSpec.Managed)
+
+        val openStep = manifest.openRecipe?.optJSONArray("recipe")?.optJSONObject(0)
+        val homeStep = manifest.homeCards.single().recipe.optJSONArray("recipe")?.optJSONObject(0)
+        assertEquals("agent", openStep?.optString("type"))
+        assertEquals("antigravity", openStep?.optString("agentId"))
+        assertEquals("/workspace", openStep?.optString("workdir"))
+        assertEquals(openStep?.toString(), homeStep?.toString())
+    }
+
+    @Test
     fun codexRelayUsesIsolatedUvToolInstallation() {
         val manifestFile = File(resourceRoot(), "kite.codex.relay/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())

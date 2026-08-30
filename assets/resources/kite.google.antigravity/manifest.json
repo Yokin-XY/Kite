@@ -3,7 +3,7 @@
   "id": "kite.google.antigravity",
   "base": {
     "name": "Antigravity CLI",
-    "description": "Google Antigravity 的终端 Agent",
+    "description": "Google Antigravity 的原生会话 Agent",
     "version": "official",
     "icon": {
       "type": "asset",
@@ -25,7 +25,7 @@
     "category": "AI",
     "accent": "blue",
     "sizeLabel": "网络包",
-    "longDescription": "Antigravity CLI 是 Google Antigravity 的终端 TUI，接替消费者路径上的 Gemini CLI，用于在终端里运行多步推理、文件编辑、工具调用和项目任务。Kite 使用官方 install script 获取 agy 命令；Google OAuth、Google Cloud 项目和工作区信任确认在终端运行态完成。",
+    "longDescription": "Antigravity CLI 是 Google 的编码 Agent。Kite 使用官方 stream-json 持续会话接入消息、工具步骤、模型、推理强度、权限模式和历史恢复；首次认证仍由 agy 官方交互流程完成。",
     "recommendations": [
       {
         "resourceId": "kite.curl",
@@ -75,6 +75,26 @@
     "installRoot": "/workspace/.kf/software/kite.google.antigravity",
     "binRoot": "/workspace/.kf/bin"
   },
+  "agents": [
+    {
+      "id": "antigravity",
+      "name": "Antigravity CLI",
+      "description": "Antigravity 官方 stream-json 持续会话",
+      "configuration": {
+        "required": false,
+        "adapter": "google-antigravity"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "antigravity",
+        "protocol": "antigravity-stream-json",
+        "transport": "stdio",
+        "argv": ["agy"],
+        "initializeTimeoutMs": 60000,
+        "title": "Antigravity CLI"
+      }
+    }
+  ],
   "actions": {
     "install": [
       {
@@ -113,7 +133,7 @@
         "base": {
           "id": "",
           "name": "Antigravity CLI",
-          "description": "在终端里启动 Google Antigravity",
+          "description": "启动 Google Antigravity 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -122,12 +142,7 @@
         "launch": {
           "openInstance": true
         },
-        "recipe": [
-          {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"Antigravity CLI 首次启动会要求 Google OAuth 或 Google Cloud 项目登录，并确认信任当前工作区。\"\nagy\n"
-          }
-        ]
+        "recipe": [{"type": "agent", "agentId": "antigravity", "workdir": "/workspace"}]
       }
     },
     "uninstall": [
@@ -149,7 +164,7 @@
         "base": {
           "id": "",
           "name": "Antigravity CLI",
-          "description": "在终端里启动 Google Antigravity",
+          "description": "启动 Google Antigravity 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -158,12 +173,7 @@
         "launch": {
           "openInstance": true
         },
-        "recipe": [
-          {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"Antigravity CLI 首次启动会要求 Google OAuth 或 Google Cloud 项目登录，并确认信任当前工作区。\"\nagy\n"
-          }
-        ]
+        "recipe": [{"type": "agent", "agentId": "antigravity", "workdir": "/workspace"}]
       }
     }
   ]

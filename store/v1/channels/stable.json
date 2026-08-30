@@ -2263,7 +2263,7 @@
         "open": {
           "recipe": {
             "base": {
-              "description": "在终端里启动 Google Antigravity",
+              "description": "启动 Google Antigravity 会话",
               "icon": {
                 "name": "bot",
                 "type": "builtin"
@@ -2276,8 +2276,9 @@
             },
             "recipe": [
               {
-                "text": "cd /workspace\necho \"Antigravity CLI 首次启动会要求 Google OAuth 或 Google Cloud 项目登录，并确认信任当前工作区。\"\nagy\n",
-                "type": "terminal"
+                "agentId": "antigravity",
+                "type": "agent",
+                "workdir": "/workspace"
               }
             ]
           },
@@ -2294,8 +2295,30 @@
           }
         ]
       },
+      "agents": [
+        {
+          "configuration": {
+            "adapter": "google-antigravity",
+            "required": false
+          },
+          "description": "Antigravity 官方 stream-json 持续会话",
+          "id": "antigravity",
+          "launch": {
+            "argv": [
+              "agy"
+            ],
+            "initializeTimeoutMs": 60000,
+            "mode": "managed",
+            "protocol": "antigravity-stream-json",
+            "providerId": "antigravity",
+            "title": "Antigravity CLI",
+            "transport": "stdio"
+          },
+          "name": "Antigravity CLI"
+        }
+      ],
       "base": {
-        "description": "Google Antigravity 的终端 Agent",
+        "description": "Google Antigravity 的原生会话 Agent",
         "icon": {
           "fallbackText": "Ag",
           "fit": "fullBleed",
@@ -2308,7 +2331,7 @@
       "display": {
         "accent": "blue",
         "category": "AI",
-        "longDescription": "Antigravity CLI 是 Google Antigravity 的终端 TUI，接替消费者路径上的 Gemini CLI，用于在终端里运行多步推理、文件编辑、工具调用和项目任务。Kite 使用官方 install script 获取 agy 命令；Google OAuth、Google Cloud 项目和工作区信任确认在终端运行态完成。",
+        "longDescription": "Antigravity CLI 是 Google 的编码 Agent。Kite 使用官方 stream-json 持续会话接入消息、工具步骤、模型、推理强度、权限模式和历史恢复；首次认证仍由 agy 官方交互流程完成。",
         "order": 100,
         "recommendations": [
           {
@@ -2350,7 +2373,7 @@
           "policy": "manual",
           "recipe": {
             "base": {
-              "description": "在终端里启动 Google Antigravity",
+              "description": "启动 Google Antigravity 会话",
               "icon": {
                 "name": "bot",
                 "type": "builtin"
@@ -2363,8 +2386,9 @@
             },
             "recipe": [
               {
-                "text": "cd /workspace\necho \"Antigravity CLI 首次启动会要求 Google OAuth 或 Google Cloud 项目登录，并确认信任当前工作区。\"\nagy\n",
-                "type": "terminal"
+                "agentId": "antigravity",
+                "type": "agent",
+                "workdir": "/workspace"
               }
             ]
           }
@@ -5371,6 +5395,6 @@
       }
     }
   },
-  "revision": 9,
+  "revision": 10,
   "schemaVersion": 1
 }

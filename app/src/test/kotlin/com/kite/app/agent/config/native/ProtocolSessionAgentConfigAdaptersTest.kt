@@ -98,6 +98,31 @@ class ProtocolSessionAgentConfigAdaptersTest {
     }
 
     @Test
+    fun `Antigravity 只把官方启动参数可兑现的三档模式映射为统一权限`() {
+        val adapter = AntigravityAgentConfigAdapter(context)
+        val modes = adapter.normalizeSessionModes(
+            listOf(
+                AgentMode("default", "Default"),
+                AgentMode("yolo", "YOLO"),
+                AgentMode("plan", "Plan"),
+            ),
+        )
+        val control = requireNotNull(adapter.sessionPermissionControl())
+
+        assertTrue(modes.isEmpty())
+        assertEquals(listOf("default", "yolo", "plan"), control.profiles.map { it.id })
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.Lenient,
+                AgentPermissionLevel.Full,
+                AgentPermissionLevel.ReadOnly,
+            ),
+            control.profiles.map { it.level },
+        )
+        assertEquals(control.profiles.map { it.id }, control.profiles.mapNotNull { control.nativeModeId(it.id) })
+    }
+
+    @Test
     fun `Reasonix 只把官方 ACP 公布的三档审批映射为统一权限`() {
         val adapter = ReasonixAgentConfigAdapter(context)
         val native = AgentConfigOption.Select(
