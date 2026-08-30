@@ -325,7 +325,7 @@ internal class TraeCodeAgentConfigAdapter internal constructor(
         private const val MAX_MCP_TEXT = 2_048
         private val SAFE_IMPORT_REFERENCE = Regex("kite-import:import-[A-Za-z0-9-]{8,80}")
         private val SAFE_ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]{0,127}")
-        private val ENV_REFERENCE = Regex("\\$\\{([A-Za-z_][A-Za-z0-9_]{0,127})}")
+        private val ENV_REFERENCE = Regex("\\$\\{([A-Za-z_][A-Za-z0-9_]{0,127})\\}")
         private val TRAE_PERMISSION_MODES = setOf(MODE_DEFAULT, MODE_AUTO, MODE_BYPASS)
         private val TRAE_PERMISSION_CONTROL = AgentSessionPermissionControl(
             profiles = listOf(
