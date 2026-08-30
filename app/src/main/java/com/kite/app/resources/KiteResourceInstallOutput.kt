@@ -8,20 +8,51 @@ object KiteResourceInstallOutput {
 
     fun isFailure(line: String): Boolean = line.startsWith(FAILURE)
 
+    fun isHeartbeat(line: String): Boolean = line.trimStart().startsWith(HEARTBEAT)
+
+    fun isProtocolLine(line: String): Boolean = line.trimStart().startsWith("KITE_RESOURCE_")
+
     fun summary(line: String): String? = when {
         line.startsWith(FAILURE) -> failureSummary(line)
         line.startsWith(RETRY) -> retrySummary(line)
-        line.startsWith(HEARTBEAT) -> heartbeatSummary(line)
+        line.startsWith(HEARTBEAT) -> null
         line.startsWith(STEP) -> stepSummary(line.removePrefix(STEP))
         else -> null
     }
 
     /** 清除终端样式与控制字符，只保留适合卡片单行展示的状态文本。 */
-    fun compactProgress(raw: String): String = raw
-        .replace(ANSI_ESCAPE, "")
-        .replace(CONTROL_CHARACTER, "")
-        .replace(WHITESPACE, " ")
-        .trim()
+    fun compactProgress(raw: String): String {
+        val compact = raw
+            .replace(ANSI_ESCAPE, "")
+            .replace(CONTROL_CHARACTER, "")
+            .replace(WHITESPACE, " ")
+            .trim()
+        if (compact.isBlank() || isHeartbeat(compact)) return ""
+        return summary(compact)
+            ?: compact.takeUnless(::isProtocolLine).orEmpty()
+    }
+
+    /**
+     * 将持久化的原始 SH 输出投影为用户可读报告。
+     *
+     * 原始输出仍完整保留；这里只模拟终端的回车重绘和退格语义，并隐藏 Kite 内部协议行。
+     */
+    fun userVisibleReport(raw: String): String {
+        if (raw.isBlank()) return ""
+        val terminalLines = terminalLines(raw.replace(ANSI_ESCAPE, ""))
+        val visible = buildList {
+            terminalLines.forEach { rawLine ->
+                val line = rawLine.trimEnd()
+                val trimmed = line.trim()
+                if (trimmed.isBlank() || isInternalProcessMarker(trimmed) || isHeartbeat(trimmed)) return@forEach
+                val projected = summary(trimmed)
+                    ?: trimmed.takeUnless(::isProtocolLine)
+                    ?: return@forEach
+                if (lastOrNull() != projected) add(projected)
+            }
+        }
+        return visible.joinToString("\n").trim()
+    }
 
     /** 从实时 SH 尾部提取用户可读的下载细节；未知输出保持为空，不猜进度。 */
     fun progressDetail(output: String): String? {
@@ -81,17 +112,6 @@ object KiteResourceInstallOutput {
         }
     }
 
-    private fun heartbeatSummary(line: String): String {
-        val stage = value(line, "stage")
-        val elapsed = value(line, "elapsed")
-        val label = when (stage) {
-            "acquire" -> "资源仍在下载"
-            "verify" -> "安装结果仍在验证"
-            else -> "安装器仍在运行"
-        }
-        return elapsed?.let { "$label（已运行 $it 秒）" } ?: label
-    }
-
     private fun stepSummary(payload: String): String? {
         val operation = payload.substringBefore(' ')
         return when (operation) {
@@ -122,6 +142,39 @@ object KiteResourceInstallOutput {
     private val GIT_PROGRESS = Regex("(Receiving objects|Resolving deltas|Updating files):\\s+(\\d{1,3})%")
     private val APT_DOWNLOAD = Regex("(?m)^Get:(\\d+)\\s+(https?://\\S+).*?\\[([^]\\r\\n]+)]")
     private val SOURCE = Regex("(?:source|url)=(https?://[^\\s]+)")
+
+    private fun terminalLines(raw: String): List<String> {
+        val lines = mutableListOf<String>()
+        val current = StringBuilder()
+        var index = 0
+        while (index < raw.length) {
+            when (val character = raw[index]) {
+                '\r' -> {
+                    if (index + 1 < raw.length && raw[index + 1] == '\n') {
+                        lines += current.toString()
+                        current.clear()
+                        index += 1
+                    } else {
+                        current.clear()
+                    }
+                }
+                '\n' -> {
+                    lines += current.toString()
+                    current.clear()
+                }
+                '\b' -> if (current.isNotEmpty()) current.deleteCharAt(current.lastIndex)
+                else -> if (!Character.isISOControl(character.code) || character == '\t') current.append(character)
+            }
+            index += 1
+        }
+        if (current.isNotEmpty()) lines += current.toString()
+        return lines
+    }
+
+    private fun isInternalProcessMarker(line: String): Boolean =
+        line.startsWith("__kite_root_pid:") ||
+            line.startsWith("__kite_process_group_id:") ||
+            line.startsWith("__kite_system_session_id:")
 
     private fun sourceHost(raw: String): String = runCatching {
         java.net.URI(raw).host?.takeIf(String::isNotBlank)

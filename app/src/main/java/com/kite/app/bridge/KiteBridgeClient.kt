@@ -975,6 +975,7 @@ class KiteBridgeClient(
     private fun lastMeaningfulLine(output: String): String {
         var last = ""
         var lastNonEndMarker = ""
+        var lastUserOutput = ""
         var summary = ""
         var fail = ""
         var resourceFailure = ""
@@ -982,6 +983,7 @@ class KiteBridgeClient(
         output.lineSequence().forEach { raw ->
             val line = raw.trim()
             if (line.isBlank()) return@forEach
+            if (KiteResourceInstallOutput.isHeartbeat(line)) return@forEach
             last = line
             if (!line.isEndMarkerLine()) lastNonEndMarker = line
             if (line.startsWith("SUMMARY ")) summary = line
@@ -992,12 +994,17 @@ class KiteBridgeClient(
                 } else {
                     resourceProgress = structuredSummary
                 }
+                return@forEach
             }
+            if (KiteResourceInstallOutput.isProtocolLine(line)) return@forEach
+            if (!line.isEndMarkerLine()) lastUserOutput = line
         }
         return fail.ifBlank {
             resourceFailure.ifBlank {
                 summary.ifBlank {
-                    resourceProgress.ifBlank { lastNonEndMarker.ifBlank { last } }
+                    lastUserOutput.ifBlank {
+                        resourceProgress.ifBlank { lastNonEndMarker.ifBlank { last } }
+                    }
                 }
             }
         }

@@ -1,6 +1,7 @@
 package com.kite.app.feature.runsurface
 
 import com.kite.app.recipe.KiteRecipe
+import com.kite.app.resources.KiteResourceInstallOutput
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 
@@ -17,8 +18,6 @@ internal enum class RunReportInsightTone {
 }
 
 internal object RunReportPresenter {
-    private val ansiEscapeRegex = Regex("""\u001B\[[0-9;?]*[ -/]*[@-~]""")
-
     fun project(recipe: KiteRecipe, state: CardRunState): RunSurfaceContent.Report {
         val hint = commandHint(state)
         val output = buildString {
@@ -86,18 +85,7 @@ internal object RunReportPresenter {
             !state.lastError.isNullOrBlank() -> state.lastError
             !state.lastMeaningfulOutput.isNullOrBlank() -> state.lastMeaningfulOutput
             else -> "暂无输出。一次性命令请使用“等待结束”，例如 python3 -V。"
-        }.orEmpty()
-            .replace(ansiEscapeRegex, "")
-            .replace('\r', '\n')
-            .lineSequence()
-            .filterNot { line ->
-                val trimmed = line.trim()
-                trimmed.startsWith("__kite_root_pid:") ||
-                    trimmed.startsWith("__kite_process_group_id:") ||
-                    trimmed.startsWith("__kite_system_session_id:")
-            }
-            .joinToString("\n") { it.trimEnd() }
-            .trim()
+        }.orEmpty().let(KiteResourceInstallOutput::userVisibleReport)
     }
 
     private fun extractShellOutput(report: String): String {

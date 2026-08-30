@@ -218,7 +218,7 @@ class ResourceInstallWizardScreenTest {
         attach(screen)
         screen.render(runningState(
             surface = CardRunSurface.Report,
-            progressText = "资源仍在下载（已运行 15 秒）",
+            progressText = "KITE_RESOURCE_HEARTBEAT stage=acquire step=source elapsed=15",
             reportText = "Updating files:  76% (7971/10488)\n" +
                 "KITE_RESOURCE_HEARTBEAT stage=acquire step=source elapsed=15",
         ))
@@ -226,7 +226,10 @@ class ResourceInstallWizardScreenTest {
 
         assertTrue(screen.root.textViews().any { view ->
             val text = view.text.toString()
-            text.contains("资源仍在下载") && text.contains("源码写入 76%")
+            text.contains("源码写入 76%")
+        })
+        assertFalse(screen.root.textViews().any { view ->
+            view.text.toString().contains("已运行 15 秒") || view.text.toString().contains("HEARTBEAT")
         })
     }
 
