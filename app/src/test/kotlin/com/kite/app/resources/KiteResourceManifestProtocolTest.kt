@@ -1,6 +1,7 @@
 package com.kite.app.resources
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import androidx.test.core.app.ApplicationProvider
 import com.kite.app.agent.registration.AgentLaunchSpec
 import com.kite.app.agent.registration.AgentRegistrationSource
@@ -968,6 +969,37 @@ class KiteResourceManifestProtocolTest {
                 )
             )
         )
+    }
+
+    @Test
+    fun agentResourcesUsePackagedBitmapIconsInsteadOfTextPlaceholders() {
+        val resourceIds = listOf(
+            "kite.codebuddy.code",
+            "kite.cursor.cli",
+            "kite.deepseek.harness",
+            "kite.devin.cli",
+            "kite.gemini.cli",
+            "kite.github.copilot",
+            "kite.pi.coding.agent",
+            "kite.qoder.cli",
+            "kite.trae.code",
+        )
+        val loader = KiteResourceManifestLoader(context)
+
+        resourceIds.forEach { resourceId ->
+            val manifestFile = File(resourceRoot(), "$resourceId/manifest.json")
+            val manifest = loader.parseManifestJson(manifestFile.readText())
+            val expectedAsset = "resources/$resourceId/icon.png"
+            val iconFile = File(assetRoot(), expectedAsset)
+
+            assertEquals("Wrong icon asset for $resourceId", expectedAsset, manifest.iconAsset)
+            assertEquals("Wrong icon fit for $resourceId", "fullBleed", manifest.iconFit)
+            assertTrue("Missing icon asset for $resourceId", iconFile.isFile)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(iconFile.absolutePath, bounds)
+            assertTrue("Unreadable icon width for $resourceId", bounds.outWidth > 0)
+            assertTrue("Unreadable icon height for $resourceId", bounds.outHeight > 0)
+        }
     }
 
     @Test

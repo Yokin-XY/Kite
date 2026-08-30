@@ -6,8 +6,10 @@
     "description": "DeepSeek 官方开源 Agent Harness",
     "version": "0.1.1-rc.2",
     "icon": {
-      "type": "text",
-      "value": "DS"
+      "type": "asset",
+      "value": "resources/kite.deepseek.harness/icon.png",
+      "fallbackText": "DS",
+      "fit": "fullBleed"
     }
   },
   "management": {

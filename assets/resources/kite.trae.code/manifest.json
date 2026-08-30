@@ -5,7 +5,12 @@
     "name": "TraeCode CLI",
     "description": "TRAE 官方终端编码 Agent",
     "version": "0.201.6-tob",
-    "icon": {"type": "text", "value": "TR"}
+    "icon": {
+      "type": "asset",
+      "value": "resources/kite.trae.code/icon.png",
+      "fallbackText": "TR",
+      "fit": "fullBleed"
+    }
   },
   "management": {
     "mode": "managed_extension",

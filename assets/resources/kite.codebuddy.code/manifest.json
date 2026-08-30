@@ -6,8 +6,10 @@
     "description": "腾讯 CodeBuddy 的终端编码 Agent",
     "version": "npm",
     "icon": {
-      "type": "text",
-      "value": "CB"
+      "type": "asset",
+      "value": "resources/kite.codebuddy.code/icon.png",
+      "fallbackText": "CB",
+      "fit": "fullBleed"
     }
   },
   "management": {

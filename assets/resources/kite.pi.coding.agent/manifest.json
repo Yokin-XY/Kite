@@ -6,8 +6,10 @@
     "description": "可扩展的终端 AI 编码 Agent",
     "version": "npm",
     "icon": {
-      "type": "text",
-      "value": "Pi"
+      "type": "asset",
+      "value": "resources/kite.pi.coding.agent/icon.png",
+      "fallbackText": "Pi",
+      "fit": "fullBleed"
     }
   },
   "management": {

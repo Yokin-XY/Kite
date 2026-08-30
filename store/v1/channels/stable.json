@@ -371,8 +371,10 @@
       "base": {
         "description": "腾讯 CodeBuddy 的终端编码 Agent",
         "icon": {
-          "type": "text",
-          "value": "CB"
+          "fallbackText": "CB",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.codebuddy.code/icon.png"
         },
         "name": "CodeBuddy Code",
         "version": "npm"
@@ -1088,8 +1090,10 @@
       "base": {
         "description": "Cursor 的终端编码 Agent",
         "icon": {
-          "type": "text",
-          "value": "Cu"
+          "fallbackText": "Cu",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.cursor.cli/icon.png"
         },
         "name": "Cursor CLI",
         "version": "2026.08.11"
@@ -1350,8 +1354,10 @@
       "base": {
         "description": "DeepSeek 官方开源 Agent Harness",
         "icon": {
-          "type": "text",
-          "value": "DS"
+          "fallbackText": "DS",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.deepseek.harness/icon.png"
         },
         "name": "DeepSeek Harness",
         "version": "0.1.1-rc.2"
@@ -1610,8 +1616,10 @@
       "base": {
         "description": "Cognition 的终端编码 Agent",
         "icon": {
-          "type": "text",
-          "value": "Dv"
+          "fallbackText": "Dv",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.devin.cli/icon.png"
         },
         "name": "Devin CLI",
         "version": "3000.6.7"
@@ -1773,8 +1781,10 @@
       "base": {
         "description": "Google 的终端 AI 编码 Agent",
         "icon": {
-          "type": "text",
-          "value": "Ge"
+          "fallbackText": "Ge",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.gemini.cli/icon.png"
         },
         "name": "Gemini CLI",
         "version": "npm"
@@ -2106,8 +2116,10 @@
       "base": {
         "description": "GitHub 的终端编码 Agent",
         "icon": {
-          "type": "text",
-          "value": "Co"
+          "fallbackText": "Co",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.github.copilot/icon.png"
         },
         "name": "GitHub Copilot CLI",
         "version": "npm"
@@ -3784,8 +3796,10 @@
       "base": {
         "description": "可扩展的终端 AI 编码 Agent",
         "icon": {
-          "type": "text",
-          "value": "Pi"
+          "fallbackText": "Pi",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.pi.coding.agent/icon.png"
         },
         "name": "Pi Coding Agent",
         "version": "npm"
@@ -4133,8 +4147,10 @@
       "base": {
         "description": "Qoder 的终端编码 Agent",
         "icon": {
-          "type": "text",
-          "value": "Qd"
+          "fallbackText": "Qd",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.qoder.cli/icon.png"
         },
         "name": "Qoder CLI",
         "version": "npm"
@@ -4908,8 +4924,10 @@
       "base": {
         "description": "TRAE 官方终端编码 Agent",
         "icon": {
-          "type": "text",
-          "value": "TR"
+          "fallbackText": "TR",
+          "fit": "fullBleed",
+          "type": "asset",
+          "value": "resources/kite.trae.code/icon.png"
         },
         "name": "TraeCode CLI",
         "version": "0.201.6-tob"
@@ -5395,6 +5413,6 @@
       }
     }
   },
-  "revision": 10,
+  "revision": 11,
   "schemaVersion": 1
 }

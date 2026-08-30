@@ -6,8 +6,10 @@
     "description": "Cursor 的终端编码 Agent",
     "version": "2026.08.11",
     "icon": {
-      "type": "text",
-      "value": "Cu"
+      "type": "asset",
+      "value": "resources/kite.cursor.cli/icon.png",
+      "fallbackText": "Cu",
+      "fit": "fullBleed"
     }
   },
   "management": {

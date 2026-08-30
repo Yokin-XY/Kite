@@ -6,8 +6,10 @@
     "description": "Qoder 的终端编码 Agent",
     "version": "npm",
     "icon": {
-      "type": "text",
-      "value": "Qd"
+      "type": "asset",
+      "value": "resources/kite.qoder.cli/icon.png",
+      "fallbackText": "Qd",
+      "fit": "fullBleed"
     }
   },
   "management": {

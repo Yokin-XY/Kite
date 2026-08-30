@@ -6,8 +6,10 @@
     "description": "GitHub 的终端编码 Agent",
     "version": "npm",
     "icon": {
-      "type": "text",
-      "value": "Co"
+      "type": "asset",
+      "value": "resources/kite.github.copilot/icon.png",
+      "fallbackText": "Co",
+      "fit": "fullBleed"
     }
   },
   "management": {

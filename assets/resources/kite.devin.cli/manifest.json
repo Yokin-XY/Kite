@@ -6,8 +6,10 @@
     "description": "Cognition 的终端编码 Agent",
     "version": "3000.6.7",
     "icon": {
-      "type": "text",
-      "value": "Dv"
+      "type": "asset",
+      "value": "resources/kite.devin.cli/icon.png",
+      "fallbackText": "Dv",
+      "fit": "fullBleed"
     }
   },
   "management": {

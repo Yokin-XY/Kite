@@ -6,8 +6,10 @@
     "description": "Google 的终端 AI 编码 Agent",
     "version": "npm",
     "icon": {
-      "type": "text",
-      "value": "Ge"
+      "type": "asset",
+      "value": "resources/kite.gemini.cli/icon.png",
+      "fallbackText": "Ge",
+      "fit": "fullBleed"
     }
   },
   "management": {
