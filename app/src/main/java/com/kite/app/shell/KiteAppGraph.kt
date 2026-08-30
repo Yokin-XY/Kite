@@ -422,7 +422,12 @@ internal class KiteAppGraph private constructor(context: Context) {
         )
     }
     private val resourceRecipeFactory: AndroidResourceRecipeFactory by lazy {
-        AndroidResourceRecipeFactory(resourceManifestLoader)
+        AndroidResourceRecipeFactory(
+            manifestLoader = resourceManifestLoader,
+            sourcePreferencesProvider = {
+                settingsGateway.currentSnapshot().resourceSourcePreferences
+            },
+        )
     }
     val resourceRunCoordinator: ResourceRunCoordinator by lazy {
         ResourceRunCoordinator(

@@ -37,6 +37,10 @@ internal class SettingsFeatureController(
             gateway.update(SettingsCommand.SetBrowserRuntimeMode(action.mode))
             SettingsFeatureEffect.BrowserModeChanged(action.mode)
         }
+        is SettingsFeatureAction.SetResourceSourceOrder -> {
+            gateway.update(SettingsCommand.SetResourceSourceOrder(action.sourceIds))
+            null
+        }
         is SettingsFeatureAction.SetRestoreLastScreen -> {
             gateway.update(SettingsCommand.SetRestoreLastScreen(action.enabled))
             null

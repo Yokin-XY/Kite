@@ -15,6 +15,8 @@ import com.kite.app.application.runtimebootstrap.RuntimeRootfsPhase
 import com.kite.app.application.runtimemanagement.ProotEnvironmentOperation
 import com.kite.app.application.runtimemanagement.ProotViewInspectionSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.resources.KiteResourceSourceCatalog
+import com.kite.app.resources.KiteResourceSourcePreferences
 import com.kite.app.foundation.devicebridge.DeviceBridgeBackendMode
 import com.kite.app.foundation.devicebridge.DeviceBridgeBackendSnapshot
 import com.kite.app.foundation.devicebridge.DeviceBridgeIdentity
@@ -47,6 +49,7 @@ internal class SettingsCategoryScreen(
     onOpenTheme: () -> Unit = {},
     private val onSelectAppLanguage: (AppLanguagePreference) -> Unit = {},
     private val onSelectBrowserMode: (BrowserRuntimeMode) -> Unit = {},
+    private val onSetResourceSourceOrder: (List<String>) -> Unit = {},
     private val onSelectTerminalFontSize: (Int) -> Unit = {},
     private val onSelectTerminalTheme: (TerminalThemeMode) -> Unit = {},
     onRestoreLastScreen: (Boolean) -> Unit = {},
@@ -87,6 +90,7 @@ internal class SettingsCategoryScreen(
     private var terminalFontBinding: SettingsViewFactory.NavigationBinding? = null
     private var terminalThemeBinding: SettingsViewFactory.NavigationBinding? = null
     private var automationBinding: SettingsViewFactory.SwitchBinding? = null
+    private var resourceSourceBinding: SettingsViewFactory.NavigationBinding? = null
     private var allFilesBinding: SettingsViewFactory.NavigationBinding? = null
     private var runtimeStatusBinding: SettingsViewFactory.InformationBinding? = null
     private var deviceBridgeSnapshot = initialDeviceBridgeSnapshot
@@ -182,6 +186,25 @@ internal class SettingsCategoryScreen(
                             context.getString(R.string.settings_network_policy_title),
                             context.getString(R.string.settings_network_policy_summary),
                         ))
+                        resourceSourceBinding = factory.navigationRow(
+                            context.getString(R.string.settings_resource_source_title),
+                            context.resourceSourceOrderSummary(initialState.resourceSourcePreferences),
+                        ) {
+                            val preferences = latestState.resourceSourcePreferences.normalized()
+                            factory.showPriorityDialog(
+                                title = context.getString(R.string.settings_resource_source_dialog_title),
+                                summary = context.getString(R.string.settings_resource_source_dialog_summary),
+                                choices = preferences.orderedSourceIds.map { sourceId ->
+                                    SettingsViewFactory.PriorityChoice(
+                                        id = sourceId,
+                                        title = context.resourceSourceLabel(sourceId),
+                                        summary = context.resourceSourceCapabilitySummary(sourceId),
+                                    )
+                                },
+                                onOrderChanged = onSetResourceSourceOrder,
+                            )
+                        }
+                        addRow(resourceSourceBinding!!.root)
                         addRow(factory.navigationRow(
                             context.getString(R.string.settings_browser_experiment_entry_title),
                             context.getString(R.string.settings_browser_experiment_entry_summary),
@@ -347,7 +370,38 @@ internal class SettingsCategoryScreen(
             state.browserRuntimeMode == BrowserRuntimeMode.AutomationBrowser,
             automationSummary(state.browserRuntimeMode),
         )
+        resourceSourceBinding?.bind(
+            context.resourceSourceOrderSummary(state.resourceSourcePreferences),
+        )
     }
+
+    private fun Context.resourceSourceOrderSummary(
+        preferences: KiteResourceSourcePreferences,
+    ): String = preferences.normalized().orderedSourceIds
+        .take(3)
+        .joinToString(" → ") { sourceId -> resourceSourceLabel(sourceId) }
+
+    private fun Context.resourceSourceLabel(sourceId: String): String = getString(
+        when (sourceId) {
+            KiteResourceSourceCatalog.HUAWEI -> R.string.settings_resource_source_huawei
+            KiteResourceSourceCatalog.NPM_MIRROR -> R.string.settings_resource_source_npmmirror
+            KiteResourceSourceCatalog.ALIYUN -> R.string.settings_resource_source_aliyun
+            KiteResourceSourceCatalog.TUNA -> R.string.settings_resource_source_tuna
+            KiteResourceSourceCatalog.GITCODE -> R.string.settings_resource_source_gitcode
+            else -> R.string.settings_resource_source_official
+        },
+    )
+
+    private fun Context.resourceSourceCapabilitySummary(sourceId: String): String = getString(
+        when (sourceId) {
+            KiteResourceSourceCatalog.HUAWEI -> R.string.settings_resource_source_huawei_summary
+            KiteResourceSourceCatalog.NPM_MIRROR -> R.string.settings_resource_source_npmmirror_summary
+            KiteResourceSourceCatalog.ALIYUN -> R.string.settings_resource_source_aliyun_summary
+            KiteResourceSourceCatalog.TUNA -> R.string.settings_resource_source_tuna_summary
+            KiteResourceSourceCatalog.GITCODE -> R.string.settings_resource_source_gitcode_summary
+            else -> R.string.settings_resource_source_official_summary
+        },
+    )
 
     fun renderProotViewSnapshot(snapshot: ProotViewInspectionSnapshot) {
         prootViewSnapshot = snapshot

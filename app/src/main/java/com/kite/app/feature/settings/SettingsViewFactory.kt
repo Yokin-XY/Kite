@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import com.kite.app.R
@@ -28,6 +29,12 @@ internal class SettingsViewFactory(
     private val context: Context,
     environment: ThemeEnvironment,
 ) {
+    data class PriorityChoice(
+        val id: String,
+        val title: String,
+        val summary: String,
+    )
+
     private val ui = UiKit(context, environment)
     val tokens: ThemeTokens = environment.tokens
     private val foundations = environment.foundations
@@ -347,6 +354,103 @@ internal class SettingsViewFactory(
         )
     }
 
+    fun showPriorityDialog(
+        title: String,
+        summary: String,
+        choices: List<PriorityChoice>,
+        onOrderChanged: (List<String>) -> Unit,
+    ) {
+        val dialog = Dialog(context)
+        val order = choices.map(PriorityChoice::id).toMutableList()
+        val byId = choices.associateBy(PriorityChoice::id)
+        val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+
+        fun renderChoices() {
+            list.removeAllViews()
+            order.forEachIndexed { index, sourceId ->
+                val choice = byId.getValue(sourceId)
+                list.addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(14), dp(12), dp(8), dp(12))
+                    background = roundedBox(tokens.surface, tokens.border, dp(16).toFloat())
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { setMargins(0, dp(8), 0, 0) }
+                    addView(LinearLayout(context).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(TextView(context).apply {
+                            text = "${index + 1}. ${choice.title}"
+                            ui.applyTextRole(this, UiTextRole.CardTitle)
+                        })
+                        addView(subtitleView(choice.summary).apply {
+                            maxLines = 3
+                            ellipsize = null
+                        })
+                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(priorityButton("↑", index > 0) {
+                        order.removeAt(index)
+                        order.add(index - 1, sourceId)
+                        onOrderChanged(order.toList())
+                        renderChoices()
+                    })
+                    addView(priorityButton("↓", index < order.lastIndex) {
+                        order.removeAt(index)
+                        order.add(index + 1, sourceId)
+                        onOrderChanged(order.toList())
+                        renderChoices()
+                    })
+                })
+            }
+        }
+
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            background = containerBackground(tokens.cardBackground, tokens.border, components.dialog)
+            addView(TextView(context).apply {
+                text = title
+                textSize = 18f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(subtitleView(summary).apply {
+                maxLines = Int.MAX_VALUE
+                ellipsize = null
+                setPadding(0, dp(6), 0, dp(8))
+            })
+            addView(ScrollView(context).apply { addView(list) }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            ))
+            addView(TextView(context).apply {
+                text = context.getString(R.string.common_close)
+                gravity = Gravity.CENTER
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textSecondary)
+                background = roundedBox(tokens.surface, tokens.border, dp(14).toFloat())
+                setPadding(0, dp(11), 0, dp(11))
+                setOnClickListener { dialog.dismiss() }
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { setMargins(0, dp(12), 0, 0) }
+            })
+        }
+        renderChoices()
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setGravity(Gravity.CENTER)
+        dialog.window?.setLayout(
+            (context.resources.displayMetrics.widthPixels * 0.92f).toInt(),
+            (context.resources.displayMetrics.heightPixels * 0.8f).toInt(),
+        )
+    }
+
     fun roundedBox(fill: Int, stroke: Int, radius: Float, strokeWidth: Int = dp(1)): GradientDrawable =
         ui.roundedBox(fill, stroke, radius, strokeWidth)
 
@@ -442,5 +546,22 @@ internal class SettingsViewFactory(
             isFocusable = true
             contentDescription = label
             setOnClickListener { onClick() }
+        }
+
+    private fun priorityButton(label: String, enabled: Boolean, onClick: () -> Unit): TextView =
+        TextView(context).apply {
+            text = label
+            textSize = 20f
+            gravity = Gravity.CENTER
+            isEnabled = enabled
+            alpha = if (enabled) 1f else 0.28f
+            setTextColor(tokens.textSecondary)
+            background = roundedBox(tokens.surface, tokens.border, dp(12).toFloat())
+            layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+                setMargins(dp(6), 0, 0, 0)
+            }
+            isFocusable = enabled
+            contentDescription = label
+            if (enabled) setOnClickListener { onClick() }
         }
 }

@@ -6,7 +6,7 @@ import org.junit.Test
 
 class KiteResourceInstallPlanCompilerTest {
     @Test
-    fun officialScriptUsesManagedDownloadAndHeartbeatWithoutPipeInstall() {
+    fun officialScriptUsesManagedDownloadWithoutHeartbeatOrPipeInstall() {
         val action = managedAction(
             steps = listOf(
                 KiteResourceInstallStep(
@@ -32,7 +32,7 @@ class KiteResourceInstallPlanCompilerTest {
         assertTrue(script.contains("mv -f \"${'$'}partial\" \"${'$'}destination\""))
         assertFalse(script.contains("KITE_RESOURCE_VIEW_TRANSACTION"))
         assertTrue(script.contains("KITE_RESOURCE_RETRY stage=acquire"))
-        assertTrue(script.contains("KITE_RESOURCE_HEARTBEAT stage="))
+        assertFalse(script.contains("KITE_RESOURCE_HEARTBEAT stage="))
         assertTrue(script.contains("KITE_RESOURCE_FAILURE stage="))
         assertTrue(script.contains("bash"))
         assertFalse(Regex("curl[^\\n]*\\|\\s*(bash|sh)").containsMatchIn(script))
@@ -90,7 +90,8 @@ class KiteResourceInstallPlanCompilerTest {
         val script = KiteResourceInstallPlanCompiler.compile(action)
 
         assertTrue(script.contains("npm_config_fetch_retries"))
-        assertTrue(script.contains("npm install -g '--allow-scripts=@example/cli' '@example/cli'"))
+        assertTrue(script.contains("npm install -g --prefix=\"${'$'}attempt_prefix\""))
+        assertTrue(script.contains("'--allow-scripts=@example/cli' '@example/cli'"))
         assertTrue(script.contains("Acquire::Retries=4"))
         assertTrue(script.contains("apt-get"))
         assertTrue(script.contains("candidate=\"${'$'}destination.kite-clone\""))
@@ -116,8 +117,8 @@ class KiteResourceInstallPlanCompilerTest {
         val script = KiteResourceInstallPlanCompiler.compile(action)
 
         assertTrue(script.indexOf("registry.npmmirror.com") < script.indexOf("registry.npmjs.org"))
-        assertTrue(script.contains("KITE_RESOURCE_ROUTE stage=install"))
-        assertTrue(script.contains("npm install -g --registry=\"${'$'}npm_registry\""))
+        assertTrue(script.contains("KITE_RESOURCE_ROUTE stage=acquire"))
+        assertTrue(script.contains("--registry=\"${'$'}npm_registry\""))
         assertTrue(script.contains("kite_resource_run 'npm-package' install kite_resource_npm_npm_package"))
     }
 
@@ -148,7 +149,7 @@ class KiteResourceInstallPlanCompilerTest {
     }
 
     @Test
-    fun gitMirrorsShareOnePinnedCommitPreserveSourceOrderAndRejectBadMirrorOnly() {
+    fun gitMirrorsShareOnePinnedCommitRespectSourcePriorityAndStopOnMismatch() {
         val commit = "5fc308a70719a83cccdbba4c0e39c23f5a8239d5"
         val action = managedAction(
             steps = listOf(
@@ -170,15 +171,13 @@ class KiteResourceInstallPlanCompilerTest {
 
         val script = KiteResourceInstallPlanCompiler.compile(action)
 
-        assertTrue(script.indexOf("github.com/NousResearch") < script.indexOf("gitcode.com/GitHub_Trending"))
+        assertTrue(script.indexOf("gitcode.com/GitHub_Trending") < script.indexOf("github.com/NousResearch"))
         assertTrue(script.contains("git-commit-mismatch"))
         assertTrue(script.contains(commit))
         assertTrue(script.contains("for repository in"))
-        assertTrue(script.contains("if wait \"${'$'}task_pid\"; then"))
-        assertFalse(script.contains("set +e\n  wait \"${'$'}task_pid\""))
+        assertFalse(script.contains("if wait \"${'$'}task_pid\"; then"))
         val mismatchBlock = script.substringAfter("reason=git-commit-mismatch")
-        assertTrue(mismatchBlock.substringBefore("KITE_RESOURCE_FAILURE stage=acquire").contains("break"))
-        assertFalse(mismatchBlock.substringBefore("KITE_RESOURCE_FAILURE stage=acquire").contains("return 65"))
+        assertTrue(mismatchBlock.substringBefore("KITE_RESOURCE_FAILURE stage=acquire").contains("return 65"))
     }
 
     @Test

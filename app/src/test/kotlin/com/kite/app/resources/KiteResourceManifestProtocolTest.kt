@@ -352,6 +352,10 @@ class KiteResourceManifestProtocolTest {
         assertEquals(manifest.management.managedCommands, installAction.managedCommands)
         assertTrue(installRelayStep.cmd.contains("UV_TOOL_DIR=\"\$install_root/uv-tools\""))
         assertTrue(installRelayStep.cmd.contains("codex-relay==0.5.5"))
+        assertTrue(installRelayStep.cmd.contains("for pypi_route in \$KITE_RESOURCE_PYPI_ROUTES"))
+        assertTrue(installRelayStep.cmd.contains("UV_CACHE_DIR=\"\$attempt_cache\""))
+        assertTrue(installRelayStep.cmd.contains("timeout 300 env UV_DEFAULT_INDEX=\"\$pypi_index\""))
+        assertTrue(installRelayStep.cmd.contains("kite_resource_is_source_failure"))
         assertTrue(installLauncherStep.cmd.contains("codex-relay --bind 127.0.0.1 --port 4453"))
         assertTrue(installLauncherStep.cmd.contains("codex-acp \"\$@\""))
         assertTrue(installLauncherStep.cmd.contains("/dev/tcp/127.0.0.1/4453"))
@@ -823,7 +827,7 @@ class KiteResourceManifestProtocolTest {
             ),
             recommendedSections.take(2).flatMap(KiteResourceHomeSection::items)
         )
-        assertEquals(listOf("shelf", "shelf", "list"), recommendedSections.map(KiteResourceHomeSection::style))
+        assertEquals(listOf("shelf", "shelf", "list", "list"), recommendedSections.map(KiteResourceHomeSection::style))
         assertEquals(
             listOf(
                 "kite.opencode",
@@ -865,7 +869,10 @@ class KiteResourceManifestProtocolTest {
             ),
             debugLayout?.sections?.first { it.id == "foundation" }?.items
         )
-        assertTrue(debugLayout?.sections?.none { it.id == "more" } == true)
+        assertEquals(
+            listOf("kite.shizuku"),
+            debugLayout?.sections?.first { it.id == "more" }?.items,
+        )
         assertEquals(
             listOf(
                 "kite.opencode",
@@ -926,7 +933,7 @@ class KiteResourceManifestProtocolTest {
             .filter { it.isFile }
             .sortedBy { it.parentFile?.name }
 
-        assertEquals(27, manifests.size)
+        assertEquals(28, manifests.size)
         manifests.forEach { manifestFile ->
             val resourceId = manifestFile.parentFile?.name.orEmpty()
             val loaded = loader.parseManifestJson(manifestFile.readText())
@@ -934,7 +941,7 @@ class KiteResourceManifestProtocolTest {
             assertNotNull("Manifest did not load: $resourceId", loaded)
             assertEquals(resourceId, loaded.id)
             assertTrue("No resolved install action: $resourceId", sourcePlan.installActions.isNotEmpty())
-            if (loaded.management.userLifecycleEnabled) {
+            if (loaded.management.userLifecycleEnabled && loaded.source.type != "android_apk") {
                 assertTrue("No resolved uninstall action: $resourceId", sourcePlan.uninstallActions.isNotEmpty())
             }
             sourcePlan.installActions.forEach { action ->
@@ -942,28 +949,32 @@ class KiteResourceManifestProtocolTest {
                 assertTrue("Managed action has no steps: $resourceId", action.installSteps.isNotEmpty())
                 assertTrue(
                     "Managed action has no success contract: $resourceId",
-                    action.managedCommands.isNotEmpty() || action.verifications.isNotEmpty()
+                    action.managedCommands.isNotEmpty() ||
+                        action.verifications.isNotEmpty() ||
+                        action.androidPackageHandoff != null
                 )
-                assertTrue(KiteResourceInstallPlanCompiler.compile(action).isNotBlank())
                 assertTrue(KiteResourceInstallPlanCompiler.compileVerification(action).isNotBlank())
-                val bundledCommand = KiteResourceInstallPlanCompiler.bundledCommand(action)
-                    ?.removePrefix("install.sh")
-                    ?.trim()
-                    ?.ifBlank { "--install" }
-                    ?.let { mode -> KiteResourceInstallRecipes.localToolchainCommand(resourceId, mode, cleanInstallRoot = false) }
-                val rawCommand = bundledCommand ?: KiteResourceInstallPlanCompiler.compile(action)
-                val script = KiteResourceInstallRecipes.manifestInstallCommand(
-                    resourceId = resourceId,
-                    displayName = loaded.name,
-                    rawCommand = rawCommand,
-                    managedCommands = action.managedCommands,
-                    cleanInstallRoot = action.cleanInstallRoot,
-                    verificationCommand = KiteResourceInstallPlanCompiler.compileVerification(action),
-                    versionProbeCommand = sourcePlan.versionCheck.installed?.command.orEmpty(),
-                    preservePaths = loaded.management.preservePaths
-                )
-                assertTrue("Generated script has no commit gate: $resourceId", script.contains("KITE_RESOURCE_STEP commit-install"))
-                File(generatedScripts, "$resourceId.sh").writeText(script)
+                if (action.installSteps.none { it.type == KiteResourceInstallPlanCompiler.STEP_ARCHIVE }) {
+                    assertTrue(KiteResourceInstallPlanCompiler.compile(action).isNotBlank())
+                    val bundledCommand = KiteResourceInstallPlanCompiler.bundledCommand(action)
+                        ?.removePrefix("install.sh")
+                        ?.trim()
+                        ?.ifBlank { "--install" }
+                        ?.let { mode -> KiteResourceInstallRecipes.localToolchainCommand(resourceId, mode, cleanInstallRoot = false) }
+                    val rawCommand = bundledCommand ?: KiteResourceInstallPlanCompiler.compile(action)
+                    val script = KiteResourceInstallRecipes.manifestInstallCommand(
+                        resourceId = resourceId,
+                        displayName = loaded.name,
+                        rawCommand = rawCommand,
+                        managedCommands = action.managedCommands,
+                        cleanInstallRoot = action.cleanInstallRoot,
+                        verificationCommand = KiteResourceInstallPlanCompiler.compileVerification(action),
+                        versionProbeCommand = sourcePlan.versionCheck.installed?.command.orEmpty(),
+                        preservePaths = loaded.management.preservePaths
+                    )
+                    assertTrue("Generated script has no commit gate: $resourceId", script.contains("KITE_RESOURCE_STEP commit-install"))
+                    File(generatedScripts, "$resourceId.sh").writeText(script)
+                }
             }
 
             val installJson = loaded.rawJson

@@ -6,6 +6,8 @@ import com.kite.app.application.settings.SettingsCommand
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.application.settings.SettingsDropZoneSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.resources.KiteResourceSourceCatalog
+import com.kite.app.resources.KiteResourceSourcePreferences
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.KiteThemeMode
 import com.kite.app.theme.ThemeColorSchemeKey
@@ -42,6 +44,7 @@ class AndroidSettingsGatewayTest {
         assertEquals(KiteTheme.defaultSelection, snapshot.themeSelection)
         assertEquals(AppLanguagePreference.System, snapshot.appLanguage)
         assertEquals(BrowserRuntimeMode.Default, snapshot.browserRuntimeMode)
+        assertEquals(KiteResourceSourcePreferences().normalized(), snapshot.resourceSourcePreferences)
         assertTrue(snapshot.restoreLastScreen)
         assertFalse(snapshot.hideMainTaskFromRecents)
         assertFalse(snapshot.notificationsEnabled)
@@ -56,6 +59,9 @@ class AndroidSettingsGatewayTest {
         ))
         gateway.update(SettingsCommand.UpdateTheme(ThemeCommand.SetMode(KiteThemeMode.DARK)))
         gateway.update(SettingsCommand.SetBrowserRuntimeMode(BrowserRuntimeMode.AutomationBrowser))
+        gateway.update(SettingsCommand.SetResourceSourceOrder(
+            listOf(KiteResourceSourceCatalog.OFFICIAL, KiteResourceSourceCatalog.HUAWEI),
+        ))
         gateway.update(SettingsCommand.SetRestoreLastScreen(false))
         val latest = gateway.update(SettingsCommand.SetHideMainTaskFromRecents(true))
         val restored = gateway()
@@ -66,6 +72,10 @@ class AndroidSettingsGatewayTest {
         )
         assertEquals(KiteThemeMode.DARK, latest.themeSelection.mode)
         assertEquals(BrowserRuntimeMode.AutomationBrowser, latest.browserRuntimeMode)
+        assertEquals(
+            KiteResourceSourceCatalog.OFFICIAL,
+            latest.resourceSourcePreferences.orderedSourceIds.first(),
+        )
         assertFalse(latest.restoreLastScreen)
         assertTrue(latest.hideMainTaskFromRecents)
         assertEquals(latest.copy(revision = restored.currentSnapshot().revision), restored.currentSnapshot())

@@ -74,6 +74,9 @@ internal class SettingsCategoryFragment : Fragment() {
         onSelectBrowserMode = { mode ->
             dispatch(SettingsFeatureAction.SelectBrowserMode(mode))
         },
+        onSetResourceSourceOrder = { sourceIds ->
+            dispatch(SettingsFeatureAction.SetResourceSourceOrder(sourceIds))
+        },
         onSelectTerminalFontSize = { fontSize ->
             TerminalUiPreferences.saveFontSizeDp(requireContext(), fontSize)
             screen?.renderTerminalPreferences(

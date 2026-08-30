@@ -6,6 +6,7 @@ import com.kite.app.application.settings.SettingsGateway
 import com.kite.app.application.settings.SettingsSnapshot
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.resources.KiteResourceSourceCatalog
 import com.kite.app.theme.KiteThemeMode
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeColorSeed
@@ -52,6 +53,11 @@ class SettingsFeatureControllerTest {
         val browser = controller.dispatch(
             SettingsFeatureAction.SelectBrowserMode(BrowserRuntimeMode.AutomationBrowser)
         )
+        assertNull(controller.dispatch(
+            SettingsFeatureAction.SetResourceSourceOrder(
+                listOf(KiteResourceSourceCatalog.OFFICIAL, KiteResourceSourceCatalog.HUAWEI),
+            )
+        ))
 
         assertFalse(gateway.currentSnapshot().restoreLastScreen)
         assertTrue(gateway.currentSnapshot().hideMainTaskFromRecents)
@@ -69,6 +75,10 @@ class SettingsFeatureControllerTest {
         assertEquals(
             BrowserRuntimeMode.AutomationBrowser,
             (browser as SettingsFeatureEffect.BrowserModeChanged).mode
+        )
+        assertEquals(
+            KiteResourceSourceCatalog.OFFICIAL,
+            gateway.currentSnapshot().resourceSourcePreferences.orderedSourceIds.first(),
         )
     }
 
@@ -107,6 +117,11 @@ class SettingsFeatureControllerTest {
                 )
                 is SettingsCommand.SetAppLanguage -> current.copy(appLanguage = command.language)
                 is SettingsCommand.SetBrowserRuntimeMode -> current.copy(browserRuntimeMode = command.mode)
+                is SettingsCommand.SetResourceSourceOrder -> current.copy(
+                    resourceSourcePreferences = com.kite.app.resources.KiteResourceSourcePreferences(
+                        command.sourceIds,
+                    ).normalized(),
+                )
                 is SettingsCommand.SetRestoreLastScreen -> current.copy(restoreLastScreen = command.enabled)
                 is SettingsCommand.SetHideMainTaskFromRecents -> current.copy(
                     hideMainTaskFromRecents = command.enabled

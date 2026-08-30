@@ -12,16 +12,22 @@ import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.resources.KiteResourceShellAction
 import com.kite.app.resources.KiteResourceSourcePlanFactory
+import com.kite.app.resources.KiteResourceSourcePreferences
+import com.kite.app.resources.KiteResourceSourcePolicy
 import java.net.URI
 import org.json.JSONObject
 
 /** 把资源清单编译成有限运行配方，不读取页面模型。 */
 internal class AndroidResourceRecipeFactory(
-    private val manifestLoader: KiteResourceManifestLoader
+    private val manifestLoader: KiteResourceManifestLoader,
+    private val sourcePreferencesProvider: () -> KiteResourceSourcePreferences = {
+        KiteResourceSourcePreferences()
+    },
 ) {
     fun recipe(resourceId: String, operation: String, targetVersion: String? = null): KiteRecipe? {
         val manifest = manifestLoader.requestManifest(resourceId) ?: return null
         val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest, targetVersion)
+        val sourcePreferences = sourcePreferencesProvider()
         val actions = when (operation) {
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
@@ -30,8 +36,11 @@ internal class AndroidResourceRecipeFactory(
             KiteResourceInstallRecipes.OP_UNINSTALL -> sourcePlan.uninstallActions
             else -> return null
         }
-        val steps = actions.flatMapIndexed { index, action ->
-            actionSteps(manifest, operation, action, targetVersion, index)
+        val routedActions = actions.map { action ->
+            KiteResourceSourcePolicy.apply(action, sourcePreferences)
+        }
+        val steps = routedActions.flatMapIndexed { index, action ->
+            actionSteps(manifest, operation, action, targetVersion, index, sourcePreferences)
         }
         if (steps.isEmpty()) return null
         return KiteResourceInstallRecipes.toRecipe(
@@ -102,6 +111,7 @@ internal class AndroidResourceRecipeFactory(
         action: KiteResourceShellAction,
         targetVersion: String?,
         actionIndex: Int,
+        sourcePreferences: KiteResourceSourcePreferences,
     ): List<KiteRecipeStep> {
         val stepId = "${operation}_${KiteResourceInstallRecipes.safeId(manifest.id)}_${actionIndex + 1}"
         val surfaceMode = action.surfaceMode.ifBlank { KiteRecipe.SURFACE_MODE_PANEL }
@@ -112,7 +122,7 @@ internal class AndroidResourceRecipeFactory(
         val shellStep = KiteRecipeStep(
             id = stepId,
             type = KiteRecipe.STEP_SHELL,
-            cmd = actionCommand(manifest, operation, shellAction, targetVersion),
+            cmd = actionCommand(manifest, operation, shellAction, targetVersion, sourcePreferences),
             surfaceMode = surfaceMode,
             workdir = workdir,
             timeoutMs = timeoutMs,
@@ -182,6 +192,7 @@ internal class AndroidResourceRecipeFactory(
                 params.put(AndroidNativeDownloadCapabilityProvider.PARAM_URL, urls.single())
             } else {
                 params.put(AndroidNativeDownloadCapabilityProvider.PARAM_URLS, urls.joinToString("\n"))
+                params.put(AndroidNativeDownloadCapabilityProvider.PARAM_CONNECT_TIMEOUT_MS, "6000")
             }
             if (step.sha256.isNotBlank()) {
                 params.put(AndroidNativeDownloadCapabilityProvider.PARAM_EXPECTED_SHA256, step.sha256)
@@ -276,7 +287,8 @@ internal class AndroidResourceRecipeFactory(
         manifest: KiteResourceManifest,
         operation: String,
         action: KiteResourceShellAction,
-        targetVersion: String?
+        targetVersion: String?,
+        sourcePreferences: KiteResourceSourcePreferences,
     ): String = when (operation) {
         KiteResourceInstallRecipes.OP_INSTALL,
         KiteResourceInstallRecipes.OP_UPDATE,
@@ -289,7 +301,7 @@ internal class AndroidResourceRecipeFactory(
             } else {
                 null
             }
-            val installCommand = bundled ?: KiteResourceInstallPlanCompiler.compile(action)
+            val installCommand = bundled ?: KiteResourceInstallPlanCompiler.compile(action, sourcePreferences)
             KiteResourceInstallRecipes.manifestInstallCommand(
                 resourceId = manifest.id,
                 displayName = manifest.name,

@@ -9,6 +9,7 @@ import com.kite.app.application.settings.SettingsDropZoneSnapshot
 import com.kite.app.application.settings.SettingsGateway
 import com.kite.app.application.settings.SettingsSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.resources.KiteResourceSourcePreferences
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.KiteThemeMode
 import com.kite.app.theme.ThemeColorSchemeKey
@@ -59,6 +60,13 @@ internal class AndroidSettingsGateway(
             is SettingsCommand.SetBrowserRuntimeMode -> appPreferences.edit()
                 .putString(KEY_BROWSER_RUNTIME_MODE, command.mode.storageKey)
                 .commit()
+            is SettingsCommand.SetResourceSourceOrder -> appPreferences.edit()
+                .putString(
+                    KEY_RESOURCE_SOURCE_ORDER,
+                    KiteResourceSourcePreferences(command.sourceIds).normalized().encode(),
+                )
+                .remove(KEY_RESOURCE_SOURCE_MODE)
+                .commit()
             is SettingsCommand.SetRestoreLastScreen -> appPreferences.edit()
                 .putBoolean(KEY_RESTORE_LAST_SCREEN, command.enabled)
                 .commit()
@@ -76,6 +84,7 @@ internal class AndroidSettingsGateway(
         browserRuntimeMode = BrowserRuntimeMode.fromStorageKey(
             appPreferences.getString(KEY_BROWSER_RUNTIME_MODE, null)
         ),
+        resourceSourcePreferences = readResourceSourcePreferences(),
         restoreLastScreen = appPreferences.getBoolean(KEY_RESTORE_LAST_SCREEN, true),
         hideMainTaskFromRecents = appPreferences.getBoolean(KEY_HIDE_MAIN_TASK_FROM_RECENTS, false),
         notificationsEnabled = readNotificationsEnabled(),
@@ -128,6 +137,17 @@ internal class AndroidSettingsGateway(
         )
     }
 
+    private fun readResourceSourcePreferences(): KiteResourceSourcePreferences {
+        val encoded = appPreferences.getString(KEY_RESOURCE_SOURCE_ORDER, null)
+        return if (encoded.isNullOrBlank()) {
+            KiteResourceSourcePreferences.migrateLegacyMode(
+                appPreferences.getString(KEY_RESOURCE_SOURCE_MODE, null),
+            )
+        } else {
+            KiteResourceSourcePreferences.decode(encoded)
+        }
+    }
+
     private fun writeThemeSelection(selection: ThemeSelection) {
         val normalized = KiteTheme.normalize(selection)
         val editor = themePreferences.edit()
@@ -170,6 +190,8 @@ internal class AndroidSettingsGateway(
         const val COLOR_SELECTION_REGISTERED = "registered"
         const val COLOR_SELECTION_CUSTOM = "custom"
         const val KEY_BROWSER_RUNTIME_MODE = "browser_runtime_mode"
+        const val KEY_RESOURCE_SOURCE_ORDER = "resource_source_order"
+        const val KEY_RESOURCE_SOURCE_MODE = "resource_source_mode"
         const val KEY_RESTORE_LAST_SCREEN = "restore_last_screen"
         const val KEY_HIDE_MAIN_TASK_FROM_RECENTS = "hide_main_task_from_recents"
     }

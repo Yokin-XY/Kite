@@ -17,6 +17,7 @@ import com.kite.app.application.runtimemanagement.ProotViewAcceptanceCheck
 import com.kite.app.application.runtimemanagement.ProotViewAcceptanceResult
 import com.kite.app.application.runtimemanagement.ProotViewInspectionSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.resources.KiteResourceSourcePreferences
 import com.kite.app.foundation.devicebridge.DeviceBridgeBackendMode
 import com.kite.app.foundation.devicebridge.DeviceBridgeBackendSnapshot
 import com.kite.app.foundation.devicebridge.DeviceBridgeIdentity
@@ -157,6 +158,11 @@ class SettingsScreenTest {
         assertEquals(0, callbacks)
         assertTrue(browser.root.allTexts().contains(activity.getString(R.string.settings_browser_stable_title)))
         assertTrue(browser.root.allTexts().contains(activity.getString(R.string.settings_network_policy_title)))
+        assertTrue(browser.root.allTexts().contains(activity.getString(R.string.settings_resource_source_title)))
+        assertTrue(browser.root.allTexts().any {
+            it.contains(activity.getString(R.string.settings_resource_source_huawei)) &&
+                it.contains(activity.getString(R.string.settings_resource_source_npmmirror))
+        })
         assertTrue(experiments.root.allTexts().contains(activity.getString(R.string.settings_browser_automation_enabled_summary)))
         assertTrue(appearance.root.allTexts().contains(activity.getString(R.string.settings_language_english)))
         assertTrue(permissions.root.allTexts().contains(activity.getString(R.string.settings_notifications_enabled_summary)))
@@ -480,6 +486,7 @@ class SettingsScreenTest {
         theme = KiteTheme.defaultSelection,
         appLanguage = AppLanguagePreference.System,
         browserRuntimeMode = BrowserRuntimeMode.Default,
+        resourceSourcePreferences = KiteResourceSourcePreferences(),
         restoreLastScreen = true,
         hideMainTaskFromRecents = false,
         notificationsEnabled = false,

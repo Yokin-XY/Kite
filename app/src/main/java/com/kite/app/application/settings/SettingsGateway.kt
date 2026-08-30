@@ -1,6 +1,7 @@
 package com.kite.app.application.settings
 
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.resources.KiteResourceSourcePreferences
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeCommand
 import com.kite.app.theme.ThemeSelection
@@ -13,6 +14,7 @@ data class SettingsDropZoneSnapshot(
 data class SettingsSnapshot(
     val appLanguage: AppLanguagePreference,
     val browserRuntimeMode: BrowserRuntimeMode,
+    val resourceSourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
     val restoreLastScreen: Boolean,
     val hideMainTaskFromRecents: Boolean,
     val notificationsEnabled: Boolean,
@@ -25,6 +27,7 @@ sealed interface SettingsCommand {
     data class UpdateTheme(val command: ThemeCommand) : SettingsCommand
     data class SetAppLanguage(val language: AppLanguagePreference) : SettingsCommand
     data class SetBrowserRuntimeMode(val mode: BrowserRuntimeMode) : SettingsCommand
+    data class SetResourceSourceOrder(val sourceIds: List<String>) : SettingsCommand
     data class SetRestoreLastScreen(val enabled: Boolean) : SettingsCommand
     data class SetHideMainTaskFromRecents(val enabled: Boolean) : SettingsCommand
 }

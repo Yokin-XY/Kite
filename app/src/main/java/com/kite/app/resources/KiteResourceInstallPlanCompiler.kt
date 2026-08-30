@@ -11,23 +11,28 @@ object KiteResourceInstallPlanCompiler {
     const val STEP_SCRIPT = "script"
     const val STEP_SHELL = "shell"
 
-    fun compile(action: KiteResourceShellAction): String {
+    fun compile(
+        action: KiteResourceShellAction,
+        sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
+    ): String {
         if (action.type == "shell") return action.cmd
         require(action.type == ACTION_MANAGED) { "Unsupported resource install action: ${action.type}" }
         require(action.installSteps.isNotEmpty()) { "Managed resource install action has no steps" }
+        val routedAction = KiteResourceSourcePolicy.apply(action, sourcePreferences)
 
         return buildString {
             appendLine("set -e")
-            if (action.installSteps.any { it.type in setOf(STEP_APT, STEP_GIT, STEP_NPM, STEP_SCRIPT) }) {
-                appendLine(heartbeatHelper())
+            appendLine(sourceRoutingHelper(sourcePreferences))
+            if (routedAction.installSteps.any { it.type in setOf(STEP_APT, STEP_GIT, STEP_NPM, STEP_SCRIPT) }) {
+                appendLine(stepRunnerHelper())
             }
-            if (action.installSteps.any { it.type == STEP_DOWNLOAD }) {
+            if (routedAction.installSteps.any { it.type == STEP_DOWNLOAD }) {
                 appendLine(downloadHelper())
             }
-            if (action.installSteps.any { it.type == STEP_GIT }) {
+            if (routedAction.installSteps.any { it.type == STEP_GIT }) {
                 appendLine(gitHelper())
             }
-            action.installSteps.forEach { step ->
+            routedAction.installSteps.forEach { step ->
                 appendLine(compileStep(step))
             }
         }.trim()
@@ -146,18 +151,44 @@ object KiteResourceInstallPlanCompiler {
         } else {
             val functionSuffix = safeId(step.id).replace(Regex("[^a-z0-9_]"), "_")
             val functionName = "kite_resource_npm_$functionSuffix"
-            val registries = step.registries.distinct().joinToString(" ") { shellLiteral(it) }
+            val routes = step.registries.distinct().joinToString(" ") { registry ->
+                shellLiteral("${KiteResourceSourceCatalog.sourceIdFor(registry)}|$registry")
+            }
             """
                 $functionName() {
                   last_status=1
-                  for npm_registry in $registries; do
-                    echo "KITE_RESOURCE_ROUTE stage=install step=${safeId(step.id)} registry=${'$'}npm_registry"
-                    if npm install -g --registry="${'$'}npm_registry" $installArguments; then
+                  for npm_route in $routes; do
+                    source_id="${'$'}{npm_route%%|*}"
+                    npm_registry="${'$'}{npm_route#*|}"
+                    attempt_root="${'$'}install_root/.kite-source-attempt/npm/${'$'}source_id"
+                    attempt_prefix="${'$'}attempt_root/prefix"
+                    attempt_cache="${'$'}install_root/.kite-source-cache/npm/${'$'}source_id"
+                    attempt_log="${'$'}attempt_root/npm-install.log"
+                    rm -rf "${'$'}attempt_root"
+                    mkdir -p "${'$'}attempt_prefix" "${'$'}attempt_cache"
+                    echo "KITE_RESOURCE_ROUTE stage=acquire step=${safeId(step.id)} source=${'$'}source_id registry=${'$'}npm_registry"
+                    set +e
+                    npm install -g --prefix="${'$'}attempt_prefix" --cache="${'$'}attempt_cache" --registry="${'$'}npm_registry" $installArguments >"${'$'}attempt_log" 2>&1
+                    last_status=${'$'}?
+                    set -e
+                    cat "${'$'}attempt_log"
+                    if [ "${'$'}last_status" -eq 0 ]; then
+                      rm -rf "${'$'}npm_config_prefix"
+                      mkdir -p "${'$'}(dirname "${'$'}npm_config_prefix")"
+                      mv "${'$'}attempt_prefix" "${'$'}npm_config_prefix"
+                      rm -rf "${'$'}install_root/.kite-source-attempt"
+                      echo "KITE_RESOURCE_STEP acquire-complete ${safeId(step.id)} source=${'$'}source_id"
                       return 0
-                    else
-                      last_status=${'$'}?
                     fi
+                    if ! kite_resource_is_source_failure "${'$'}last_status" "${'$'}attempt_log"; then
+                      echo "KITE_RESOURCE_FAILURE stage=install step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}last_status reason=non-network"
+                      rm -rf "${'$'}install_root/.kite-source-attempt"
+                      return "${'$'}last_status"
+                    fi
+                    echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}last_status reason=source-unavailable"
+                    rm -rf "${'$'}attempt_root"
                   done
+                  rm -rf "${'$'}install_root/.kite-source-attempt"
                   return "${'$'}last_status"
                 }
                 kite_resource_run ${shellLiteral(safeId(step.id))} install $functionName
@@ -184,17 +215,47 @@ object KiteResourceInstallPlanCompiler {
     private fun compileApt(step: KiteResourceInstallStep): String {
         require(step.updateIndex || step.packages.isNotEmpty()) { "apt step ${step.id} has no operation" }
         val id = safeId(step.id)
-        val options = "-o Acquire::Retries=${step.retryAttempts} -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+        val packages = step.packages.joinToString(" ") { shellLiteral(it) }
         return buildString {
             appendLine("command -v apt-get >/dev/null 2>&1 || { echo \"KITE_RESOURCE_FAILURE stage=prepare step=$id reason=apt-missing\"; exit 127; }")
             appendLine("export DEBIAN_FRONTEND=noninteractive")
-            if (step.updateIndex) {
-                appendLine("kite_resource_run ${shellLiteral(id)} acquire apt-get $options update")
-            }
+            appendLine("apt_codename=\"${'$'}(. /etc/os-release 2>/dev/null; printf '%s' \"${'$'}{VERSION_CODENAME:-}\")\"")
+            appendLine("[ -n \"${'$'}apt_codename\" ] || { echo \"KITE_RESOURCE_FAILURE stage=prepare step=$id reason=ubuntu-codename-missing\"; exit 65; }")
+            appendLine("apt_selected_root=")
+            appendLine("apt_last_status=1")
+            appendLine("for apt_route in ${'$'}KITE_RESOURCE_UBUNTU_PORTS_ROUTES; do")
+            appendLine("  source_id=\"${'$'}{apt_route%%|*}\"")
+            appendLine("  apt_base=\"${'$'}{apt_route#*|}\"")
+            appendLine("  attempt_root=\"${'$'}install_root/.kite-source-attempt/apt/${'$'}source_id\"")
+            appendLine("  rm -rf \"${'$'}attempt_root\"")
+            appendLine("  mkdir -p \"${'$'}attempt_root/lists/partial\" \"${'$'}attempt_root/archives/partial\"")
+            appendLine("  sources_file=\"${'$'}attempt_root/sources.list\"")
+            appendLine("  for pocket in \"\" -updates -backports -security; do printf 'deb %s %s%s main restricted universe multiverse\\n' \"${'$'}apt_base\" \"${'$'}apt_codename\" \"${'$'}pocket\"; done > \"${'$'}sources_file\"")
+            appendLine("  apt_options=\"-o Dir::Etc::sourcelist=${'$'}sources_file -o Dir::Etc::sourceparts=- -o Dir::State::lists=${'$'}attempt_root/lists -o Dir::Cache::archives=${'$'}attempt_root/archives -o Acquire::Retries=${step.retryAttempts} -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30\"")
+            appendLine("  echo \"KITE_RESOURCE_ROUTE stage=acquire step=$id source=${'$'}source_id base=${'$'}apt_base\"")
+            appendLine("  attempt_log=\"${'$'}attempt_root/apt-acquire.log\"")
+            appendLine("  : > \"${'$'}attempt_log\"")
+            appendLine("  set +e")
+            appendLine("  apt-get ${'$'}apt_options update >>\"${'$'}attempt_log\" 2>&1")
+            appendLine("  apt_last_status=${'$'}?")
             if (step.packages.isNotEmpty()) {
-                val packages = step.packages.joinToString(" ") { shellLiteral(it) }
-                appendLine("kite_resource_run ${shellLiteral(id)} install apt-get $options install -y $packages")
+                appendLine("  if [ \"${'$'}apt_last_status\" -eq 0 ]; then apt-get ${'$'}apt_options --download-only install -y $packages >>\"${'$'}attempt_log\" 2>&1; apt_last_status=${'$'}?; fi")
             }
+            appendLine("  set -e")
+            appendLine("  cat \"${'$'}attempt_log\"")
+            appendLine("  if [ \"${'$'}apt_last_status\" -eq 0 ]; then apt_selected_root=\"${'$'}attempt_root\"; break; fi")
+            appendLine("  if ! kite_resource_is_source_failure \"${'$'}apt_last_status\" \"${'$'}attempt_log\"; then")
+            appendLine("    echo \"KITE_RESOURCE_FAILURE stage=install step=$id source=${'$'}source_id exit=${'$'}apt_last_status reason=non-network\"")
+            appendLine("    exit \"${'$'}apt_last_status\"")
+            appendLine("  fi")
+            appendLine("  echo \"KITE_RESOURCE_RETRY stage=acquire step=$id source=${'$'}source_id exit=${'$'}apt_last_status\"")
+            appendLine("done")
+            appendLine("[ -n \"${'$'}apt_selected_root\" ] || { echo \"KITE_RESOURCE_FAILURE stage=acquire step=$id exit=${'$'}apt_last_status\"; exit \"${'$'}apt_last_status\"; }")
+            if (step.packages.isNotEmpty()) {
+                appendLine("apt_options=\"-o Dir::Etc::sourcelist=${'$'}apt_selected_root/sources.list -o Dir::Etc::sourceparts=- -o Dir::State::lists=${'$'}apt_selected_root/lists -o Dir::Cache::archives=${'$'}apt_selected_root/archives\"")
+                appendLine("kite_resource_run ${shellLiteral(id)} install apt-get ${'$'}apt_options --no-download install -y $packages")
+            }
+            appendLine("rm -rf \"${'$'}install_root/.kite-source-attempt/apt\"")
         }.trim()
     }
 
@@ -230,23 +291,13 @@ object KiteResourceInstallPlanCompiler {
         }
     }
 
-    private fun heartbeatHelper(): String = """
+    private fun stepRunnerHelper(): String = """
         kite_resource_run() {
           step_id="${'$'}1"
           stage="${'$'}2"
           shift 2
           echo "KITE_RESOURCE_STEP ${'$'}stage ${'$'}step_id"
-          "${'$'}@" &
-          task_pid=${'$'}!
-          elapsed=0
-          while kill -0 "${'$'}task_pid" 2>/dev/null; do
-            sleep 1
-            elapsed=$((elapsed + 1))
-            if [ $((elapsed % 5)) -eq 0 ] && kill -0 "${'$'}task_pid" 2>/dev/null; then
-              echo "KITE_RESOURCE_HEARTBEAT stage=${'$'}stage step=${'$'}step_id elapsed=${'$'}elapsed"
-            fi
-          done
-          if wait "${'$'}task_pid"; then
+          if "${'$'}@"; then
             echo "KITE_RESOURCE_STEP ${'$'}stage-complete ${'$'}step_id"
             return 0
           else
@@ -256,6 +307,31 @@ object KiteResourceInstallPlanCompiler {
           return "${'$'}task_status"
         }
     """.trimIndent()
+
+    private fun sourceRoutingHelper(preferences: KiteResourceSourcePreferences): String {
+        val normalized = preferences.normalized()
+        val pypiRoutes = KiteResourceSourcePolicy.pypiRoutes(normalized)
+        val pypiRouteValue = pypiRoutes.joinToString(" ") { "${it.sourceId}|${it.endpoint}" }
+        val pypiIndexes = pypiRoutes.joinToString(" ") { it.endpoint }
+        val ubuntuRoutes = KiteResourceSourcePolicy.ubuntuPortsRoutes(normalized)
+            .joinToString(" ") { "${it.sourceId}|${it.endpoint}" }
+        return """
+            export KITE_RESOURCE_SOURCE_ORDER=${shellLiteral(normalized.orderedSourceIds.joinToString(","))}
+            export KITE_RESOURCE_PYPI_ROUTES=${shellLiteral(pypiRouteValue)}
+            export KITE_RESOURCE_PYPI_INDEXES=${shellLiteral(pypiIndexes)}
+            export KITE_RESOURCE_UBUNTU_PORTS_ROUTES=${shellLiteral(ubuntuRoutes)}
+            export UV_DEFAULT_INDEX="${'$'}(printf '%s\n' ${'$'}KITE_RESOURCE_PYPI_INDEXES | head -n 1)"
+            kite_resource_is_source_failure() {
+              source_status="${'$'}1"
+              source_log="${'$'}2"
+              [ "${'$'}source_status" -eq 124 ] && return 0
+              if grep -Eiq 'sha256-mismatch|checksum mismatch|hash sum mismatch|signature[^[:cntrl:]]*(invalid|failed)|NO_PUBKEY|repository[^[:cntrl:]]*not signed|Unable to locate package|dependency conflict|ResolutionImpossible' "${'$'}source_log"; then
+                return 1
+              fi
+              grep -Eiq 'EAI_AGAIN|ENETUNREACH|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ERR_SOCKET_TIMEOUT|Temporary failure resolving|Could not resolve|Connection (failed|timed out|refused)|Network is unreachable|Failed to fetch|error sending request|dns error|Request failed after [0-9]+ retries|E(404|429|5[0-9][0-9])|status code (404|429|5[0-9][0-9])|HTTP[^[:cntrl:]]*(404|429|5[0-9][0-9])' "${'$'}source_log"
+            }
+        """.trimIndent()
+    }
 
     private fun downloadHelper(): String = """
         kite_resource_download() {
@@ -349,8 +425,8 @@ object KiteResourceInstallPlanCompiler {
                   if [ "${'$'}actual_commit" != "${'$'}expected_commit" ]; then
                     rm -rf "${'$'}candidate"
                     last_status=65
-                    echo "KITE_RESOURCE_RETRY stage=verify-download step=${'$'}step_id source=${'$'}repository reason=git-commit-mismatch expected=${'$'}expected_commit actual=${'$'}actual_commit"
-                    break
+                    echo "KITE_RESOURCE_FAILURE stage=verify-download step=${'$'}step_id source=${'$'}repository reason=git-commit-mismatch expected=${'$'}expected_commit actual=${'$'}actual_commit"
+                    return 65
                   fi
                 fi
                 rm -rf "${'$'}destination"
