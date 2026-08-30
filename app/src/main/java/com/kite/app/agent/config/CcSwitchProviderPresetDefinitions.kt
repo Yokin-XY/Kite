@@ -44,7 +44,7 @@ internal object CcSwitchProviderPresetDefinitions {
             market = AgentProviderMarket.China,
             routes = openAiRoutes(
                 "https://open.bigmodel.cn/api/paas/v4/",
-                model("glm-5.2", "GLM-5.2"),
+                *zhipuApiModels(),
             ),
         ),
         definition(
@@ -351,6 +351,22 @@ internal object CcSwitchProviderPresetDefinitions {
         model("MiniMax-M2.5", "MiniMax M2.5"),
         model("MiniMax-M2.1", "MiniMax M2.1"),
         model("MiniMax-M2", "MiniMax M2"),
+    )
+
+    private fun zhipuApiModels() = arrayOf(
+        model("glm-5.2", "GLM-5.2"),
+        model("glm-5.1", "GLM-5.1"),
+        model("glm-5-turbo", "GLM-5 Turbo"),
+        model("glm-5", "GLM-5"),
+        model("glm-4.7", "GLM-4.7"),
+        model("glm-4.7-flash", "GLM-4.7 Flash"),
+        model("glm-4.7-flashx", "GLM-4.7 FlashX"),
+        model("glm-4.6", "GLM-4.6"),
+        model("glm-4.5-air", "GLM-4.5 Air"),
+        model("glm-4.5-airx", "GLM-4.5 AirX"),
+        model("glm-4.5-flash", "GLM-4.5 Flash"),
+        model("glm-4-flash-250414", "GLM-4 Flash 250414"),
+        model("glm-4-flashx-250414", "GLM-4 FlashX 250414"),
     )
 
     private data class ProviderDefinition(

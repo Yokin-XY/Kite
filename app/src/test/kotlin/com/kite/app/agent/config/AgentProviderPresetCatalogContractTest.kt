@@ -25,6 +25,24 @@ class AgentProviderPresetCatalogContractTest {
         assertEquals(AgentProviderAccessChannel.CodingPlan, coding.accessChannel)
         assertEquals(
             listOf(
+                "glm-5.2",
+                "glm-5.1",
+                "glm-5-turbo",
+                "glm-5",
+                "glm-4.7",
+                "glm-4.7-flash",
+                "glm-4.7-flashx",
+                "glm-4.6",
+                "glm-4.5-air",
+                "glm-4.5-airx",
+                "glm-4.5-flash",
+                "glm-4-flash-250414",
+                "glm-4-flashx-250414",
+            ),
+            general.models.map { it.id },
+        )
+        assertEquals(
+            listOf(
                 "glm-5.3-flash",
                 "glm-5.3",
                 "glm-5.2",

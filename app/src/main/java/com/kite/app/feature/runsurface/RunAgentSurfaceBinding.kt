@@ -8947,15 +8947,10 @@ internal class RunAgentSurfaceBinding(
             ?.configuration
             .orEmpty()
             .map { option -> option.withDraftValue(preferences?.configuration?.get(option.id)) }
-        val runtimeCategories = runtimeOptions.mapNotNullTo(hashSetOf(), AgentConfigOption::category).apply {
-            addAll(runtimeCatalog?.resolvedConfigurationCategories.orEmpty())
-        }
         val storedControls = draftProviderCatalogSnapshot
             ?.controls
             .orEmpty()
-            .filterNot { it.category in runtimeCategories }
             .map { option -> option.withDraftValue(preferences?.configuration?.get(option.id)) }
-        val cached = storedControls + runtimeOptions
         val persistentModel = draftModelSnapshot?.let { snapshot ->
             AgentDraftModelPolicy.option(
                 snapshot,
@@ -8966,11 +8961,12 @@ internal class RunAgentSurfaceBinding(
                 modelLibraryOfficialAccounts(agentId),
             )
         }
-        return if (persistentModel == null) {
-            cached
-        } else {
-            listOf(persistentModel) + cached.filterNot { it.category == AgentConfigCategory.Model }
-        }
+        return AgentDraftSessionConfigurationPolicy.merge(
+            storedControls = storedControls,
+            runtimeOptions = runtimeOptions,
+            runtimeResolvedCategories = runtimeCatalog?.resolvedConfigurationCategories.orEmpty(),
+            persistentModel = persistentModel,
+        )
     }
 
     private fun modelLibraryOfficialAccounts(targetAgentId: String?): List<AgentOfficialAccountSpec> {
