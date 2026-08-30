@@ -33,6 +33,14 @@ class KiteResourceCatalogProjectorTest {
                     "foundation",
                     "基础环境",
                     listOf(KiteResourceHomeSection("foundation", "基础环境", "list", emptyList()))
+                ),
+                KiteResourceHomeTab(
+                    "recommended",
+                    "推荐",
+                    listOf(
+                        KiteResourceHomeSection("recommended", "推荐", "shelf", listOf("kite.legacy")),
+                        KiteResourceHomeSection("foundation", "基础环境", "list", emptyList())
+                    )
                 )
             ),
             chips = emptyList(),
@@ -58,6 +66,8 @@ class KiteResourceCatalogProjectorTest {
             listOf("kite.second", "kite.first"),
             projected.tabs[2].sections.single().items
         )
+        assertEquals(listOf("kite.legacy"), projected.tabs[3].sections[0].items)
+        assertEquals(listOf("kite.second", "kite.first"), projected.tabs[3].sections[1].items)
         assertEquals("kite.second", projected.hero?.resourceId)
     }
 

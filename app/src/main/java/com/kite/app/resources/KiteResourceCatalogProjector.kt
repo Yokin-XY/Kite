@@ -41,8 +41,9 @@ internal object KiteResourceCatalogProjector {
                     ).filter { it.items.isNotEmpty() }
                 }
                 tab.sections.isNotEmpty() -> tab.sections.mapNotNull { section ->
-                    val automatic = candidates
+                    val automatic = (if (candidates.isEmpty()) visible.values else candidates)
                         .filter { section.id in it.sections }
+                        .sortedWith(resourceOrder)
                         .map(KiteResourceManifest::id)
                     section.copy(items = merge(section.items, automatic, visible.keys))
                         .takeIf { it.items.isNotEmpty() }

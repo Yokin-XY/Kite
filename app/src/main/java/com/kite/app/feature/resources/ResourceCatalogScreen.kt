@@ -269,53 +269,29 @@ internal class ResourceCatalogScreen(
     private fun sectionView(section: ResourceSectionPresentation, generation: Long): View =
         when {
             section.style.equals("shelf", ignoreCase = true) -> shelfSection(section, generation)
-            section.style.equals("grid", ignoreCase = true) -> gridSection(section, generation)
-            else -> listSection(section, generation)
+            section.style.equals("plain-list", ignoreCase = true) -> listSection(section, generation, showTitle = false)
+            else -> listSection(section, generation, showTitle = true)
         }
 
-    private fun gridSection(section: ResourceSectionPresentation, generation: Long): View {
+    private fun listSection(
+        section: ResourceSectionPresentation,
+        generation: Long,
+        showTitle: Boolean
+    ): View {
         val sectionRoot = LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, factory.dp(18), 0, 0)
-        }
-        section.items.chunked(RECOMMENDED_GRID_COLUMNS).forEachIndexed { rowIndex, rowItems ->
-            sectionRoot.addView(LinearLayout(root.context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.TOP
-                rowItems.forEachIndexed { columnIndex, item ->
-                    val binding = factory.shelfItem(item)
-                    bindings.getOrPut(binding.resourceId) { mutableListOf() } += binding
-                    addView(binding.root, LinearLayout.LayoutParams(
-                        factory.dp(68),
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        if (columnIndex != rowItems.lastIndex) setMargins(0, 0, factory.dp(7), 0)
-                    })
-                }
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                if (rowIndex > 0) setMargins(0, factory.dp(10), 0, 0)
-            })
-        }
-        if (generation != renderGeneration) sectionRoot.removeAllViews()
-        return sectionRoot
-    }
-
-    private fun listSection(section: ResourceSectionPresentation, generation: Long): View {
-        val sectionRoot = LinearLayout(root.context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, factory.dp(24), 0, 0)
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(factory.sectionTitle(section.title), LinearLayout.LayoutParams(
-                    0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    1f
-                ))
-            })
+            setPadding(0, factory.dp(if (showTitle) 24 else 4), 0, 0)
+            if (showTitle) {
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(factory.sectionTitle(section.title), LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1f
+                    ))
+                })
+            }
         }
         val rows = LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
@@ -325,7 +301,7 @@ internal class ResourceCatalogScreen(
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, factory.dp(12), 0, 0) }
+            ).apply { setMargins(0, factory.dp(if (showTitle) 12 else 0), 0, 0) }
         }
         sectionRoot.addView(rows)
         rows.post { renderRowBatch(section.items, rows, generation, 0) }
@@ -397,10 +373,6 @@ internal class ResourceCatalogScreen(
             { renderShelfBatch(items, host, generation, end) },
             16L
         )
-    }
-
-    private companion object {
-        const val RECOMMENDED_GRID_COLUMNS = 4
     }
 
     private fun header(context: Context): View = LinearLayout(context).apply {

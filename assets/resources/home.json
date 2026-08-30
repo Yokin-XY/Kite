@@ -28,19 +28,36 @@
       "label": "推荐",
       "sections": [
         {
-          "id": "recommended",
+          "id": "recommended-primary",
           "title": "推荐",
-          "style": "grid",
+          "style": "shelf",
           "items": [
             "kite.codex.cli",
             "kite.claude.code",
             "kite.gemini.cli",
-            "kite.opencode",
+            "kite.opencode"
+          ]
+        },
+        {
+          "id": "recommended-secondary",
+          "title": "推荐",
+          "style": "shelf",
+          "items": [
             "kite.hermes.core",
             "kite.openclaw",
             "kite.zcode",
             "kite.deepseek.harness"
           ]
+        },
+        {
+          "id": "foundation",
+          "title": "基础环境",
+          "style": "list"
+        },
+        {
+          "id": "more",
+          "title": "更多资源",
+          "style": "list"
         }
       ]
     },
@@ -51,7 +68,7 @@
         {
           "id": "agent",
           "title": "Agent",
-          "style": "list"
+          "style": "plain-list"
         }
       ]
     },
@@ -62,7 +79,7 @@
         {
           "id": "foundation",
           "title": "基础环境",
-          "style": "list"
+          "style": "plain-list"
         }
       ]
     }

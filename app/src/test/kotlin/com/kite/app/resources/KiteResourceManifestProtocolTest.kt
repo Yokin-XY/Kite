@@ -809,6 +809,7 @@ class KiteResourceManifestProtocolTest {
         val debugLayout = KiteResourceManifestLoader(context, isDebugBuild = true).requestHomeLayout()
         val releaseLayout = KiteResourceManifestLoader(context, isDebugBuild = false).requestHomeLayout()
 
+        val recommendedSections = debugLayout?.tabs?.first { it.id == "recommended" }?.sections.orEmpty()
         assertEquals(
             listOf(
                 "kite.codex.cli",
@@ -820,8 +821,9 @@ class KiteResourceManifestProtocolTest {
                 "kite.zcode",
                 "kite.deepseek.harness"
             ),
-            debugLayout?.tabs?.first { it.id == "recommended" }?.sections?.single()?.items
+            recommendedSections.take(2).flatMap(KiteResourceHomeSection::items)
         )
+        assertEquals(listOf("shelf", "shelf", "list"), recommendedSections.map(KiteResourceHomeSection::style))
         assertEquals(
             listOf(
                 "kite.opencode",
@@ -899,6 +901,14 @@ class KiteResourceManifestProtocolTest {
                 "kite.codex.relay",
             ),
             debugLayout?.tabs?.first { it.id == "foundation" }?.sections?.single()?.items
+        )
+        assertEquals(
+            "plain-list",
+            debugLayout?.tabs?.first { it.id == "angel-cli" }?.sections?.single()?.style
+        )
+        assertEquals(
+            "plain-list",
+            debugLayout?.tabs?.first { it.id == "foundation" }?.sections?.single()?.style
         )
         assertEquals(debugLayout?.sections, releaseLayout?.sections)
         assertEquals(debugLayout?.tabs, releaseLayout?.tabs)
