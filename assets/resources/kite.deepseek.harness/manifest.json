@@ -1,0 +1,176 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.deepseek.harness",
+  "base": {
+    "name": "DeepSeek Harness",
+    "description": "DeepSeek 官方开源 Agent Harness",
+    "version": "0.1.1-rc.2",
+    "icon": {
+      "type": "text",
+      "value": "DS"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["dsh", "dsh-acp", "kite-dsh-acp"],
+    "versionProbe": {
+      "command": "dsh --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+(?:-rc\\.[0-9]+)?)"
+    },
+    "preservePaths": ["user-home"]
+  },
+  "display": {
+    "sections": ["ai-vendor"],
+    "tabs": ["angel-cli"],
+    "order": 115,
+    "category": "AI",
+    "accent": "blue",
+    "sizeLabel": "网络包",
+    "longDescription": "DeepSeek Harness 是 DeepSeek 官方开源的 Agent Harness。Kite 固定安装官方 Harness 0.1.1-rc.2，并通过独立维护的完整 ACP 桥接层提供会话创建、列表、恢复、历史加载、流式消息、工具审批、实时模型、推理强度和三种执行权限；MCP、Skill、模型供应商、登录凭据与会话日志仍由 Harness 自己管理。官方当前提供的 ACP Demo 仅支持新会话，因此不作为 Kite 的运行入口。",
+    "recommendations": [
+      {"resourceId": "kite.nodejs", "label": "运行时"},
+      {"resourceId": "kite.git", "label": "源码工具"},
+      {"resourceId": "kite.hermes.core", "label": "同类 Agent"},
+      {"resourceId": "kite.opencode", "label": "同类 Agent"}
+    ],
+    "tags": ["deepseek", "dsh", "harness", "coding-agent", "acp", "mcp", "skills"]
+  },
+  "relations": {
+    "provides": ["cli.deepseek.harness", "agent.deepseek.harness"],
+    "base": ["kite.nodejs", "kite.git"],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "npm",
+    "package": "@deepseek-ai/dsh",
+    "companionPackages": ["@openma/deepseek-harness-acp"],
+    "repository": "https://github.com/deepseek-ai/deepseek-harness",
+    "tag": "0.1.1-rc.2",
+    "registries": [
+      "https://registry.npmmirror.com",
+      "https://registry.npmjs.org"
+    ]
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.deepseek.harness",
+    "installRoot": "/workspace/.kf/software/kite.deepseek.harness",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "deepseek-harness",
+      "name": "DeepSeek Harness",
+      "description": "DeepSeek Harness 完整 ACP 会话",
+      "configuration": {
+        "required": false
+      },
+      "accounts": [
+        {
+          "id": "deepseek",
+          "name": "DeepSeek 官方 API",
+          "modelGroupIds": ["deepseek"],
+          "login": {
+            "argv": ["kite-dsh-acp", "login"],
+            "timeoutMs": 300000
+          }
+        }
+      ],
+      "launch": {
+        "mode": "managed",
+        "providerId": "deepseek-harness",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["kite-dsh-acp"],
+        "initializeTimeoutMs": 120000,
+        "title": "DeepSeek Harness"
+      }
+    }
+  ],
+  "actions": {
+    "install": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-deepseek-harness-pair",
+            "type": "npm",
+            "packages": [
+              "@deepseek-ai/dsh@0.1.1-rc.2",
+              "@openma/deepseek-harness-acp@0.4.26"
+            ],
+            "registries": [
+              "https://registry.npmmirror.com",
+              "https://registry.npmjs.org"
+            ],
+            "args": [
+              "--no-audit",
+              "--no-fund",
+              "--allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs"
+            ]
+          },
+          {
+            "id": "install-deepseek-harness-launcher",
+            "type": "shell",
+            "cmd": "set -eu\nmkdir -p \"$install_root/bin\" \"$install_root/user-home/.dsh\"\ncat > \"$install_root/bin/kite-dsh-acp\" <<EOF\n#!/usr/bin/env bash\nset -eu\nexport HOME=\"$install_root/user-home\"\nexport DSH_HOME=\"$install_root/user-home/.dsh\"\ndsh_bin=\"\\$(command -v dsh)\"\n[ -n \"\\$dsh_bin\" ] || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=deepseek-harness-host reason=dsh-missing' >&2; exit 127; }\nexport DSH_PATH=\"\\$dsh_bin\"\nexec dsh-acp \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/kite-dsh-acp\""
+          }
+        ],
+        "managedCommands": ["dsh", "dsh-acp", "kite-dsh-acp"],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "deepseek-harness-official-version",
+            "cmd": "command -v dsh >/dev/null 2>&1 && test \"$(dsh --version)\" = '0.1.1-rc.2'"
+          },
+          {
+            "id": "deepseek-harness-acp-version",
+            "cmd": "command -v dsh-acp >/dev/null 2>&1 && test \"$(dsh-acp --version)\" = '@openma/deepseek-harness-acp 0.4.26'"
+          },
+          {
+            "id": "deepseek-harness-launcher",
+            "cmd": "command -v kite-dsh-acp >/dev/null 2>&1 && test \"$(kite-dsh-acp --version)\" = '@openma/deepseek-harness-acp 0.4.26' && grep -q 'export DSH_PATH=' \"$install_root/bin/kite-dsh-acp\""
+          }
+        ],
+        "timeoutMs": 900000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "DeepSeek Harness",
+          "description": "启动 DeepSeek Harness Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "deepseek-harness", "workdir": "/workspace"}]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": ["dsh", "dsh-acp", "kite-dsh-acp"],
+        "npmUninstallPackages": ["@deepseek-ai/dsh", "@openma/deepseek-harness-acp"],
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "DeepSeek Harness",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "DeepSeek Harness",
+          "description": "启动 DeepSeek Harness Agent 会话",
+          "icon": {"type": "builtin", "name": "bot"}
+        },
+        "launch": {"openInstance": true},
+        "recipe": [{"type": "agent", "agentId": "deepseek-harness", "workdir": "/workspace"}]
+      }
+    }
+  ]
+}

@@ -683,6 +683,66 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
+    fun deepSeekHarnessUsesOfficialRuntimeWithPinnedFullAcpBridge() {
+        val manifestFile = File(resourceRoot(), "kite.deepseek.harness/manifest.json")
+        val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
+        val profile = manifest.agentProfiles.single()
+        val installAction = manifest.installActions.single()
+        val packageStep = installAction.installSteps.first()
+        val launcherStep = installAction.installSteps.last()
+
+        assertEquals("npm", manifest.sourceType)
+        assertEquals("@deepseek-ai/dsh", manifest.source.packageName)
+        assertEquals(listOf("@openma/deepseek-harness-acp"), manifest.source.companionPackages)
+        assertEquals("0.1.1-rc.2", manifest.version)
+        assertEquals(
+            listOf("dsh", "dsh-acp", "kite-dsh-acp"),
+            manifest.management.managedCommands,
+        )
+        assertEquals(
+            listOf(
+                "@deepseek-ai/dsh@0.1.1-rc.2",
+                "@openma/deepseek-harness-acp@0.4.26",
+            ),
+            packageStep.packages,
+        )
+        assertEquals(
+            listOf("https://registry.npmmirror.com", "https://registry.npmjs.org"),
+            packageStep.registries,
+        )
+        assertTrue(
+            packageStep.arguments.contains(
+                "--allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs",
+            ),
+        )
+        assertTrue(launcherStep.cmd.contains("export DSH_HOME=\"\$install_root/user-home/.dsh\""))
+        assertTrue(launcherStep.cmd.contains("export DSH_PATH=\"\\\$dsh_bin\""))
+        assertTrue(launcherStep.cmd.contains("exec dsh-acp \"\\\$@\""))
+        assertTrue(
+            installAction.verifications
+                .filter { it.id in setOf("deepseek-harness-acp-version", "deepseek-harness-launcher") }
+                .all { it.cmd.contains("@openma/deepseek-harness-acp 0.4.26") },
+        )
+        assertEquals("deepseek-harness", profile.agentId)
+        assertEquals("acp", profile.protocol)
+        assertEquals("stdio", profile.transport)
+        assertEquals(listOf("kite-dsh-acp"), profile.argv)
+        assertEquals(120_000L, profile.initializeTimeoutMs)
+        assertFalse(profile.configurationRequired)
+        assertEquals("", profile.configAdapterId)
+        assertEquals(listOf("kite-dsh-acp", "login"), profile.officialAccounts.single().login.argv)
+
+        val registration = AgentResourceRegistrationMapper.registrations(manifest).single()
+        assertEquals("deepseek-harness", registration.definition.agentId)
+        assertEquals(AgentRegistrationSource.Resource("kite.deepseek.harness"), registration.source)
+        assertTrue(registration.launch is AgentLaunchSpec.Managed)
+        val openStep = manifest.openRecipe?.optJSONArray("recipe")?.optJSONObject(0)
+        val homeStep = manifest.homeCards.single().recipe.optJSONArray("recipe")?.optJSONObject(0)
+        assertEquals("deepseek-harness", openStep?.optString("agentId"))
+        assertEquals(openStep?.toString(), homeStep?.toString())
+    }
+
+    @Test
     fun `首页只定义版面并由各 manifest 投影当前顺序和标签页`() {
         val homeJson = File(resourceRoot(), "home.json").readText()
         val debugLayout = KiteResourceManifestLoader(context, isDebugBuild = true).requestHomeLayout()
@@ -715,6 +775,7 @@ class KiteResourceManifestProtocolTest {
                 "kite.zai.coding.helper",
                 "kite.zcode",
                 "kite.devin.cli",
+                "kite.deepseek.harness",
                 "kite.mimo.code"
             ),
             debugLayout?.sections?.first { it.id == "ai-vendor" }?.items
@@ -752,6 +813,7 @@ class KiteResourceManifestProtocolTest {
                 "kite.zai.coding.helper",
                 "kite.zcode",
                 "kite.devin.cli",
+                "kite.deepseek.harness",
                 "kite.mimo.code"
             ),
             debugLayout?.tabs?.first { it.id == "angel-cli" }?.sections?.single()?.items
@@ -772,7 +834,7 @@ class KiteResourceManifestProtocolTest {
             .filter { it.isFile }
             .sortedBy { it.parentFile?.name }
 
-        assertEquals(27, manifests.size)
+        assertEquals(28, manifests.size)
         manifests.forEach { manifestFile ->
             val resourceId = manifestFile.parentFile?.name.orEmpty()
             val loaded = loader.parseManifestJson(manifestFile.readText())
