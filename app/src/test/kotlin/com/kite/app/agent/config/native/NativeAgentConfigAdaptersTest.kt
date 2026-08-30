@@ -31,6 +31,7 @@ import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.SESSION_PERMISSION_CONFIG_ID
+import com.kite.app.agent.sdk.configuration.AgentControlCatalogProjector
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
@@ -46,6 +47,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -813,6 +815,18 @@ class NativeAgentConfigAdaptersTest {
             listOf("只读", "受限", "审批", "宽松", "智能", "完全"),
             permission.choices.map { it.name },
         )
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.ReadOnly,
+                AgentPermissionLevel.Restricted,
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Lenient,
+                AgentPermissionLevel.Smart,
+                AgentPermissionLevel.Full,
+            ),
+            permission.choices.map { it.permission },
+        )
+        assertNotNull(AgentControlCatalogProjector.project(listOf(permission)).permission)
         assertEquals("default", permission.currentValue)
     }
 
@@ -1247,6 +1261,15 @@ class NativeAgentConfigAdaptersTest {
         assertEquals("权限", permission.name)
         assertEquals(listOf("read-only", "agent", "agent-full-access"), permission.choices.map { it.value })
         assertEquals(listOf("只读", "审批", "完全"), permission.choices.map { it.name })
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.ReadOnly,
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Full,
+            ),
+            permission.choices.map { it.permission },
+        )
+        assertNotNull(AgentControlCatalogProjector.project(listOf(permission)).permission)
         assertEquals("agent", permission.currentValue)
     }
 

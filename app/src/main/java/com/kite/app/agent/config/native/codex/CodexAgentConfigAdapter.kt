@@ -187,6 +187,7 @@ internal class CodexAgentConfigAdapter(
                 choice.copy(
                     name = level.displayName,
                     description = level.description,
+                    permission = level,
                 )
             }
             if (mappedChoices.size < 2 || mappedChoices.none { it.value == option.currentValue }) {
