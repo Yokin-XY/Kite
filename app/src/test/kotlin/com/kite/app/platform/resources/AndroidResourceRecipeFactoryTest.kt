@@ -146,41 +146,33 @@ class AndroidResourceRecipeFactoryTest {
     }
 
     @Test
-    fun `OpenCode 样板从 GitHub Release 来源生成架构和版本配方`() {
-        val update = factory.recipe("kite.opencode", KiteResourceInstallRecipes.OP_UPDATE, "v1.18.4")
+    fun `OpenCode 样板从 NPM 来源生成隔离源和版本配方`() {
+        val update = factory.recipe("kite.opencode", KiteResourceInstallRecipes.OP_UPDATE, "1.18.4")
         val steps = update?.steps.orEmpty()
         val script = steps.joinToString("\n") { it.cmd.orEmpty() }
 
         assertNotNull(update)
         assertTrue(steps.all { it.type == KiteRecipe.STEP_SHELL })
-        assertTrue(script.contains("kite_resource_download"))
-        assertTrue(script.contains("aarch64|arm64) target='linux-arm64'"))
-        assertTrue(script.contains("releases/download/v1.18.4/${'$'}asset_name"))
-        assertTrue(script.contains("opencode-${'$'}target.tar.gz"))
+        assertFalse(script.contains("kite_resource_download"))
+        assertTrue(script.contains("opencode-ai@1.18.4"))
+        assertTrue(script.contains(".kite-source-attempt/npm/"))
+        assertTrue(script.contains("repo.huaweicloud.com/repository/npm"))
         assertTrue(script.contains("transactional_clean=\"1\""))
     }
 
     @Test
-    fun `Kimi 样板从官方脚本来源生成隔离目录和确定版本配方`() {
+    fun `Kimi 样板从官方 NPM 包生成隔离源和确定版本配方`() {
         val update = factory.recipe("kite.kimi.code", KiteResourceInstallRecipes.OP_UPDATE, "0.27.0")
         val steps = update?.steps.orEmpty()
-        val native = steps.single { it.type == KiteRecipe.STEP_NATIVE_CAPABILITY }
-        val script = steps.single { it.type == KiteRecipe.STEP_SHELL }.cmd.orEmpty()
+        val script = steps.joinToString("\n") { it.cmd.orEmpty() }
 
         assertNotNull(update)
-        assertEquals(AndroidNativeDownloadCapabilityProvider.CAPABILITY_ID, native.action)
-        assertEquals("16777216", native.params?.getString(AndroidNativeDownloadCapabilityProvider.PARAM_MAX_BYTES))
-        assertTrue(
-            native.params?.getString(AndroidNativeDownloadCapabilityProvider.PARAM_DESTINATION)
-                .orEmpty().startsWith("/workspace/.kf/cache/resources/kite.kimi.code/native-downloads/")
-        )
-        assertFalse(script.contains("kite_resource_download"))
-        assertTrue(script.contains("native_cache='/workspace/.kf/cache/resources/kite.kimi.code/native-downloads/"))
+        assertTrue(steps.all { it.type == KiteRecipe.STEP_SHELL })
+        assertTrue(script.contains("@moonshot-ai/kimi-code@0.27.0"))
+        assertTrue(script.contains(".kite-source-attempt/npm/"))
+        assertTrue(script.contains("repo.huaweicloud.com/repository/npm"))
         assertTrue(script.contains("update_lock=\"${'$'}install_root.kite-update-lock\""))
-        assertTrue(script.indexOf("recover-interrupted-install") < script.indexOf("mv -f \"${'$'}native_cache\""))
-        assertTrue(script.contains("KIMI_INSTALL_DIR=\"${'$'}install_root\""))
-        assertTrue(script.contains("KIMI_NO_MODIFY_PATH=\"1\""))
-        assertTrue(script.contains("\"--version\" \"0.27.0\""))
+        assertTrue(script.contains("recover-interrupted-install"))
     }
 
     @Test

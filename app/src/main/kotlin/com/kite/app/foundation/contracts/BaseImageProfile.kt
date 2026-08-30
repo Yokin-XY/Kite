@@ -27,12 +27,7 @@ enum class BaseImageProfile(
         assetTar = "rootfs/ubuntu-base-22.04-arm64.tar",
         imageDirName = "ubuntu-base",
         imageName = "ubuntu-base-22.04-arm64",
-        aptSources = """
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy main restricted universe multiverse
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-updates main restricted universe multiverse
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-backports main restricted universe multiverse
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-security main restricted universe multiverse
-""".trimIndent()
+        aptSources = UbuntuPortsSourceCatalog.sourcesList(UbuntuPortsSourceCatalog.HUAWEI, "jammy")
     ),
     NOBLE(
         label = "Ubuntu 24.04 LTS (Noble)",
@@ -42,12 +37,7 @@ deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-security main restri
         assetTar = "rootfs/ubuntu-base-24.04-arm64.tar",
         imageDirName = "ubuntu-noble",
         imageName = "ubuntu-base-24.04-arm64",
-        aptSources = """
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ noble main restricted universe multiverse
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ noble-updates main restricted universe multiverse
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ noble-backports main restricted universe multiverse
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ noble-security main restricted universe multiverse
-""".trimIndent()
+        aptSources = UbuntuPortsSourceCatalog.sourcesList(UbuntuPortsSourceCatalog.HUAWEI, "noble")
     );
 
     val rootfsAssetCandidates: List<String>

@@ -168,11 +168,15 @@ object KiteResourceInstallPlanCompiler {
                     mkdir -p "${'$'}attempt_prefix" "${'$'}attempt_cache"
                     echo "KITE_RESOURCE_ROUTE stage=acquire step=${safeId(step.id)} source=${'$'}source_id registry=${'$'}npm_registry"
                     set +e
-                    npm install -g --prefix="${'$'}attempt_prefix" --cache="${'$'}attempt_cache" --registry="${'$'}npm_registry" $installArguments >"${'$'}attempt_log" 2>&1
+                    npm install -g --loglevel=http --prefix="${'$'}attempt_prefix" --cache="${'$'}attempt_cache" --registry="${'$'}npm_registry" $installArguments >"${'$'}attempt_log" 2>&1
                     last_status=${'$'}?
                     set -e
                     cat "${'$'}attempt_log"
-                    if [ "${'$'}last_status" -eq 0 ]; then
+                    source_unavailable=0
+                    if kite_resource_is_source_failure "${'$'}last_status" "${'$'}attempt_log"; then
+                      source_unavailable=1
+                    fi
+                    if [ "${'$'}last_status" -eq 0 ] && [ "${'$'}source_unavailable" -eq 0 ]; then
                       rm -rf "${'$'}npm_config_prefix"
                       mkdir -p "${'$'}(dirname "${'$'}npm_config_prefix")"
                       mv "${'$'}attempt_prefix" "${'$'}npm_config_prefix"
@@ -180,11 +184,12 @@ object KiteResourceInstallPlanCompiler {
                       echo "KITE_RESOURCE_STEP acquire-complete ${safeId(step.id)} source=${'$'}source_id"
                       return 0
                     fi
-                    if ! kite_resource_is_source_failure "${'$'}last_status" "${'$'}attempt_log"; then
+                    if [ "${'$'}source_unavailable" -eq 0 ]; then
                       echo "KITE_RESOURCE_FAILURE stage=install step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}last_status reason=non-network"
                       rm -rf "${'$'}install_root/.kite-source-attempt"
                       return "${'$'}last_status"
                     fi
+                    if [ "${'$'}last_status" -eq 0 ]; then last_status=69; fi
                     echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}last_status reason=source-unavailable"
                     rm -rf "${'$'}attempt_root"
                   done

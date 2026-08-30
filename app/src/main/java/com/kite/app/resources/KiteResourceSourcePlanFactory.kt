@@ -14,8 +14,12 @@ data class KiteResourceRemoteVersionProbe(
     val jsonField: String = "",
     val format: String = "json",
     val stripPrefix: String = "",
-    val fallbackUrl: String = ""
-) : KiteResourceLatestVersionProbe
+    val fallbackUrl: String = "",
+    val urls: List<String> = emptyList(),
+) : KiteResourceLatestVersionProbe {
+    val orderedUrls: List<String>
+        get() = urls.ifEmpty { listOf(url) }.filter(String::isNotBlank).distinct()
+}
 
 data class KiteResourceVersionCheckPlan(
     val installed: KiteResourceVersionProbeSpec?,
@@ -100,12 +104,15 @@ object KiteResourceSourcePlanFactory {
         )
     }
 
-    fun versionCheckPlan(manifest: KiteResourceManifest): KiteResourceVersionCheckPlan {
+    fun versionCheckPlan(
+        manifest: KiteResourceManifest,
+        sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
+    ): KiteResourceVersionCheckPlan {
         if (!manifest.management.userLifecycleEnabled) return KiteResourceVersionCheckPlan(null, null)
         val latest = manifest.management.latestVersionProbe
             ?.let(::KiteResourceCommandVersionProbe)
             ?: when (manifest.source.type) {
-                SOURCE_NPM -> npmVersionProbe(manifest.source)
+                SOURCE_NPM -> npmVersionProbe(manifest.source, sourcePreferences)
                 SOURCE_GITHUB_RELEASE -> githubVersionProbe(manifest.source)
                 SOURCE_OFFICIAL_SCRIPT -> officialScriptVersionProbe(manifest.source)
                 SOURCE_BUNDLED -> managedScriptProbe(manifest, "latest-version")
@@ -460,14 +467,21 @@ object KiteResourceSourcePlanFactory {
         }
     }
 
-    private fun npmVersionProbe(source: KiteResourceSourceSpec): KiteResourceRemoteVersionProbe? {
+    private fun npmVersionProbe(
+        source: KiteResourceSourceSpec,
+        sourcePreferences: KiteResourceSourcePreferences,
+    ): KiteResourceRemoteVersionProbe? {
         val packageName = source.packageName.takeIf(SAFE_NPM_PACKAGE::matches) ?: return null
         val encodedPackage = URLEncoder.encode(packageName, StandardCharsets.UTF_8.name())
             .replace("+", "%20")
         val encodedTag = URLEncoder.encode(source.tag.ifBlank { "latest" }, StandardCharsets.UTF_8.name())
+        val urls = KiteResourceSourcePolicy.npmRoutes(sourcePreferences)
+            .map { route -> "${route.endpoint.trimEnd('/')}/$encodedPackage/$encodedTag" }
+            .distinct()
         return KiteResourceRemoteVersionProbe(
-            url = "https://registry.npmjs.org/$encodedPackage/$encodedTag",
-            jsonField = "version"
+            url = urls.firstOrNull() ?: return null,
+            jsonField = "version",
+            urls = urls,
         )
     }
 

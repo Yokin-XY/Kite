@@ -49,9 +49,33 @@ class KiteResourceSourcePlanFactoryTest {
         assertTrue(install.installActions.single().verifications.any { it.id == "installed-version" })
         assertTrue(install.installActions.single().verifications.any { it.id == "command-codex-acp" })
         assertTrue(install.versionCheck.latest?.url.orEmpty().contains("%40openai%2Fcodex/latest"))
+        assertTrue(latest.orderedUrls.first().startsWith("https://repo.huaweicloud.com/repository/npm/"))
+        assertTrue(latest.orderedUrls.any { it.startsWith("https://registry.npmjs.org/") })
         assertEquals("version", install.versionCheck.latest?.jsonField)
         assertEquals(latest, install.versionCheck.latest)
         assertTrue(install.capabilities.update)
+    }
+
+    @Test
+    fun `NPM 版本查询遵循用户源顺序`() {
+        val manifest = parse(
+            source = """{"type":"npm","package":"@scope/example"}""",
+            management = managed("example", "example --version"),
+        )
+        val preferences = KiteResourceSourcePreferences(
+            orderedSourceIds = listOf(
+                KiteResourceSourceCatalog.OFFICIAL,
+                KiteResourceSourceCatalog.HUAWEI,
+                KiteResourceSourceCatalog.NPM_MIRROR,
+            ),
+        )
+
+        val latest = KiteResourceSourcePlanFactory.versionCheckPlan(manifest, preferences).latest
+            as KiteResourceRemoteVersionProbe
+
+        assertTrue(latest.orderedUrls[0].startsWith("https://registry.npmjs.org/"))
+        assertTrue(latest.orderedUrls[1].startsWith("https://repo.huaweicloud.com/repository/npm/"))
+        assertTrue(latest.orderedUrls[2].startsWith("https://registry.npmmirror.com/"))
     }
 
     @Test

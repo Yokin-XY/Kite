@@ -466,7 +466,7 @@ internal class KiteAppGraph private constructor(context: Context) {
                     )
                 },
                 versionCoordinator = ResourceVersionCoordinator(
-                    AndroidResourceVersionGateway(
+                    gateway = AndroidResourceVersionGateway(
                         bridgeClient = bridgeClient,
                         metadataContextProvider = {
                             StructuredJsonStringContext(
@@ -484,7 +484,10 @@ internal class KiteAppGraph private constructor(context: Context) {
                                 "route=${event.route.name.lowercase()} reason=${event.reason}",
                             )
                         },
-                    )
+                    ),
+                    sourcePreferencesProvider = {
+                        settingsGateway.currentSnapshot().resourceSourcePreferences
+                    },
                 )
             )
         )

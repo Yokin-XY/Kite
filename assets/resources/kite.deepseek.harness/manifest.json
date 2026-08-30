@@ -48,11 +48,7 @@
     "package": "@deepseek-ai/dsh",
     "companionPackages": ["@openma/deepseek-harness-acp"],
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
-    "tag": "0.1.1-rc.2",
-    "registries": [
-      "https://registry.npmmirror.com",
-      "https://registry.npmjs.org"
-    ]
+    "tag": "0.1.1-rc.2"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.deepseek.harness",
@@ -101,10 +97,6 @@
             "packages": [
               "@deepseek-ai/dsh@0.1.1-rc.2",
               "@openma/deepseek-harness-acp@0.4.26"
-            ],
-            "registries": [
-              "https://registry.npmmirror.com",
-              "https://registry.npmjs.org"
             ],
             "args": [
               "--no-audit",

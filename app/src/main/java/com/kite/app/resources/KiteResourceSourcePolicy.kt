@@ -1,5 +1,6 @@
 package com.kite.app.resources
 
+import com.kite.app.foundation.contracts.UbuntuPortsSourceCatalog
 import java.net.URI
 
 /** 用户可排序的资源来源；协议端点集中在这里，不再散落到各张资源卡。 */
@@ -72,7 +73,7 @@ object KiteResourceSourceCatalog {
             id = HUAWEI,
             npmRegistry = "https://repo.huaweicloud.com/repository/npm/",
             pypiIndex = "https://repo.huaweicloud.com/repository/pypi/simple",
-            ubuntuPortsBaseUrl = "https://repo.huaweicloud.com/ubuntu-ports/",
+            ubuntuPortsBaseUrl = UbuntuPortsSourceCatalog.HUAWEI,
             hostSuffixes = setOf("repo.huaweicloud.com"),
         ),
         KiteResourceSourceDefinition(
@@ -83,13 +84,13 @@ object KiteResourceSourceCatalog {
         KiteResourceSourceDefinition(
             id = ALIYUN,
             pypiIndex = "https://mirrors.aliyun.com/pypi/simple/",
-            ubuntuPortsBaseUrl = "https://mirrors.aliyun.com/ubuntu-ports/",
+            ubuntuPortsBaseUrl = UbuntuPortsSourceCatalog.ALIYUN,
             hostSuffixes = setOf("mirrors.aliyun.com"),
         ),
         KiteResourceSourceDefinition(
             id = TUNA,
             pypiIndex = "https://pypi.tuna.tsinghua.edu.cn/simple",
-            ubuntuPortsBaseUrl = "https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/",
+            ubuntuPortsBaseUrl = UbuntuPortsSourceCatalog.TUNA,
             hostSuffixes = setOf("pypi.tuna.tsinghua.edu.cn", "mirrors.tuna.tsinghua.edu.cn"),
         ),
         KiteResourceSourceDefinition(
@@ -100,7 +101,7 @@ object KiteResourceSourceCatalog {
             id = OFFICIAL,
             npmRegistry = "https://registry.npmjs.org",
             pypiIndex = "https://pypi.org/simple",
-            ubuntuPortsBaseUrl = "https://ports.ubuntu.com/ubuntu-ports/",
+            ubuntuPortsBaseUrl = UbuntuPortsSourceCatalog.OFFICIAL,
             hostSuffixes = setOf(
                 "npmjs.org",
                 "pypi.org",

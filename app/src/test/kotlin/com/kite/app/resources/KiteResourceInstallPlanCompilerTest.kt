@@ -90,7 +90,7 @@ class KiteResourceInstallPlanCompilerTest {
         val script = KiteResourceInstallPlanCompiler.compile(action)
 
         assertTrue(script.contains("npm_config_fetch_retries"))
-        assertTrue(script.contains("npm install -g --prefix=\"${'$'}attempt_prefix\""))
+        assertTrue(script.contains("npm install -g --loglevel=http --prefix=\"${'$'}attempt_prefix\""))
         assertTrue(script.contains("'--allow-scripts=@example/cli' '@example/cli'"))
         assertTrue(script.contains("Acquire::Retries=4"))
         assertTrue(script.contains("apt-get"))
@@ -118,7 +118,10 @@ class KiteResourceInstallPlanCompilerTest {
 
         assertTrue(script.indexOf("registry.npmmirror.com") < script.indexOf("registry.npmjs.org"))
         assertTrue(script.contains("KITE_RESOURCE_ROUTE stage=acquire"))
+        assertTrue(script.contains("npm install -g --loglevel=http"))
         assertTrue(script.contains("--registry=\"${'$'}npm_registry\""))
+        assertTrue(script.contains("[ \"${'$'}last_status\" -eq 0 ] && [ \"${'$'}source_unavailable\" -eq 0 ]"))
+        assertTrue(script.contains("then last_status=69"))
         assertTrue(script.contains("kite_resource_run 'npm-package' install kite_resource_npm_npm_package"))
     }
 

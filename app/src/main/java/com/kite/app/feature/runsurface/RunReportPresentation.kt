@@ -186,7 +186,7 @@ internal object RunReportPresenter {
         recipe.id.contains("kite.hermes.core") ->
             "Hermes 需要访问官方安装脚本、GitHub、PyPI 和 files.pythonhosted.org。请确认当前网络或代理能访问这些域名。"
         recipe.id.contains("kite.hermes.webui") ->
-            "Hermes WebUI 主要需要访问 registry.npmjs.org；如果安装浏览器工具，还可能访问 GitHub 或 CDN。"
+            "Hermes WebUI 主要需要访问设置中排序靠前的 NPM 下载源；如果安装浏览器工具，还可能访问 GitHub 或 CDN。"
         listOf("kite.git", "kite.curl", "kite.python").any(recipe.id::contains) ->
             "这个资源通过 Ubuntu apt 安装，需要容器能访问当前 apt 软件源。源慢或 DNS 不通时会失败。"
         else -> "请检查代理、DNS、证书和上游下载地址。"

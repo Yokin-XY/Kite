@@ -46,11 +46,7 @@
   "source": {
     "type": "npm",
     "package": "@qoder-ai/qodercli",
-    "repository": "https://qoder.com",
-    "registries": [
-      "https://registry.npmmirror.com",
-      "https://registry.npmjs.org"
-    ]
+    "repository": "https://qoder.com"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.qoder.cli",
@@ -97,10 +93,6 @@
             "id": "install-qoder-package",
             "type": "npm",
             "packages": ["@qoder-ai/qodercli@latest"],
-            "registries": [
-              "https://registry.npmmirror.com",
-              "https://registry.npmjs.org"
-            ],
             "args": ["--no-audit", "--no-fund"]
           }
         ],

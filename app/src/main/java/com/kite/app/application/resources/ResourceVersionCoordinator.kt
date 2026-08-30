@@ -6,6 +6,7 @@ import com.kite.app.resources.KiteResourceLatestVersionProbe
 import com.kite.app.resources.KiteResourceRemoteVersionProbe
 import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceSourcePlanFactory
+import com.kite.app.resources.KiteResourceSourcePreferences
 import com.kite.app.resources.KiteResourceVersionProbeSpec
 import org.json.JSONObject
 
@@ -94,13 +95,14 @@ internal sealed interface PreparedResourceVersionCheck {
 
 /** 只产出版本事实，不直接修改 Store 或页面。 */
 internal class ResourceVersionCoordinator(
-    private val gateway: ResourceVersionGateway
+    private val gateway: ResourceVersionGateway,
+    private val sourcePreferencesProvider: () -> KiteResourceSourcePreferences = { KiteResourceSourcePreferences() },
 ) {
     suspend fun prepareBatchCheck(
         manifest: KiteResourceManifest,
         environmentId: String = KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID,
     ): PreparedResourceVersionCheck {
-        val plan = KiteResourceSourcePlanFactory.versionCheckPlan(manifest)
+        val plan = KiteResourceSourcePlanFactory.versionCheckPlan(manifest, sourcePreferencesProvider())
         val installedProbe = plan.installed
             ?: return PreparedResourceVersionCheck.Completed(
                 ResourceVersionCheckResult.Unsupported(manifest.id, "installed_version_probe_missing"),
@@ -160,7 +162,7 @@ internal class ResourceVersionCoordinator(
         manifest: KiteResourceManifest,
         environmentId: String = KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID
     ): ResourceVersionCheckResult {
-        val plan = KiteResourceSourcePlanFactory.versionCheckPlan(manifest)
+        val plan = KiteResourceSourcePlanFactory.versionCheckPlan(manifest, sourcePreferencesProvider())
         val installedProbe = plan.installed
             ?: return ResourceVersionCheckResult.Unsupported(manifest.id, "installed_version_probe_missing")
         val latestProbe = plan.latest

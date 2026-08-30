@@ -46,11 +46,7 @@
   "source": {
     "type": "npm",
     "package": "@tencent-ai/codebuddy-code",
-    "repository": "https://www.codebuddy.ai/docs/cli/quickstart",
-    "registries": [
-      "https://registry.npmmirror.com",
-      "https://registry.npmjs.org"
-    ]
+    "repository": "https://www.codebuddy.ai/docs/cli/quickstart"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.codebuddy.code",
@@ -86,10 +82,6 @@
             "id": "install-codebuddy-package",
             "type": "npm",
             "packages": ["@tencent-ai/codebuddy-code@latest"],
-            "registries": [
-              "https://registry.npmmirror.com",
-              "https://registry.npmjs.org"
-            ],
             "args": ["--no-audit", "--no-fund"]
           }
         ],

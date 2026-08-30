@@ -54,7 +54,7 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
-    fun githubCopilotUsesDomesticNpmRouteForInstallAndUpdate() {
+    fun githubCopilotUsesCentralNpmRoutesForInstallAndUpdate() {
         val manifestFile = File(resourceRoot(), "kite.github.copilot/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
         val expectedArguments = listOf(
@@ -62,15 +62,10 @@ class KiteResourceManifestProtocolTest {
             "--no-audit",
             "--no-fund",
         )
-        val expectedRegistries = listOf(
-            "https://registry.npmmirror.com",
-            "https://registry.npmjs.org",
-        )
-
         assertEquals(expectedArguments, manifest.source.installArguments)
         assertEquals(expectedArguments, manifest.installActions.single().installSteps.first().arguments)
-        assertEquals(expectedRegistries, manifest.source.registries)
-        assertEquals(expectedRegistries, manifest.installActions.single().installSteps.first().registries)
+        assertTrue(manifest.source.registries.isEmpty())
+        assertTrue(manifest.installActions.single().installSteps.first().registries.isEmpty())
         assertEquals("github-copilot", manifest.agentProfiles.single().configAdapterId)
         assertEquals(
             "github-copilot",
@@ -440,9 +435,10 @@ class KiteResourceManifestProtocolTest {
             installStep.packages
         )
         assertEquals(listOf("--allow-scripts=@anthropic-ai/claude-code"), installStep.arguments)
-        assertEquals(
-            listOf("https://registry.npmmirror.com", "https://registry.npmjs.org"),
-            installStep.registries,
+        assertTrue(installStep.registries.isEmpty())
+        assertTrue(
+            KiteResourceInstallPlanCompiler.compile(installAction)
+                .contains("repo.huaweicloud.com/repository/npm"),
         )
         assertEquals(5, installStep.retryAttempts)
         assertEquals(3, installStep.retryDelaySeconds)
@@ -751,9 +747,10 @@ class KiteResourceManifestProtocolTest {
             ),
             packageStep.packages,
         )
-        assertEquals(
-            listOf("https://registry.npmmirror.com", "https://registry.npmjs.org"),
-            packageStep.registries,
+        assertTrue(packageStep.registries.isEmpty())
+        assertTrue(
+            KiteResourceInstallPlanCompiler.compile(installAction)
+                .contains("repo.huaweicloud.com/repository/npm"),
         )
         assertTrue(
             packageStep.arguments.contains(

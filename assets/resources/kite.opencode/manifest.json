@@ -4,7 +4,7 @@
   "base": {
     "name": "OpenCode",
     "description": "开源终端 AI 编码 Agent",
-    "version": "official",
+    "version": "npm",
     "icon": {
       "type": "asset",
       "value": "resources/kite.opencode/icon.png",
@@ -30,11 +30,11 @@
     "category": "AI",
     "accent": "blue",
     "sizeLabel": "网络包",
-    "longDescription": "OpenCode 是开源的终端 AI 编码 Agent，可以连接 Claude、GPT、Gemini 等模型。Kite 通过官方发布包安装 opencode 命令，并使用 OpenCode 的 ACP stdio 能力建立原生 Agent 会话。",
+    "longDescription": "OpenCode 是开源的终端 AI 编码 Agent，可以连接 Claude、GPT、Gemini 等模型。Kite 通过官方 npm 包安装 opencode 命令，并使用 OpenCode 的 ACP stdio 能力建立原生 Agent 会话。",
     "recommendations": [
       {
-        "resourceId": "kite.curl",
-        "label": "下载工具"
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
       },
       {
         "resourceId": "kite.codex.cli",
@@ -63,8 +63,8 @@
       "agent.opencode"
     ],
     "base": [
-      "kite.git",
-      "kite.curl"
+      "kite.nodejs",
+      "kite.git"
     ],
     "defaults": [],
     "extensions": []
@@ -92,17 +92,10 @@
     }
   ],
   "source": {
-    "type": "github_release",
+    "type": "npm",
+    "package": "opencode-ai",
     "repository": "https://github.com/anomalyco/opencode",
-    "releaseTagTemplate": "v{version}",
-    "assetPattern": "opencode-{target}.tar.gz",
-    "archiveType": "tar.gz",
-    "maxBytes": 536870912,
-    "binaryPath": "opencode",
-    "architectures": {
-      "aarch64|arm64": "linux-arm64",
-      "x86_64|amd64": "linux-x64"
-    }
+    "tag": "latest"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.opencode",

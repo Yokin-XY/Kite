@@ -7,6 +7,8 @@ import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceLatestVersionProbe
 import com.kite.app.resources.KiteResourceMetadataVersionProbeSpec
 import com.kite.app.resources.KiteResourceRemoteVersionProbe
+import com.kite.app.resources.KiteResourceSourceCatalog
+import com.kite.app.resources.KiteResourceSourcePreferences
 import com.kite.app.resources.KiteResourceSourceSpec
 import com.kite.app.resources.KiteResourceVersionProbeSpec
 import kotlinx.coroutines.test.runTest
@@ -120,6 +122,25 @@ class ResourceVersionCoordinatorTest {
         ResourceVersionCoordinator(gateway).check(manifest(), "profile-2")
 
         assertEquals(listOf("profile-2", "profile-2"), gateway.observedEnvironmentIds)
+    }
+
+    @Test
+    fun `版本探测使用发起检查时的下载源顺序`() = runTest {
+        val gateway = FakeGateway("example 1.0.0", "{\"version\":\"1.0.0\"}")
+        val coordinator = ResourceVersionCoordinator(
+            gateway = gateway,
+            sourcePreferencesProvider = {
+                KiteResourceSourcePreferences(
+                    listOf(KiteResourceSourceCatalog.OFFICIAL, KiteResourceSourceCatalog.HUAWEI),
+                )
+            },
+        )
+
+        coordinator.check(manifest())
+
+        val probe = gateway.latestProbe as KiteResourceRemoteVersionProbe
+        assertTrue(probe.orderedUrls[0].startsWith("https://registry.npmjs.org/"))
+        assertTrue(probe.orderedUrls[1].startsWith("https://repo.huaweicloud.com/repository/npm/"))
     }
 
     @Test
@@ -268,6 +289,7 @@ class ResourceVersionCoordinatorTest {
         var preparationCalls = 0
         var installedReadCount = 0
         var latestReadCount = 0
+        var latestProbe: KiteResourceLatestVersionProbe? = null
 
         override suspend fun prepareInstalledVersion(
             probe: KiteResourceVersionProbeSpec,
@@ -292,6 +314,7 @@ class ResourceVersionCoordinatorTest {
             environmentId: String
         ): Result<String> {
             latestReadCount += 1
+            latestProbe = probe
             observedEnvironmentIds += environmentId
             return latestFailure?.let(Result.Companion::failure) ?: Result.success(latest)
         }

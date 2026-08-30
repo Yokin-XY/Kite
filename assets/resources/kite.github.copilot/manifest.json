@@ -73,10 +73,6 @@
     "type": "npm",
     "package": "@github/copilot",
     "repository": "https://github.com/github/copilot-cli",
-    "registries": [
-      "https://registry.npmmirror.com",
-      "https://registry.npmjs.org"
-    ],
     "installArguments": [
       "--no-update-notifier",
       "--no-audit",
@@ -117,10 +113,6 @@
             "type": "npm",
             "packages": [
               "@github/copilot@latest"
-            ],
-            "registries": [
-              "https://registry.npmmirror.com",
-              "https://registry.npmjs.org"
             ],
             "args": [
               "--no-update-notifier",
