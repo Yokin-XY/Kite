@@ -24,16 +24,44 @@
   ],
   "tabs": [
     {
-      "id": "all",
-      "label": "全部"
+      "id": "recommended",
+      "label": "推荐",
+      "sections": [
+        {
+          "id": "recommended",
+          "title": "推荐",
+          "style": "grid",
+          "items": [
+            "kite.codex.cli",
+            "kite.claude.code",
+            "kite.gemini.cli",
+            "kite.opencode",
+            "kite.hermes.core",
+            "kite.openclaw",
+            "kite.zcode",
+            "kite.deepseek.harness"
+          ]
+        }
+      ]
     },
     {
       "id": "angel-cli",
-      "label": "Angel CLI",
+      "label": "Agent",
       "sections": [
         {
-          "id": "angel-cli",
-          "title": "Angel CLI",
+          "id": "agent",
+          "title": "Agent",
+          "style": "list"
+        }
+      ]
+    },
+    {
+      "id": "foundation",
+      "label": "基础环境",
+      "sections": [
+        {
+          "id": "foundation",
+          "title": "基础环境",
           "style": "list"
         }
       ]
@@ -45,7 +73,8 @@
     "contentDescription": "MiMo Code 海报，点击查看资源详情"
   },
   "chips": [
-    "全部",
-    "Angel CLI"
+    "推荐",
+    "Agent",
+    "基础环境"
   ]
 }

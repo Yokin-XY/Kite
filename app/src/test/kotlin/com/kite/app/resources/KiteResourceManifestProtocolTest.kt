@@ -806,11 +806,22 @@ class KiteResourceManifestProtocolTest {
 
     @Test
     fun `首页只定义版面并由各 manifest 投影当前顺序和标签页`() {
-        val homeJson = File(resourceRoot(), "home.json").readText()
         val debugLayout = KiteResourceManifestLoader(context, isDebugBuild = true).requestHomeLayout()
         val releaseLayout = KiteResourceManifestLoader(context, isDebugBuild = false).requestHomeLayout()
 
-        assertFalse("home.json must not register resource ids with items", homeJson.contains("\"items\""))
+        assertEquals(
+            listOf(
+                "kite.codex.cli",
+                "kite.claude.code",
+                "kite.gemini.cli",
+                "kite.opencode",
+                "kite.hermes.core",
+                "kite.openclaw",
+                "kite.zcode",
+                "kite.deepseek.harness"
+            ),
+            debugLayout?.tabs?.first { it.id == "recommended" }?.sections?.single()?.items
+        )
         assertEquals(
             listOf(
                 "kite.opencode",
@@ -877,6 +888,17 @@ class KiteResourceManifestProtocolTest {
                 "kite.mimo.code"
             ),
             debugLayout?.tabs?.first { it.id == "angel-cli" }?.sections?.single()?.items
+        )
+        assertEquals(
+            listOf(
+                "kite.nodejs",
+                "kite.python",
+                "kite.git",
+                "kite.uv",
+                "kite.curl",
+                "kite.codex.relay",
+            ),
+            debugLayout?.tabs?.first { it.id == "foundation" }?.sections?.single()?.items
         )
         assertEquals(debugLayout?.sections, releaseLayout?.sections)
         assertEquals(debugLayout?.tabs, releaseLayout?.tabs)

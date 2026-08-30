@@ -28,6 +28,11 @@ class KiteResourceCatalogProjectorTest {
                     "engineering",
                     "工程验证",
                     listOf(KiteResourceHomeSection("engineering", "工程验证", "list", emptyList()))
+                ),
+                KiteResourceHomeTab(
+                    "foundation",
+                    "基础环境",
+                    listOf(KiteResourceHomeSection("foundation", "基础环境", "list", emptyList()))
                 )
             ),
             chips = emptyList(),
@@ -48,6 +53,10 @@ class KiteResourceCatalogProjectorTest {
         assertEquals(
             listOf("kite.second", "kite.first"),
             projected.tabs[1].sections.single().items
+        )
+        assertEquals(
+            listOf("kite.second", "kite.first"),
+            projected.tabs[2].sections.single().items
         )
         assertEquals("kite.second", projected.hero?.resourceId)
     }

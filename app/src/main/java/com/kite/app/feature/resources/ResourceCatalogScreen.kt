@@ -190,7 +190,7 @@ internal class ResourceCatalogScreen(
                 emptyList()
             ))
         }
-        if (tabs.none { it.id == selectedTabId }) selectedTabId = RESOURCE_HOME_TAB_ALL
+        if (tabs.none { it.id == selectedTabId }) selectedTabId = tabs.first().id
         val displayLabels = tabs.associate { tab ->
             tab.id to if (tab.id == RESOURCE_HOME_TAB_ALL) {
                 root.context.getString(R.string.resource_catalog_tab_all)
@@ -267,11 +267,41 @@ internal class ResourceCatalogScreen(
     }
 
     private fun sectionView(section: ResourceSectionPresentation, generation: Long): View =
-        if (section.style.equals("shelf", ignoreCase = true)) {
-            shelfSection(section, generation)
-        } else {
-            listSection(section, generation)
+        when {
+            section.style.equals("shelf", ignoreCase = true) -> shelfSection(section, generation)
+            section.style.equals("grid", ignoreCase = true) -> gridSection(section, generation)
+            else -> listSection(section, generation)
         }
+
+    private fun gridSection(section: ResourceSectionPresentation, generation: Long): View {
+        val sectionRoot = LinearLayout(root.context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, factory.dp(18), 0, 0)
+        }
+        section.items.chunked(RECOMMENDED_GRID_COLUMNS).forEachIndexed { rowIndex, rowItems ->
+            sectionRoot.addView(LinearLayout(root.context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.TOP
+                rowItems.forEachIndexed { columnIndex, item ->
+                    val binding = factory.shelfItem(item)
+                    bindings.getOrPut(binding.resourceId) { mutableListOf() } += binding
+                    addView(binding.root, LinearLayout.LayoutParams(
+                        factory.dp(68),
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        if (columnIndex != rowItems.lastIndex) setMargins(0, 0, factory.dp(7), 0)
+                    })
+                }
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                if (rowIndex > 0) setMargins(0, factory.dp(10), 0, 0)
+            })
+        }
+        if (generation != renderGeneration) sectionRoot.removeAllViews()
+        return sectionRoot
+    }
 
     private fun listSection(section: ResourceSectionPresentation, generation: Long): View {
         val sectionRoot = LinearLayout(root.context).apply {
@@ -367,6 +397,10 @@ internal class ResourceCatalogScreen(
             { renderShelfBatch(items, host, generation, end) },
             16L
         )
+    }
+
+    private companion object {
+        const val RECOMMENDED_GRID_COLUMNS = 4
     }
 
     private fun header(context: Context): View = LinearLayout(context).apply {
