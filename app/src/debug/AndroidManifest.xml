@@ -163,6 +163,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.kite.app.debug.NATIVE_TAR_ARCHIVE_BENCHMARK" />
+                <action android:name="com.kite.app.debug.NATIVE_ARCHIVE_PRODUCTION_PROBE" />
             </intent-filter>
         </receiver>
         <service

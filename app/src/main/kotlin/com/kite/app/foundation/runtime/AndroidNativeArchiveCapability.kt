@@ -25,9 +25,20 @@ internal data class AndroidNativeArchivePlan(
     val maximumFileBytes: Long,
     val maximumDepth: Int,
     val maximumExpansionRatio: Int,
+    val format: AndroidNativeArchiveFormat = AndroidNativeArchiveFormat.ZIP,
+    val expectedSha256: String? = null,
+    val specialEntryPolicy: RustTarSpecialEntryPolicy = RustTarSpecialEntryPolicy.REJECT,
+    val reuseKey: String? = null,
 )
 
-/** 第一版只接受不保留 Linux 链接、owner、mode 或 xattr 的封闭 ZIP 解包。 */
+internal enum class AndroidNativeArchiveFormat(val wireValue: String) {
+    ZIP("zip"),
+    TAR("tar"),
+    TAR_GZIP("tar.gz"),
+    TAR_XZ("tar.xz"),
+}
+
+/** 只接受显式格式和资源上限；业务事务、路径授权与取消仍由 Kotlin owner 持有。 */
 internal object AndroidNativeArchiveCapabilityProvider :
     RuntimeExecutionProvider<AndroidNativeFileCapabilityContext, AndroidNativeArchivePlan> {
     override val kind: RuntimeProviderKind = RuntimeProviderKind.ANDROID_NATIVE
@@ -49,9 +60,9 @@ internal object AndroidNativeArchiveCapabilityProvider :
         }
         val parameters = payload.parameters.mapValues { (_, value) -> value.trim() }
         if (parameters.keys.any { it !in PARAMETERS }) return blocked("native_archive_parameter_unknown")
-        if (parameters[PARAM_FORMAT]?.lowercase() != FORMAT_ZIP) {
-            return blocked("native_archive_format_unsupported")
-        }
+        val format = AndroidNativeArchiveFormat.entries.firstOrNull {
+            it.wireValue == parameters[PARAM_FORMAT]?.lowercase()
+        } ?: return blocked("native_archive_format_unsupported")
         val source = NativeFilePathResolver.resolve(context, parameters[PARAM_SOURCE], NativeFilePermission.READ)
             ?: return blocked("native_archive_source_invalid")
         val destination = NativeFilePathResolver.resolve(
@@ -72,6 +83,24 @@ internal object AndroidNativeArchiveCapabilityProvider :
             ?: return blocked("native_archive_max_depth_invalid")
         val maximumExpansionRatio = parameters.intValue(PARAM_MAX_EXPANSION_RATIO, 1..MAXIMUM_EXPANSION_RATIO)
             ?: return blocked("native_archive_max_expansion_ratio_invalid")
+        val expectedSha256 = parameters[PARAM_EXPECTED_SHA256]
+            ?.lowercase()
+            ?.takeIf(String::isNotBlank)
+        if (expectedSha256 != null && !SHA256.matches(expectedSha256)) {
+            return blocked("native_archive_digest_invalid")
+        }
+        val specialEntryPolicyValue = parameters[PARAM_SPECIAL_ENTRY_POLICY]?.takeIf(String::isNotBlank)
+        val specialEntryPolicy = specialEntryPolicyValue?.let { value ->
+            RustTarSpecialEntryPolicy.entries.firstOrNull { it.wireValue == value.lowercase() }
+                ?: return blocked("native_archive_special_entry_policy_invalid")
+        } ?: RustTarSpecialEntryPolicy.REJECT
+        if (format == AndroidNativeArchiveFormat.ZIP && specialEntryPolicy != RustTarSpecialEntryPolicy.REJECT) {
+            return blocked("native_archive_special_entry_policy_invalid")
+        }
+        val reuseKey = parameters[PARAM_REUSE_KEY]?.takeIf(String::isNotBlank)
+        if (reuseKey != null && !REUSE_KEY.matches(reuseKey)) {
+            return blocked("native_archive_reuse_key_invalid")
+        }
         return RuntimeProviderDecision.Ready(
             provider = kind,
             plan = AndroidNativeArchivePlan(
@@ -87,8 +116,12 @@ internal object AndroidNativeArchiveCapabilityProvider :
                 maximumFileBytes = maximumFileBytes,
                 maximumDepth = maximumDepth,
                 maximumExpansionRatio = maximumExpansionRatio,
+                format = format,
+                expectedSha256 = expectedSha256,
+                specialEntryPolicy = specialEntryPolicy,
+                reuseKey = reuseKey,
             ),
-            reason = "native_archive_zip_ready",
+            reason = "native_archive_${format.wireValue.replace('.', '_')}_ready",
         )
     }
 
@@ -111,6 +144,9 @@ internal object AndroidNativeArchiveCapabilityProvider :
     const val PARAM_MAX_FILE_BYTES = "maxFileBytes"
     const val PARAM_MAX_DEPTH = "maxDepth"
     const val PARAM_MAX_EXPANSION_RATIO = "maxExpansionRatio"
+    const val PARAM_EXPECTED_SHA256 = "expectedSha256"
+    const val PARAM_SPECIAL_ENTRY_POLICY = "specialEntryPolicy"
+    const val PARAM_REUSE_KEY = "reuseKey"
     const val FORMAT_ZIP = "zip"
 
     private val PARAMETERS = setOf(
@@ -123,7 +159,12 @@ internal object AndroidNativeArchiveCapabilityProvider :
         PARAM_MAX_FILE_BYTES,
         PARAM_MAX_DEPTH,
         PARAM_MAX_EXPANSION_RATIO,
+        PARAM_EXPECTED_SHA256,
+        PARAM_SPECIAL_ENTRY_POLICY,
+        PARAM_REUSE_KEY,
     )
+    private val SHA256 = Regex("[a-f0-9]{64}")
+    private val REUSE_KEY = Regex("[A-Za-z0-9._:+-]{1,160}")
     private const val MAXIMUM_ENTRIES = 100_000
     private const val MAXIMUM_DEPTH = 64
     private const val MAXIMUM_EXPANSION_RATIO = 1_000
@@ -153,6 +194,9 @@ internal class AndroidNativeArchiveExecutor(
         cancellation: NativeFileCancellation = NativeFileCancellation.NONE,
         progress: NativeArchiveProgressListener = NativeArchiveProgressListener.NONE,
     ): NativeArchiveExecutionResult {
+        if (plan.format != AndroidNativeArchiveFormat.ZIP) {
+            return NativeArchiveExecutionResult.Failure("native_archive_format_requires_rust")
+        }
         validateSource(plan)?.let { return it }
         if (plan.destination.exists()) return NativeArchiveExecutionResult.Failure("native_archive_destination_exists")
         val destinationParent = plan.destination.parentFile

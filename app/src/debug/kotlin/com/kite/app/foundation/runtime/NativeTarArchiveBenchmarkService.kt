@@ -40,15 +40,18 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 /** Debug-only entry for the fixed real Kite tar.gz matrix. */
 class NativeTarArchiveBenchmarkReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action != ACTION) return
+        if (intent?.action !in setOf(ACTION, ACTION_PRODUCTION)) return
         ContextCompat.startForegroundService(
             context,
-            Intent(context, NativeTarArchiveBenchmarkService::class.java),
+            Intent(context, NativeTarArchiveBenchmarkService::class.java)
+                .putExtra(EXTRA_PRODUCTION, intent?.action == ACTION_PRODUCTION),
         )
     }
 
     companion object {
         const val ACTION = "com.kite.app.debug.NATIVE_TAR_ARCHIVE_BENCHMARK"
+        const val ACTION_PRODUCTION = "com.kite.app.debug.NATIVE_ARCHIVE_PRODUCTION_PROBE"
+        const val EXTRA_PRODUCTION = "production"
         const val LOG_TAG = "[KFShell]NativeTarBenchmark"
     }
 }
@@ -65,7 +68,14 @@ class NativeTarArchiveBenchmarkService : Service() {
         }
         scope.launch {
             try {
-                NativeTarArchiveBenchmark.run(applicationContext).forEach { report ->
+                val reports = if (
+                    intent?.getBooleanExtra(NativeTarArchiveBenchmarkReceiver.EXTRA_PRODUCTION, false) == true
+                ) {
+                    NativeTarArchiveBenchmark.runProduction(applicationContext)
+                } else {
+                    NativeTarArchiveBenchmark.run(applicationContext)
+                }
+                reports.forEach { report ->
                     Log.i(NativeTarArchiveBenchmarkReceiver.LOG_TAG, report)
                 }
             } catch (error: Throwable) {
@@ -193,6 +203,31 @@ private object NativeTarArchiveBenchmark {
                 add(runAdmissionGates(context, root))
                 add("status=complete cleanup=true production_route=false")
             }
+        } finally {
+            deleteTree(root)
+        }
+    }
+
+    fun runProduction(context: Context): List<String> {
+        check(RustArchiveBridge.isAvailable) { "rust_archive_library_unavailable" }
+        val workspace = KFContainerManager.resolveWorkspaceDirectory(context)
+        val root = File(workspace, ".kf/cache/resources/$RESOURCE_ID-production")
+        deleteTree(root)
+        check(root.mkdirs()) { "production_probe_root_create_failed" }
+        return try {
+            val rootfs = fixtures.first { it.id == "rootfs" }
+            val rootfsSource = File(root, "${rootfs.id}.${rootfs.compression.assetExtension}")
+            copyAsset(context, rootfs.assetPath, rootfsSource)
+            val rootfsOutcome = runEngine(context, root, rootfs, rootfsSource, Engine.RUST)
+            check(rootfsOutcome.failure == null) { "rootfs_rust_failed:${rootfsOutcome.failure}" }
+
+            val pnpm = fixtures.first { it.id == "pnpm" }
+            copyAsset(context, pnpm.assetPath, File(root, "pnpm.${pnpm.compression.assetExtension}"))
+            listOf(
+                renderFixture(rootfs, rootfsSource.length(), mapOf(Engine.RUST to rootfsOutcome)),
+                runRustAdmissionGates(root),
+                "status=production-complete cleanup=true production_route=true",
+            )
         } finally {
             deleteTree(root)
         }
@@ -339,6 +374,72 @@ private object NativeTarArchiveBenchmark {
         return execution
     }
 
+    private fun runRustAdmissionGates(root: File): String {
+        val traversalArchive = File(root, "production-traversal.tgz")
+        writeTraversalArchive(traversalArchive)
+        val traversalDestination = File(root, "production-traversal")
+        val traversalStaging = File(root, ".production-traversal.part")
+        val traversal = RustArchiveBridge.executeTar(
+            gateRequest(traversalArchive, traversalDestination, traversalStaging)
+        )
+        check(traversal is NativeArchiveExecutionResult.Failure)
+        check(!File(root, "escape-marker").exists())
+        check(!traversalDestination.exists() && !traversalStaging.exists())
+
+        val symlinkArchive = File(root, "production-symlink.tgz")
+        writeSymlinkEscapeArchive(symlinkArchive)
+        val outside = File(root, "outside").apply { check(mkdirs()) }
+        val symlinkDestination = File(root, "production-symlink")
+        val symlinkStaging = File(root, ".production-symlink.part")
+        val symlink = RustArchiveBridge.executeTar(
+            gateRequest(symlinkArchive, symlinkDestination, symlinkStaging)
+        )
+        check(symlink is NativeArchiveExecutionResult.Failure)
+        check(!File(outside, "payload").exists())
+        check(!symlinkDestination.exists() && !symlinkStaging.exists())
+
+        val source = File(root, "pnpm.tgz")
+        val cancellationDestination = File(root, "production-cancel")
+        val cancellationStaging = File(root, ".production-cancel.part")
+        val cancellation = NativeFileCancellationSignal()
+        val cancelled = RustArchiveBridge.executeTar(
+            request = gateRequest(source, cancellationDestination, cancellationStaging),
+            cancellation = cancellation,
+            progress = NativeArchiveProgressListener { _, bytes ->
+                if (bytes > 0L) cancellation.cancel()
+            },
+        )
+        check(cancelled is NativeArchiveExecutionResult.Cancelled)
+        check(!cancellationDestination.exists() && !cancellationStaging.exists())
+
+        val digestDestination = File(root, "production-digest")
+        val digestStaging = File(root, ".production-digest.part")
+        val digestMismatch = RustArchiveBridge.executeTar(
+            gateRequest(source, digestDestination, digestStaging).copy(expectedSha256 = "0".repeat(64))
+        )
+        check(digestMismatch == NativeArchiveExecutionResult.Failure("native_archive_digest_mismatch"))
+        check(!digestDestination.exists() && !digestStaging.exists())
+
+        val reuseDestination = File(root, "production-reuse")
+        val reuseStaging = File(root, ".production-reuse.part")
+        val reuseRequest = gateRequest(source, reuseDestination, reuseStaging).copy(
+            reuseKey = "v1:production:${sha256(source.toPath())}",
+        )
+        check(RustArchiveBridge.executeTar(reuseRequest) is NativeArchiveExecutionResult.Success)
+        val rejectCallback = NativeFileCancellationSignal().apply { cancel() }
+        check(
+            RustArchiveBridge.executeTar(reuseRequest, cancellation = rejectCallback) is
+                NativeArchiveExecutionResult.Cancelled
+        )
+        val reused = RustArchiveBridge.executeTar(reuseRequest)
+        check(reused is NativeArchiveExecutionResult.Success) {
+            "reuse_failed:$reused marker=${runCatching { File(reuseDestination, ".kite-archive-ready").readText() }.getOrNull()}"
+        }
+        check(File(reuseDestination, ".kite-archive-ready").isFile)
+        return "status=production-gates traversal=true symlink_escape=true live_cancellation=true " +
+            "digest_rejection=true immutable_reuse=true cleanup=true"
+    }
+
     private fun runAdmissionGates(context: Context, root: File): String {
         val traversalArchive = File(root, "gate-traversal.tgz")
         writeTraversalArchive(traversalArchive)
@@ -393,9 +494,11 @@ private object NativeTarArchiveBenchmark {
         val cancellationSource = File(root, "pnpm.tgz")
         val rustCancelDestination = File(root, "gate-rust-cancel")
         val rustCancelStaging = File(root, ".gate-rust-cancel-part")
+        val rustCancellation = NativeFileCancellationSignal()
         val rustCancelled = RustArchiveBridge.executeTar(
             gateRequest(cancellationSource, rustCancelDestination, rustCancelStaging),
-            cancelAfterBytes = 1L,
+            cancellation = rustCancellation,
+            progress = NativeArchiveProgressListener { _, _ -> rustCancellation.cancel() },
         )
         check(rustCancelled is NativeArchiveExecutionResult.Cancelled)
         check(!rustCancelDestination.exists() && !rustCancelStaging.exists())

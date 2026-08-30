@@ -114,8 +114,21 @@
           },
           {
             "id": "extract-cursor-arm64",
+            "type": "archive",
+            "path": "$install_root/.kite-downloads/cursor-arm64.tar.gz",
+            "destination": "$install_root",
+            "format": "tar.gz",
+            "maxEntries": 20000,
+            "maxOutputBytes": 536870912,
+            "maxFileBytes": 268435456,
+            "maxDepth": 48,
+            "maxExpansionRatio": 32,
+            "specialEntryPolicy": "reject"
+          },
+          {
+            "id": "link-cursor-arm64",
             "type": "shell",
-            "cmd": "tar -xzf \"$install_root/.kite-downloads/cursor-arm64.tar.gz\" -C \"$install_root\"\nmkdir -p \"$install_root/bin\"\nchmod 755 \"$install_root/dist-package/cursor-agent\"\nln -sfn ../dist-package/cursor-agent \"$install_root/bin/cursor-agent\""
+            "cmd": "mkdir -p \"$install_root/bin\"\nchmod 755 \"$install_root/dist-package/cursor-agent\"\nln -sfn ../dist-package/cursor-agent \"$install_root/bin/cursor-agent\""
           }
         ],
         "managedCommands": ["cursor-agent"],

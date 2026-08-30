@@ -21,7 +21,7 @@ class AndroidNativeArchiveCapabilityTest {
         val ready = prepare(fixture) as RuntimeProviderDecision.Ready
         assertEquals("native_archive_zip_ready", ready.reason)
 
-        assertBlocked(fixture, parameters = parameters(format = "tar.gz"), "native_archive_format_unsupported")
+        assertBlocked(fixture, parameters = parameters(format = "7z"), "native_archive_format_unsupported")
         assertBlocked(
             fixture,
             parameters = parameters(destination = "/workspace/../escape"),
@@ -31,6 +31,33 @@ class AndroidNativeArchiveCapabilityTest {
             fixture,
             parameters = parameters(extra = mapOf("preserveMode" to "true")),
             "native_archive_parameter_unknown",
+        )
+    }
+
+    @Test
+    fun `provider accepts bounded tar formats without weakening path authorization`() {
+        val fixture = fixture()
+        File(fixture.cache, "source.zip").writeBytes(byteArrayOf(1, 2, 3))
+        val digest = "a".repeat(64)
+        val ready = prepare(
+            fixture,
+            parameters(
+                format = "tar.gz",
+                extra = mapOf(
+                    AndroidNativeArchiveCapabilityProvider.PARAM_EXPECTED_SHA256 to digest,
+                    AndroidNativeArchiveCapabilityProvider.PARAM_SPECIAL_ENTRY_POLICY to "reject",
+                    AndroidNativeArchiveCapabilityProvider.PARAM_REUSE_KEY to "v1:tar.gz:$digest",
+                ),
+            ),
+        ) as RuntimeProviderDecision.Ready
+
+        assertEquals(AndroidNativeArchiveFormat.TAR_GZIP, ready.plan.format)
+        assertEquals(digest, ready.plan.expectedSha256)
+        assertEquals("native_archive_tar_gz_ready", ready.reason)
+        assertBlocked(
+            fixture,
+            parameters(format = "tar.gz", extra = mapOf("specialEntryPolicy" to "unknown")),
+            "native_archive_special_entry_policy_invalid",
         )
     }
 

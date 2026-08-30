@@ -8,7 +8,6 @@ import com.kite.app.foundation.capability.CapabilityCatalog
 import com.kite.app.foundation.capability.CapabilityInvocationKind
 import com.kite.app.foundation.runtime.AndroidNativeCapabilityContext
 import com.kite.app.foundation.runtime.AndroidNativeArchiveCapabilityProvider
-import com.kite.app.foundation.runtime.AndroidNativeArchiveExecutor
 import com.kite.app.foundation.runtime.AndroidNativeArchivePlan
 import com.kite.app.foundation.runtime.AndroidNativeDownloadCapabilityProvider
 import com.kite.app.foundation.runtime.AndroidNativeDownloadExecutor
@@ -33,6 +32,7 @@ import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import com.kite.app.foundation.runtime.RuntimeFallbackPolicy
 import com.kite.app.foundation.runtime.RuntimeProviderDecision
+import com.kite.app.foundation.runtime.RustArchiveBridge
 import com.kite.app.foundation.runtime.KFContainerManager
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.run.CardRunStatus
@@ -75,9 +75,8 @@ internal class AndroidNativeCapabilityRecipeRuntime(
     fileExecutor: AndroidNativeFileExecutor = AndroidNativeFileExecutor(),
     fileCapabilityContextProvider: (() -> AndroidNativeFileCapabilityContext)? = null,
     private val fileExecutionGateway: NativeFileExecutionGateway = NativeFileExecutionGateway(fileExecutor::execute),
-    archiveExecutor: AndroidNativeArchiveExecutor = AndroidNativeArchiveExecutor(),
     private val archiveExecutionGateway: NativeArchiveExecutionGateway =
-        NativeArchiveExecutionGateway(archiveExecutor::execute),
+        NativeArchiveExecutionGateway(RustArchiveBridge::execute),
 ) : NativeCapabilityRecipeRuntime {
     private data class ExecutionKey(
         val instanceId: String,
@@ -365,7 +364,7 @@ internal class AndroidNativeCapabilityRecipeRuntime(
                     lastPublishedAt = now
                     callback(
                         request.progress(
-                            message = "原生 ZIP 解包中：$entries 项，$bytes 字节",
+                            message = "原生归档解包中：$entries 项，$bytes 字节",
                             lane = "android_native",
                             reason = readyReason,
                         )
@@ -375,7 +374,7 @@ internal class AndroidNativeCapabilityRecipeRuntime(
         )
         when (result) {
             is NativeArchiveExecutionResult.Success -> {
-                val summary = "原生 ZIP 解包完成：${result.entriesExtracted} 项，${result.bytesExtracted} 字节"
+                val summary = "原生归档解包完成：${result.entriesExtracted} 项，${result.bytesExtracted} 字节"
                 callback(
                     RecipeExecutionEvent.Completed(
                         request.instanceId,

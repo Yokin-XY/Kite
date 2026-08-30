@@ -30,12 +30,10 @@ Wasm 沙箱等能力等真实调用方出现后再独立立项。
 - ACP 进程通道当前只是分离 stdout/stderr 的缓冲行流；Hermes 启动等待主要来自 PRoot、Python、Agent 初始化和外部服务，不来自 Kotlin
   行读写。把该通道改成 Rust 或 Go 不会消除主等待项。
 
-## 生产接入顺序
+## 当前生产状态
 
-1. 保留当前 Debug Rust 引擎和固定矩阵，补实时取消与低频有界进度桥；JNI 仍为“一次请求、一次终态”的粗粒度接口。
-2. 把 Rust 工具链、NDK、依赖锁和产物身份纳入可复现构建；再补至少一台低性能/旧系统设备的真实制品矩阵。
-3. 先接入独立候选目录的制品准备事务，由 Kotlin 继续持有资源级 single-flight、`writeScopes`、状态和回滚。
-4. 首批只迁移 rootfs、工具链包和明确声明 ZIP/`tar.gz`/`tar.xz` 的资源；任意 shell 安装继续 PRoot。
-5. 只有新的进程启动 trace 证明 Kotlin/Java 管道本身成为显著 CPU 或延迟热点，才重开 Rust supervisor；现有 C PTY/signal 层不重写。
-
-生产门关闭前，普通 Debug、Release、资源清单和正式路由均保持不变。
+1. Rust 归档引擎已经进入 `main` 的 ARM64 JNI 资产，普通 Debug 与 Release 构建都会携带，不再依赖试点开关。
+2. Rust 1.98、Cargo 锁文件和 NDK 28.2.13676358 已固定；Windows 本机构建与 Ubuntu CI 使用各自 NDK host toolchain，产物同步任务跟踪真实 `.so` 输入。
+3. JNI 保持单次粗粒度归档事务，并提供低频有界进度和实时取消；资源锁、`writeScopes`、状态、验证和回滚继续只有 Kotlin 一份事实。
+4. rootfs、Cursor CLI、Devin CLI，以及以后显式声明 ZIP/`tar.gz`/`tar.xz` 上限的资源使用正式 Rust 路由；任意 shell、动态地址和未声明边界的安装继续完整走 PRoot。
+5. Debug 固定矩阵只负责回归和安全探针，不再承担生产开关。只有新的进程启动 trace 证明 Kotlin/Java 管道本身成为显著 CPU 或延迟热点，才重开 Rust supervisor；现有 C PTY/signal 层不重写。

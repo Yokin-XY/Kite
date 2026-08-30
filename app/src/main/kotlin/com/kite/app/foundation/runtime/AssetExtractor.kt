@@ -13,6 +13,8 @@ import java.io.FilterInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.security.MessageDigest
+import java.util.UUID
 import java.util.zip.GZIPInputStream
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -414,7 +416,9 @@ object AssetExtractor {
         }
 
         deleteRecursively(destinationDir)
-        destinationDir.mkdirs()
+        check(destinationDir.parentFile?.mkdirs() == true || destinationDir.parentFile?.isDirectory == true) {
+            "无法创建 rootfs 父目录: ${destinationDir.parentFile?.absolutePath}"
+        }
 
         try {
             extractTarAsset(context, rootfsAsset, destinationDir, startedAt)
@@ -495,25 +499,111 @@ object AssetExtractor {
         )
 
     private fun extractTarAsset(context: Context, assetPath: String, destinationDir: File, startedAt: Long) {
-        val isCompressedTar = assetPath.isGzipTarArchive()
-
-        context.assets.open(assetPath).use { assetInput ->
-            val totalBytes = runCatching { assetInput.available().toLong() }.getOrDefault(0L)
-            val countingInput = CountingInputStream(BufferedInputStream(assetInput))
-            val archiveInput: InputStream = if (isCompressedTar) {
-                GZIPInputStream(countingInput)
-            } else {
-                countingInput
-            }
-
-            extractTarStream(
-                archiveInput = archiveInput,
+        val prepared = materializeArchiveAsset(context, assetPath)
+        try {
+            extractRootfsWithRust(
+                source = prepared.file,
                 destinationDir = destinationDir,
                 sourceLabel = assetPath,
-                totalBytes = totalBytes,
                 startedAt = startedAt,
-                bytesRead = { countingInput.bytesRead }
+                expectedSha256 = prepared.sha256,
             )
+        } finally {
+            prepared.file.delete()
+        }
+    }
+
+    private data class PreparedArchiveAsset(
+        val file: File,
+        val sha256: String,
+    )
+
+    private fun materializeArchiveAsset(context: Context, assetPath: String): PreparedArchiveAsset {
+        val pendingRoot = File(context.cacheDir, "rust-archive-inputs").apply {
+            check(mkdirs() || isDirectory) { "无法创建归档输入暂存目录" }
+        }
+        pendingRoot.listFiles().orEmpty().forEach { stale ->
+            if (stale.isFile) stale.delete()
+        }
+        val suffix = assetPath.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._-]"), "-")
+        val token = UUID.randomUUID().toString().replace("-", "")
+        val pending = File(pendingRoot, ".$token-$suffix.part")
+        val published = File(pendingRoot, "$token-$suffix")
+        val digest = MessageDigest.getInstance("SHA-256")
+        try {
+            context.assets.open(assetPath).use { input ->
+                FileOutputStream(pending, false).use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        output.write(buffer, 0, count)
+                        digest.update(buffer, 0, count)
+                    }
+                    output.fd.sync()
+                }
+            }
+            check(pending.renameTo(published)) { "无法发布归档输入暂存文件" }
+            return PreparedArchiveAsset(
+                file = published,
+                sha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) },
+            )
+        } catch (error: Throwable) {
+            pending.delete()
+            published.delete()
+            throw error
+        }
+    }
+
+    private fun extractRootfsWithRust(
+        source: File,
+        destinationDir: File,
+        sourceLabel: String,
+        startedAt: Long,
+        expectedSha256: String?,
+    ) {
+        val staging = File(
+            checkNotNull(destinationDir.parentFile),
+            ".${destinationDir.name}.kite-rust-${UUID.randomUUID().toString().replace("-", "")}.part",
+        )
+        val compression = when {
+            source.name.endsWith(".xz", ignoreCase = true) -> RustTarCompression.XZ
+            source.name.isGzipTarArchive() -> RustTarCompression.GZIP
+            else -> RustTarCompression.NONE
+        }
+        val result = RustArchiveBridge.executeTar(
+            request = RustTarArchiveRequest(
+                source = source,
+                destination = destinationDir,
+                stagingDirectory = staging,
+                maximumArchiveBytes = source.length(),
+                maximumEntries = 50_000,
+                maximumTotalBytes = 2L * 1024L * 1024L * 1024L,
+                maximumFileBytes = 768L * 1024L * 1024L,
+                maximumDepth = 64,
+                maximumExpansionRatio = 32,
+                expectedArchiveBytes = source.length(),
+                expectedSha256 = expectedSha256,
+                compression = compression,
+                specialEntryPolicy = RustTarSpecialEntryPolicy.MATERIALIZE_EMPTY_FILE,
+            ),
+            progress = NativeArchiveProgressListener { entries, bytes ->
+                publishRootfsProgress(
+                    phase = RootfsExtractionPhase.EXTRACTING,
+                    sourceLabel = sourceLabel,
+                    bytesRead = bytes,
+                    totalBytes = 0L,
+                    entriesExtracted = entries,
+                    message = "正在解压系统镜像：$entries 项，$bytes 字节",
+                    startedAt = startedAt,
+                )
+            },
+        )
+        when (result) {
+            is NativeArchiveExecutionResult.Success -> Unit
+            is NativeArchiveExecutionResult.Cancelled -> error("基础镜像解压已取消")
+            is NativeArchiveExecutionResult.Failure -> error("Rust 归档引擎失败: ${result.reason}")
         }
     }
 
@@ -768,22 +858,16 @@ object AssetExtractor {
     ) {
         Logger.i("AssetExtractor", "从安卓下载目录导入 rootfs: ${source.absolutePath} -> ${destinationDir.absolutePath}")
         deleteRecursively(destinationDir)
-        destinationDir.mkdirs()
+        check(destinationDir.parentFile?.mkdirs() == true || destinationDir.parentFile?.isDirectory == true) {
+            "无法创建 rootfs 父目录: ${destinationDir.parentFile?.absolutePath}"
+        }
         try {
-            val isCompressed = source.name.isGzipTarArchive()
-            val countingInput = CountingInputStream(BufferedInputStream(source.inputStream()))
-            val archiveInput: InputStream = if (isCompressed) {
-                GZIPInputStream(countingInput)
-            } else {
-                countingInput
-            }
-            extractTarStream(
-                archiveInput = archiveInput,
+            extractRootfsWithRust(
+                source = source,
                 destinationDir = destinationDir,
                 sourceLabel = source.name,
-                totalBytes = source.length(),
                 startedAt = startedAt,
-                bytesRead = { countingInput.bytesRead }
+                expectedSha256 = null,
             )
         } catch (throwable: Throwable) {
             Logger.e("AssetExtractor", "exchange rootfs 导入失败: ${throwable.message}")

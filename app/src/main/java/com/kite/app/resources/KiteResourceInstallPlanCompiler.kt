@@ -5,6 +5,7 @@ object KiteResourceInstallPlanCompiler {
     const val STEP_APT = "apt"
     const val STEP_BUNDLED = "bundled"
     const val STEP_DOWNLOAD = "download"
+    const val STEP_ARCHIVE = "archive"
     const val STEP_GIT = "git"
     const val STEP_NPM = "npm"
     const val STEP_SCRIPT = "script"
@@ -70,6 +71,7 @@ object KiteResourceInstallPlanCompiler {
         val step = action.installSteps.firstOrNull() ?: return ""
         return when (step.type) {
             STEP_DOWNLOAD -> step.urls.firstOrNull().orEmpty()
+            STEP_ARCHIVE -> listOf(step.archiveFormat, step.path, step.destination).joinToString(" ")
             STEP_GIT -> step.repository
             STEP_NPM, STEP_APT -> step.packages.joinToString(" ")
             STEP_SCRIPT -> listOf(step.interpreter, step.path).filter { it.isNotBlank() }.joinToString(" ")
@@ -79,6 +81,7 @@ object KiteResourceInstallPlanCompiler {
 
     private fun compileStep(step: KiteResourceInstallStep): String = when (step.type) {
         STEP_DOWNLOAD -> compileDownload(step)
+        STEP_ARCHIVE -> error("Archive step ${step.id} must be compiled by the Android native archive planner")
         STEP_SCRIPT -> compileScript(step)
         STEP_NPM -> compileNpm(step)
         STEP_APT -> compileApt(step)

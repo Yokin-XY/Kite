@@ -211,7 +211,12 @@ private object NativeArchiveCapabilityBenchmark {
         val destination = File(root, if (rust) "rust-cancelled-out" else "kotlin-cancelled-out")
         val archivePlan = plan(context, destination.name)
         val result = if (rust) {
-            RustArchiveBridge.execute(archivePlan, cancelAfterBytes = 1L)
+            val cancellation = NativeFileCancellationSignal()
+            RustArchiveBridge.execute(
+                archivePlan,
+                cancellation,
+                NativeArchiveProgressListener { _, _ -> cancellation.cancel() },
+            )
         } else {
             val cancellation = NativeFileCancellationSignal()
             AndroidNativeArchiveExecutor().execute(

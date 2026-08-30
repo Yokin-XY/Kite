@@ -176,7 +176,14 @@ data class KiteResourceInstallStep(
     val depth: Int = 1,
     val retryAttempts: Int = 4,
     val retryDelaySeconds: Int = 2,
-    val maxBytes: Long = 0L
+    val maxBytes: Long = 0L,
+    val archiveFormat: String = "",
+    val maximumEntries: Int = 0,
+    val maximumTotalBytes: Long = 0L,
+    val maximumFileBytes: Long = 0L,
+    val maximumDepth: Int = 0,
+    val maximumExpansionRatio: Int = 0,
+    val specialEntryPolicy: String = "reject",
 )
 
 data class KiteResourceInstallVerification(
@@ -1166,7 +1173,14 @@ class KiteResourceManifestLoader private constructor(
                         depth = step.optInt("depth", 1).coerceIn(0, 1000),
                         retryAttempts = step.optInt("retryAttempts", 4).coerceIn(1, 10),
                         retryDelaySeconds = step.optInt("retryDelaySeconds", 2).coerceIn(0, 60),
-                        maxBytes = step.optLong("maxBytes", 0L).coerceAtLeast(0L)
+                        maxBytes = step.optLong("maxBytes", 0L).coerceAtLeast(0L),
+                        archiveFormat = step.optString("format").trim().lowercase(),
+                        maximumEntries = step.optInt("maxEntries", 0).coerceAtLeast(0),
+                        maximumTotalBytes = step.optLong("maxOutputBytes", 0L).coerceAtLeast(0L),
+                        maximumFileBytes = step.optLong("maxFileBytes", 0L).coerceAtLeast(0L),
+                        maximumDepth = step.optInt("maxDepth", 0).coerceAtLeast(0),
+                        maximumExpansionRatio = step.optInt("maxExpansionRatio", 0).coerceAtLeast(0),
+                        specialEntryPolicy = step.optString("specialEntryPolicy", "reject").trim().lowercase(),
                     )
                 )
             }

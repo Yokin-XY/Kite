@@ -1,6 +1,7 @@
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import java.security.MessageDigest
+import java.util.Locale
 
 plugins {
     id "com.android.application"
@@ -13,16 +14,21 @@ def generatedResourceCatalogAssetsDir = layout.buildDirectory.dir("generated/res
 def generatedNodeRuntimeAssetsDir = layout.buildDirectory.dir("generated/node-runtime-assets")
 def toolchainPackDir = rootProject.file("assets/toolchain/ai-dev-pack")
 def generatedToolchainIntegrityAssetsDir = layout.buildDirectory.dir("generated/toolchain-integrity-assets")
-def rustArchiveEnabled = providers.gradleProperty("kiteRustArchive")
-    .map { it.toBoolean() }
-    .orElse(false)
+def rustArchiveHostOs = System.getProperty("os.name").toLowerCase(Locale.ROOT)
+def rustArchiveWindowsHost = rustArchiveHostOs.contains("windows")
+def rustArchiveNdkHostTag = rustArchiveWindowsHost ? "windows-x86_64" :
+    (rustArchiveHostOs.contains("linux") ? "linux-x86_64" : "darwin-x86_64")
 def cargoExecutable = providers.gradleProperty("kiteCargoExecutable").orElse(
-    new File(System.getProperty("user.home"), ".cargo/bin/cargo.exe").absolutePath
+    new File(
+        System.getProperty("user.home"),
+        rustArchiveWindowsHost ? ".cargo/bin/cargo.exe" : ".cargo/bin/cargo",
+    ).absolutePath
 )
 def rustArchiveManifest = rootProject.file("native/kite-archive-rs/Cargo.toml")
 def rustArchiveSource = rootProject.file("native/kite-archive-rs/src")
 def rustArchiveTargetDir = rootProject.layout.buildDirectory.dir("rust-target/kite-archive-rs")
-def rustArchiveJniDir = layout.buildDirectory.dir("generated/rust-jni/debug")
+def rustArchiveJniDir = layout.buildDirectory.dir("generated/rust-jni/main")
+def libarchiveBenchmarkJniDir = layout.buildDirectory.dir("generated/libarchive-jni/debug")
 def rustArchiveNdkVersion = "28.2.13676358"
 def libarchiveBenchmarkEnabled = providers.gradleProperty("kiteLibarchiveBenchmark")
     .map { it.toBoolean() }
@@ -155,9 +161,10 @@ android {
             assets.srcDir generatedResourceCatalogAssetsDir
             assets.srcDir generatedNodeRuntimeAssetsDir
             assets.srcDir generatedToolchainIntegrityAssetsDir
+            jniLibs.srcDir rustArchiveJniDir
         }
         debug {
-            jniLibs.srcDir rustArchiveJniDir
+            jniLibs.srcDir libarchiveBenchmarkJniDir
         }
     }
 
@@ -179,10 +186,10 @@ tasks.named("preBuild").configure {
     dependsOn(generateResourceCatalogIndex)
     dependsOn(syncNodeRuntimeAssets)
     dependsOn(generateToolchainIntegrityManifest)
+    dependsOn("prepareRustArchiveJniLibs")
 }
 
 def buildRustArchive = tasks.register("buildRustArchive", Exec) {
-    onlyIf { rustArchiveEnabled.get() }
     workingDir rootProject.projectDir
     inputs.file(rustArchiveManifest)
     inputs.file(rootProject.file("native/kite-archive-rs/Cargo.lock"))
@@ -194,14 +201,17 @@ def buildRustArchive = tasks.register("buildRustArchive", Exec) {
     doFirst {
         def androidHome = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
         if (androidHome == null || androidHome.isBlank()) {
-            throw new GradleException("ANDROID_HOME or ANDROID_SDK_ROOT is required for the Rust archive pilot")
+            throw new GradleException("ANDROID_HOME or ANDROID_SDK_ROOT is required for the production Rust archive engine")
         }
         def llvmBin = new File(
             androidHome,
-            "ndk/${rustArchiveNdkVersion}/toolchains/llvm/prebuilt/windows-x86_64/bin"
+            "ndk/${rustArchiveNdkVersion}/toolchains/llvm/prebuilt/${rustArchiveNdkHostTag}/bin"
         )
-        def linker = new File(llvmBin, "aarch64-linux-android28-clang.cmd")
-        def archiver = new File(llvmBin, "llvm-ar.exe")
+        def linker = new File(
+            llvmBin,
+            rustArchiveWindowsHost ? "aarch64-linux-android28-clang.cmd" : "aarch64-linux-android28-clang",
+        )
+        def archiver = new File(llvmBin, rustArchiveWindowsHost ? "llvm-ar.exe" : "llvm-ar")
         if (!linker.isFile() || !archiver.isFile()) {
             throw new GradleException("Pinned Android NDK ${rustArchiveNdkVersion} is unavailable")
         }
@@ -225,20 +235,29 @@ def buildRustArchive = tasks.register("buildRustArchive", Exec) {
 
 def prepareRustArchiveJniLibs = tasks.register("prepareRustArchiveJniLibs") {
     dependsOn(buildRustArchive)
-    dependsOn("buildLibarchiveBenchmark")
+    inputs.file(rustArchiveTargetDir.map {
+        it.file("aarch64-linux-android/release/libkite_archive_rs.so")
+    })
     outputs.dir(rustArchiveJniDir)
-    outputs.upToDateWhen { false }
     doLast {
         def output = rustArchiveJniDir.get().asFile
         delete(output)
-        if (rustArchiveEnabled.get()) {
-            copy {
-                from(rustArchiveTargetDir.map {
-                    it.file("aarch64-linux-android/release/libkite_archive_rs.so")
-                })
-                into(new File(output, "arm64-v8a"))
-            }
+        copy {
+            from(rustArchiveTargetDir.map {
+                it.file("aarch64-linux-android/release/libkite_archive_rs.so")
+            })
+            into(new File(output, "arm64-v8a"))
         }
+    }
+}
+
+def prepareLibarchiveBenchmarkJniLibs = tasks.register("prepareLibarchiveBenchmarkJniLibs") {
+    dependsOn("buildLibarchiveBenchmark")
+    outputs.dir(libarchiveBenchmarkJniDir)
+    outputs.upToDateWhen { false }
+    doLast {
+        def output = libarchiveBenchmarkJniDir.get().asFile
+        delete(output)
         if (libarchiveBenchmarkEnabled.get()) {
             copy {
                 from(libarchiveBenchmarkBuildDir.map { it.file("kite_libarchive_benchmark") })
@@ -302,7 +321,7 @@ tasks.register("buildLibarchiveBenchmark", Exec) {
 
 tasks.configureEach { task ->
     if (task.name == "preDebugBuild") {
-        task.dependsOn(prepareRustArchiveJniLibs)
+        task.dependsOn(prepareLibarchiveBenchmarkJniLibs)
     }
 }
 

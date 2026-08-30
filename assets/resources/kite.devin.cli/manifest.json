@@ -114,8 +114,21 @@
           },
           {
             "id": "extract-devin-arm64",
+            "type": "archive",
+            "path": "$install_root/.kite-downloads/devin-arm64.tar.gz",
+            "destination": "$install_root",
+            "format": "tar.gz",
+            "maxEntries": 20000,
+            "maxOutputBytes": 536870912,
+            "maxFileBytes": 268435456,
+            "maxDepth": 48,
+            "maxExpansionRatio": 32,
+            "specialEntryPolicy": "reject"
+          },
+          {
+            "id": "prepare-devin-arm64",
             "type": "shell",
-            "cmd": "tar -xzf \"$install_root/.kite-downloads/devin-arm64.tar.gz\" -C \"$install_root\"\nchmod 755 \"$install_root/bin/devin\""
+            "cmd": "chmod 755 \"$install_root/bin/devin\""
           }
         ],
         "managedCommands": ["devin"],

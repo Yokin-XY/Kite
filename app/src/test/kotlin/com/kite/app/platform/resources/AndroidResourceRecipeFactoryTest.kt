@@ -1,6 +1,7 @@
 package com.kite.app.platform.resources
 
 import com.kite.app.foundation.runtime.AndroidNativeDownloadCapabilityProvider
+import com.kite.app.foundation.runtime.AndroidNativeArchiveCapabilityProvider
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceDefinitionSnapshot
@@ -221,6 +222,32 @@ class AndroidResourceRecipeFactoryTest {
         assertTrue(shell.contains("verify hermes-command"))
         assertTrue(shell.indexOf("acquire-hermes-source") < shell.indexOf("install-hermes-core-acp"))
         assertTrue(shell.indexOf("verify hermes-command") < shell.indexOf("commit-install kite.hermes.core"))
+    }
+
+    @Test
+    fun `声明式归档在资源事务外准备并在事务内导入候选安装根`() {
+        val steps = factory.recipe("kite.cursor.cli", KiteResourceInstallRecipes.OP_INSTALL)
+            ?.steps.orEmpty()
+        val nativeSteps = steps.filter { it.type == KiteRecipe.STEP_NATIVE_CAPABILITY }
+        val archive = nativeSteps.single {
+            it.action == AndroidNativeArchiveCapabilityProvider.CAPABILITY_ID
+        }
+        val script = steps.single { it.type == KiteRecipe.STEP_SHELL }.cmd.orEmpty()
+
+        assertEquals(2, nativeSteps.size)
+        assertEquals("tar.gz", archive.params?.getString(AndroidNativeArchiveCapabilityProvider.PARAM_FORMAT))
+        assertEquals(
+            "ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed",
+            archive.params?.getString(AndroidNativeArchiveCapabilityProvider.PARAM_EXPECTED_SHA256),
+        )
+        assertTrue(
+            archive.params?.getString(AndroidNativeArchiveCapabilityProvider.PARAM_DESTINATION)
+                .orEmpty().startsWith("/workspace/.kf/cache/resources/kite.cursor.cli/native-archives/")
+        )
+        assertFalse(script.contains("tar -x"))
+        assertTrue(script.contains("test -f \"${'$'}native_archive_cache/.kite-archive-ready\""))
+        assertTrue(script.indexOf("recover-interrupted-install") < script.indexOf("cp -a \"${'$'}native_archive_cache/.\""))
+        assertTrue(script.contains("chmod 755 \"${'$'}install_root/dist-package/cursor-agent\""))
     }
 
     @Test
