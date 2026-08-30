@@ -100,6 +100,68 @@ interface AgentProviderCatalogApi {
     ): AgentProviderPreparationResult
 }
 
+/**
+ * 把协议会话明确声明为官方来源的模型目录持久化为 Kite 官方版本。
+ *
+ * 该入口只接受 Adapter 已标注的 [AgentModelSource.OfficialLogin]，因此普通 ACP 模型不会被
+ * 显示层猜成官方；会话能够公布模型也意味着 Agent 已经完成了创建会话所需的认证阶段。
+ */
+fun AgentProviderCatalogApi.recordProtocolOfficialModels(
+    target: AgentConfigurationTarget,
+    options: List<AgentConfigOption>,
+) {
+    val groups = options
+        .filterIsInstance<AgentConfigOption.Select>()
+        .filter { it.category == AgentConfigCategory.Model }
+        .flatMap(AgentConfigOption.Select::choices)
+        .filter { it.modelSource == AgentModelSource.OfficialLogin }
+        .mapNotNull { choice ->
+            val providerId = choice.groupId?.trim()?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+            val modelId = choice.value.removePrefix("$providerId/").trim().takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            Triple(providerId, choice.groupName?.trim()?.takeIf(String::isNotBlank) ?: providerId, choice to modelId)
+        }
+        .groupBy { it.first }
+    if (groups.isEmpty()) return
+    val providers = groups.entries.sortedBy { it.key }.mapNotNull { (providerId, entries) ->
+        val models = entries.map { (_, _, pair) ->
+            val (choice, modelId) = pair
+            AgentCatalogModel(modelId, choice.name)
+        }.distinctBy(AgentCatalogModel::id)
+        models.takeIf(List<AgentCatalogModel>::isNotEmpty)?.let {
+            AgentCatalogProvider(
+                id = providerId,
+                displayName = entries.first().second,
+                models = it,
+                source = AgentModelSource.OfficialLogin,
+                policy = AgentProviderCatalogPolicy.OfficialLoginVersion,
+            )
+        }
+    }
+    if (providers.isEmpty()) return
+    val sourceVersion = MessageDigest.getInstance("SHA-256").run {
+        providers.forEach { provider ->
+            update(provider.id.toByteArray())
+            update(0)
+            update(provider.displayName.toByteArray())
+            update(0)
+            provider.models.forEach { model ->
+                update(model.id.toByteArray())
+                update(0)
+                update(model.displayName.toByteArray())
+                update(0)
+            }
+        }
+        digest().joinToString("") { byte -> "%02x".format(byte) }
+    }
+    saveOfficialVersion(
+        target = target,
+        accountId = "protocol",
+        sourceVersion = "protocol:$sourceVersion",
+        providers = providers,
+    )
+}
+
 /** 兼容既有设置组件的安全投影；事实仍只来自 Kite 目录，不触发 Adapter 读取。 */
 fun AgentProviderCatalogSnapshot.toConfigurationProjection(
     target: AgentConfigurationTarget,

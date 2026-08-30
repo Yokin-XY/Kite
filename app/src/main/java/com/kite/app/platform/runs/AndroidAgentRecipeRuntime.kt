@@ -52,6 +52,7 @@ import com.kite.app.agent.runtime.AgentRuntimeStartRequest
 import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
 import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
 import com.kite.app.agent.sdk.configuration.StoreBackedAgentProviderCatalogApi
+import com.kite.app.agent.sdk.configuration.recordProtocolOfficialModels
 import com.kite.app.foundation.runtime.AndroidSharedStorageManager
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
@@ -873,6 +874,7 @@ internal class AndroidAgentRecipeRuntime(
                 onDraftCatalogChanged = { catalog ->
                     draftCapabilityCache.put(draftCatalogKey, catalog)
                     agentProviderCatalogApi.recordMappedControls(catalogTarget, catalog.configuration)
+                    agentProviderCatalogApi.recordProtocolOfficialModels(catalogTarget, catalog.configuration)
                     agentProviderCatalogApi.recordMappedWorkModes(
                         catalogTarget,
                         catalog.modes,

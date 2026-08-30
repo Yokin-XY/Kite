@@ -1058,6 +1058,34 @@ object AgentRuntimeRegistry {
         return active.connection.cancel(sessionId)
     }
 
+    /** 只把当前连接在能力握手中公布的认证方法交还给同一连接执行。 */
+    suspend fun authenticate(
+        instanceId: String,
+        generation: Long,
+        methodId: String,
+    ): AgentOperationResult<Unit> {
+        val active = activeByInstance[instanceId]
+            ?.takeIf { it.session.generation == generation }
+            ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
+        if (active.connection.capabilities.authentication.methods.none { it.id == methodId }) {
+            return AgentOperationResult.Unsupported("authenticate:$methodId")
+        }
+        return active.connection.authenticate(methodId)
+    }
+
+    suspend fun logout(
+        instanceId: String,
+        generation: Long,
+    ): AgentOperationResult<Unit> {
+        val active = activeByInstance[instanceId]
+            ?.takeIf { it.session.generation == generation }
+            ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
+        if (!active.connection.capabilities.authentication.logout) {
+            return AgentOperationResult.Unsupported("logout")
+        }
+        return active.connection.logout()
+    }
+
     fun resolvePermission(
         instanceId: String,
         generation: Long,

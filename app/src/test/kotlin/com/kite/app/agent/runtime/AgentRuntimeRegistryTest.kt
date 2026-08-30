@@ -1,6 +1,8 @@
 package com.kite.app.agent.runtime
 
 import com.kite.app.agent.contract.AgentCapabilities
+import com.kite.app.agent.contract.AgentAuthenticationCapabilities
+import com.kite.app.agent.contract.AgentAuthenticationMethod
 import com.kite.app.agent.contract.AgentClientEndpoint
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigCategory
@@ -1307,6 +1309,28 @@ class AgentRuntimeRegistryTest {
         assertEquals(listOf("new", "model", "prompt"), provider.connections.last().callOrder)
     }
 
+    @Test
+    fun `运行时只执行当前协议握手实际公布的认证方法`() = runTest {
+        val provider = FakeProvider(
+            requestPermission = false,
+            authentication = AgentAuthenticationCapabilities(
+                methods = listOf(AgentAuthenticationMethod.AgentManaged("oauth", "官方登录")),
+                logout = true,
+            ),
+        )
+        start(provider, request("instance-auth"))
+
+        assertTrue(
+            AgentRuntimeRegistry.authenticate("instance-auth", 1L, "oauth") is AgentOperationResult.Success
+        )
+        assertEquals(listOf("oauth"), provider.connection.authenticatedMethodIds)
+        assertTrue(
+            AgentRuntimeRegistry.authenticate("instance-auth", 1L, "missing") is AgentOperationResult.Unsupported
+        )
+        assertTrue(AgentRuntimeRegistry.logout("instance-auth", 1L) is AgentOperationResult.Success)
+        assertEquals(1, provider.connection.logoutCalls)
+    }
+
     private fun selectOption(
         id: String,
         name: String,
@@ -1372,6 +1396,7 @@ class AgentRuntimeRegistryTest {
         private val uniqueSessionIdsAcrossConnections: Boolean = false,
         private val onConnect: () -> Unit = {},
         private val onLoadSession: () -> Unit = {},
+        private val authentication: AgentAuthenticationCapabilities = AgentAuthenticationCapabilities(),
     ) : KiteAgentProvider {
         lateinit var connection: FakeConnection
         val connections = mutableListOf<FakeConnection>()
@@ -1407,6 +1432,7 @@ class AgentRuntimeRegistryTest {
                     null
                 },
                 onLoadSession,
+                authentication,
             )
             connections += connection
             return AgentOperationResult.Success(connection)
@@ -1433,6 +1459,7 @@ class AgentRuntimeRegistryTest {
         private val promptGate: CompletableDeferred<Unit>?,
         private val nextSharedSessionId: (() -> String)?,
         private val onLoadSession: () -> Unit,
+        private val authentication: AgentAuthenticationCapabilities,
     ) : KiteAgentConnection {
         val disconnected = AtomicBoolean(false)
         var newSessionCalls = 0
@@ -1450,6 +1477,8 @@ class AgentRuntimeRegistryTest {
         val callOrder = mutableListOf<String>()
         val deletedSessions = mutableListOf<String>()
         val renamedSessions = mutableListOf<AgentSessionRenameRequest>()
+        val authenticatedMethodIds = mutableListOf<String>()
+        var logoutCalls = 0
 
         suspend fun emitLifecycle(sessionId: String, phase: AgentSessionPhase) {
             endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(phase))
@@ -1465,7 +1494,8 @@ class AgentRuntimeRegistryTest {
                 delete = deleteSupported,
                 rename = renameSupported,
                 additionalDirectories = additionalDirectoriesSupported
-            )
+            ),
+            authentication = authentication,
         )
         private var nextSession = 0
 
@@ -1607,6 +1637,16 @@ class AgentRuntimeRegistryTest {
         override suspend fun setMode(sessionId: String, modeId: String): AgentOperationResult<Unit> {
             callOrder += "mode"
             selectedModeId = modeId
+            return AgentOperationResult.Success(Unit)
+        }
+
+        override suspend fun authenticate(methodId: String): AgentOperationResult<Unit> {
+            authenticatedMethodIds += methodId
+            return AgentOperationResult.Success(Unit)
+        }
+
+        override suspend fun logout(): AgentOperationResult<Unit> {
+            logoutCalls++
             return AgentOperationResult.Success(Unit)
         }
 

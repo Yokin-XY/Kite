@@ -55,6 +55,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.kite.app.R
 import com.kite.app.agent.contract.AgentContent
+import com.kite.app.agent.contract.AgentAuthenticationMethod
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
@@ -3287,12 +3288,30 @@ internal class RunAgentSurfaceBinding(
         val providerSnapshot = agentProviderCatalogApi.snapshot(target).toConfigurationProjection(target)
         val supportsProviders = capabilities.supports(AgentPersistentConfigCapability.Provider)
         val officialAccounts = selected.registration.officialAccounts
-        if (supportsProviders || officialAccounts.isNotEmpty()) {
+        val protocolProviders = AgentModelLibraryPolicy.projectProviders(
+            snapshot = snapshot,
+            modelOption = providerManagerModelOption(selected.registration.definition.agentId),
+            library = modelLibraryStore.snapshot(selected.registration.definition.agentId),
+            officialAccounts = officialAccounts,
+        ).filter { projection ->
+            projection.source != AgentModelSource.UserConfigured && projection.officialAccount == null
+        }
+        val runtimeAuthentication = runtimeAuthentication(selected)
+        if (
+            supportsProviders ||
+            officialAccounts.isNotEmpty() ||
+            protocolProviders.isNotEmpty() ||
+            runtimeAuthentication.methods.isNotEmpty()
+        ) {
             val providerSummary = providerSnapshot.providers.takeIf { it.isNotEmpty() }
                 ?.joinToString("、") { provider ->
                     "${provider.displayName}（${provider.models.size} 个模型）"
                 }
                 ?: providerSnapshot.providerIds.takeIf { it.isNotEmpty() }?.joinToString("、")
+            val protocolSummary = protocolProviders.takeIf { it.isNotEmpty() }
+                ?.joinToString("、") { provider ->
+                    "${provider.name}（${provider.models.size} 个模型）"
+                }
             val accountSummary = officialAccounts.takeIf { it.isNotEmpty() }
                 ?.joinToString("、") { account ->
                     val status = officialAccountManager.state(
@@ -3303,11 +3322,19 @@ internal class RunAgentSurfaceBinding(
                 }
             add(SettingsRow(
                 title = "供应商配置",
-                subtitle = listOfNotNull(providerSummary, accountSummary).joinToString("、")
-                    .ifBlank { "尚未配置供应商" },
+                subtitle = listOfNotNull(providerSummary, protocolSummary, accountSummary).joinToString("、")
+                    .ifBlank {
+                        if (runtimeAuthentication.methods.isNotEmpty()) {
+                            "Agent 提供 ${runtimeAuthentication.methods.size} 种官方认证方式"
+                        } else {
+                            "尚未配置供应商"
+                        }
+                    },
                 onClick = if (
                     capabilities.supports(AgentPersistentConfigCapability.ProviderProfiles) ||
-                    officialAccounts.isNotEmpty()
+                    officialAccounts.isNotEmpty() ||
+                    protocolProviders.isNotEmpty() ||
+                    runtimeAuthentication.methods.isNotEmpty()
                 ) {
                     { openProviderManager(selected, target) }
                 } else null
@@ -6919,6 +6946,17 @@ internal class RunAgentSurfaceBinding(
                         hasOfficialProviders = officialProviders.isNotEmpty(),
                         hasFreeProviders = freeProviders.isNotEmpty(),
                     ))
+                    runtimeAuthentication(selected).takeIf { authentication ->
+                        authentication.methods.isNotEmpty() || authentication.logout
+                    }?.let { authentication ->
+                        addView(
+                            buildRuntimeAuthenticationSection(authentication.methods, authentication.logout),
+                            LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ).apply { setMargins(0, 0, 0, ui.dp(14)) },
+                        )
+                    }
                 }
                 if (visibleProviders.isEmpty()) {
                     addView(LinearLayout(context).apply {
@@ -6996,6 +7034,138 @@ internal class RunAgentSurfaceBinding(
             ?.configuration
             ?.filterIsInstance<AgentConfigOption.Select>()
             ?.firstOrNull { it.category == AgentConfigCategory.Model }
+    }
+
+    private fun runtimeAuthentication(selected: AgentRegistryEntry) =
+        AgentRuntimeRegistry.session(instanceId)
+            ?.takeIf { runtime ->
+                runtime.generation == generation &&
+                    runtime.providerId == selected.registration.launch.providerId
+            }
+            ?.capabilities
+            ?.authentication
+            ?: com.kite.app.agent.contract.AgentAuthenticationCapabilities()
+
+    private fun buildRuntimeAuthenticationSection(
+        methods: List<AgentAuthenticationMethod>,
+        logoutSupported: Boolean,
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(ui.dp(15), ui.dp(13), ui.dp(15), ui.dp(13))
+        background = ui.roundedBox(agentSettingsSurface, android.graphics.Color.TRANSPARENT, ui.dp(22).toFloat())
+        addView(TextView(context).apply {
+            text = "Agent 官方认证"
+            textSize = 15.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(tokens.textPrimary)
+        })
+        addView(TextView(context).apply {
+            text = "认证方式来自当前 Agent 的协议握手；只有点击后才会启动登录。"
+            textSize = 12.5f
+            setTextColor(tokens.textSecondary)
+            setPadding(0, ui.dp(4), 0, ui.dp(9))
+        })
+        methods.forEach { method ->
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = ui.dp(48)
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(TextView(context).apply {
+                        text = method.name
+                        textSize = 14f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(tokens.textPrimary)
+                    })
+                    method.description?.takeIf(String::isNotBlank)?.let { description ->
+                        addView(TextView(context).apply {
+                            text = description
+                            textSize = 11.5f
+                            maxLines = 2
+                            ellipsize = TextUtils.TruncateAt.END
+                            setTextColor(tokens.textSecondary)
+                        })
+                    }
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                val executable = method is AgentAuthenticationMethod.AgentManaged
+                addView(TextView(context).apply {
+                    text = when (method) {
+                        is AgentAuthenticationMethod.AgentManaged -> "登录"
+                        is AgentAuthenticationMethod.Terminal -> "需终端"
+                        is AgentAuthenticationMethod.EnvironmentVariables -> "需密钥"
+                        is AgentAuthenticationMethod.Extension -> "暂不支持"
+                    }
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setTextColor(tokens.textPrimary)
+                    setPadding(ui.dp(13), 0, ui.dp(13), 0)
+                    background = ui.roundedBox(agentSurface, tokens.border, ui.dp(17).toFloat(), ui.dp(1))
+                    isEnabled = executable
+                    isClickable = executable
+                    isFocusable = executable
+                    alpha = if (executable) 1f else 0.5f
+                    setOnClickListener { button ->
+                        if (!executable) return@setOnClickListener
+                        val label = text
+                        isEnabled = false
+                        alpha = 0.55f
+                        text = "登录中…"
+                        lifecycleOwner.lifecycleScope.launch {
+                            val result = AgentRuntimeRegistry.authenticate(
+                                instanceId,
+                                generation,
+                                method.id,
+                            )
+                            button.isEnabled = true
+                            button.alpha = 1f
+                            (button as TextView).text = label
+                            Toast.makeText(
+                                context,
+                                when (result) {
+                                    is AgentOperationResult.Success -> "认证已完成，可以继续使用 Agent"
+                                    is AgentOperationResult.Failure -> result.message
+                                    is AgentOperationResult.Unsupported -> "当前 Agent 不支持这种认证方式"
+                                },
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(34)))
+            })
+        }
+        if (logoutSupported) {
+            addView(TextView(context).apply {
+                text = "退出当前官方账号"
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.danger)
+                setPadding(ui.dp(13), 0, ui.dp(13), 0)
+                background = ui.roundedBox(agentSurface, tokens.border, ui.dp(17).toFloat(), ui.dp(1))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { button ->
+                    button.isEnabled = false
+                    lifecycleOwner.lifecycleScope.launch {
+                        val result = AgentRuntimeRegistry.logout(instanceId, generation)
+                        button.isEnabled = true
+                        Toast.makeText(
+                            context,
+                            when (result) {
+                                is AgentOperationResult.Success -> "已退出当前官方账号"
+                                is AgentOperationResult.Failure -> result.message
+                                is AgentOperationResult.Unsupported -> "当前 Agent 不支持退出登录"
+                            },
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(34)).apply {
+                topMargin = ui.dp(8)
+            })
+        }
     }
 
     private fun buildProviderGroupStrip(

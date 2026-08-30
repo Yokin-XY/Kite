@@ -104,6 +104,27 @@ internal object AgentModelLibraryPolicy {
                 visibleInConversation = library.isProviderVisible(providerId),
             )
         }
+        val protocolOfficial = modelOption?.choices.orEmpty()
+            .filter { choice ->
+                choice.modelSource == AgentModelSource.OfficialLogin &&
+                    choice.providerGroupId() !in configuredIds &&
+                    choice.providerGroupId() !in officialGroupIds
+            }
+            .groupBy { choice -> choice.providerGroupId() ?: OFFICIAL_PROVIDER_ID }
+            .map { (groupId, choices) ->
+                val providerId = groupId.ifBlank { OFFICIAL_PROVIDER_ID }
+                val displayChoices = choices.map { choice -> withDisplayName(choice, library, providerId) }
+                AgentModelProviderProjection(
+                    id = providerId,
+                    name = choices.firstOrNull()?.groupName?.takeIf(String::isNotBlank)
+                        ?: "官方模型",
+                    models = displayChoices,
+                    source = AgentModelSource.OfficialLogin,
+                    selectedModelValue = selectedModelValue(snapshot, providerId, displayChoices),
+                    libraryGroupId = AgentModelLibraryStore.OFFICIAL_GROUP_ID,
+                    visibleInConversation = library.isProviderVisible(providerId),
+                )
+            }
         val free = modelOption?.choices.orEmpty()
             .filterNot { it in legacyOfficialChoices }
             .filter { it.modelSource == AgentModelSource.Free }
@@ -123,7 +144,7 @@ internal object AgentModelLibraryPolicy {
                     visibleInConversation = library.isProviderVisible(providerId)
                 )
             }
-        return configured + official + free
+        return configured + official + protocolOfficial + free
     }
 
     fun filterConversationModelOption(
@@ -216,5 +237,6 @@ internal object AgentModelLibraryPolicy {
         groupId?.takeIf(String::isNotBlank) ?: groupName?.takeIf(String::isNotBlank)
 
     private const val FREE_PROVIDER_ID = "__kite_free__"
+    private const val OFFICIAL_PROVIDER_ID = "__kite_official__"
     internal fun officialProviderId(accountId: String): String = "__kite_official__:$accountId"
 }

@@ -25,6 +25,7 @@ import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.config.AgentWorkModeCatalog
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.runtime.AgentDraftModelSelection
@@ -159,6 +160,44 @@ class AgentProviderCatalogApiTest {
         val official = opened.snapshot.providers.single { it.id == "official" }
         assertEquals("login-v1", official.sourceVersion)
         assertEquals(listOf("official-model"), official.models.map { it.id })
+    }
+
+    @Test
+    fun `协议官方模型目录按真实分组持久化并保留全部模型`() {
+        api.recordProtocolOfficialModels(
+            target,
+            listOf(
+                AgentConfigOption.Select(
+                    id = "acp.session.model",
+                    name = "模型",
+                    category = AgentConfigCategory.Model,
+                    currentValue = "gemini-3-flash",
+                    choices = listOf(
+                        AgentConfigChoice(
+                            value = "gemini-3-flash",
+                            name = "Gemini 3 Flash",
+                            groupId = "gemini",
+                            groupName = "Google Gemini",
+                            modelSource = AgentModelSource.OfficialLogin,
+                        ),
+                        AgentConfigChoice(
+                            value = "gemini/gemini-3-pro",
+                            name = "Gemini 3 Pro",
+                            groupId = "gemini",
+                            groupName = "Google Gemini",
+                            modelSource = AgentModelSource.OfficialLogin,
+                        ),
+                    ),
+                )
+            ),
+        )
+
+        val provider = api.snapshot(target).providers.single()
+        assertEquals("gemini", provider.id)
+        assertEquals("Google Gemini", provider.displayName)
+        assertEquals(listOf("gemini-3-flash", "gemini-3-pro"), provider.models.map { it.id })
+        assertEquals(AgentProviderCatalogPolicy.OfficialLoginVersion, provider.policy)
+        assertEquals("protocol", provider.ownerId)
     }
 
     @Test

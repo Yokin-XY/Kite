@@ -13,9 +13,11 @@ import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.agent.contract.AgentReasoningMode
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentMode
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.sdk.configuration.AgentControlCatalogProjector
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -47,7 +49,7 @@ class ProtocolSessionAgentConfigAdaptersTest {
     }
 
     @Test
-    fun `Gemini CLI 保留 ACP 原生模式 ID 并只翻译显示语义`() {
+    fun `Gemini CLI 把 ACP 原生审批模式收进统一权限入口`() {
         val adapter = GeminiCliAgentConfigAdapter(context)
         val modes = adapter.normalizeSessionModes(
             listOf(
@@ -58,8 +60,41 @@ class ProtocolSessionAgentConfigAdaptersTest {
             )
         )
 
-        assertEquals(listOf("default", "auto_edit", "yolo", "plan"), modes.map { it.id })
-        assertEquals(listOf("审批", "自动编辑", "完全", "计划"), modes.map { it.name })
+        val control = requireNotNull(adapter.sessionPermissionControl())
+        assertTrue(modes.isEmpty())
+        assertEquals(listOf("default", "auto_edit", "yolo", "plan"), control.profiles.map { it.id })
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Lenient,
+                AgentPermissionLevel.Full,
+                AgentPermissionLevel.ReadOnly,
+            ),
+            control.profiles.map { it.level },
+        )
+        assertEquals(control.profiles.map { it.id }, control.profiles.mapNotNull { control.nativeModeId(it.id) })
+    }
+
+    @Test
+    fun `Gemini CLI 把 ACP 模型声明为官方目录并保留真实模型 ID`() {
+        val adapter = GeminiCliAgentConfigAdapter(context)
+        val native = AgentConfigOption.Select(
+            id = "acp.session.model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "gemini-3-flash",
+            choices = listOf(
+                AgentConfigChoice("gemini-3-flash", "Gemini 3 Flash"),
+                AgentConfigChoice("gemini-3-pro", "Gemini 3 Pro"),
+            ),
+        )
+
+        val normalized = adapter.normalizeSessionConfiguration(listOf(native)).single() as AgentConfigOption.Select
+
+        assertEquals(native.currentValue, normalized.currentValue)
+        assertEquals(native.choices.map { it.value }, normalized.choices.map { it.value })
+        assertEquals(listOf("gemini", "gemini"), normalized.choices.map { it.groupId })
+        assertEquals(listOf(AgentModelSource.OfficialLogin, AgentModelSource.OfficialLogin), normalized.choices.map { it.modelSource })
     }
 
     @Test
