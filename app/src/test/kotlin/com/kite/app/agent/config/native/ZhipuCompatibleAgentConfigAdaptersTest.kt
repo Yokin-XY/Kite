@@ -135,6 +135,70 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
         assertFalse(applied.snapshot.toString().contains(SECRET))
     }
 
+    @Test
+    fun copilotMaterializesSelectedProviderIntoOfficialEnvironmentContract() = runTest {
+        val metadata = nativeFile("workspace/.kf/software/kite.github.copilot/user-home/provider.json")
+        val baseUrl = nativeFile("workspace/.kf/secrets/kite.copilot-provider-base-url")
+        val apiKey = nativeFile("workspace/.kf/secrets/kite.copilot-provider-api-key")
+        val providerType = nativeFile("workspace/.kf/secrets/kite.copilot-provider-type")
+        val model = nativeFile("workspace/.kf/secrets/kite.copilot-model")
+        val adapter = CopilotAgentConfigAdapter(context, ::container)
+
+        val applied = configure(
+            adapter,
+            "copilot",
+            "zhipu-coding-plan",
+            "https://open.bigmodel.cn/api/coding/paas/v4",
+            "glm-5",
+        )
+
+        assertEquals("zhipu-coding-plan", applied.snapshot.activeProviderId)
+        assertEquals("glm-5", applied.snapshot.defaultModel)
+        assertEquals(AgentCredentialPresence.Present, applied.snapshot.credentialPresence)
+        assertTrue(metadata.readText().contains("zhipu-coding-plan"))
+        assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", baseUrl.readText().trim())
+        assertEquals("openai", providerType.readText().trim())
+        assertEquals("glm-5", model.readText().trim())
+        assertEquals(SECRET, apiKey.readText().trim())
+        assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
+    @Test
+    fun deepSeekHarnessWritesOfficialSettingsAndCredentialsWithoutLosingOtherSections() = runTest {
+        val settings = nativeFile(
+            "workspace/.kf/software/kite.deepseek.harness/user-home/.dsh/settings.yaml",
+        )
+        settings.writeText("ui:\n  language: zh-CN\n")
+        val credentials = nativeFile(
+            "workspace/.kf/software/kite.deepseek.harness/user-home/.dsh/.credentials.yaml",
+        )
+        credentials.writeText("KEEP_ME: \"yes\"\n")
+        val adapter = DeepSeekHarnessAgentConfigAdapter(context, ::container)
+
+        val applied = configure(
+            adapter,
+            "deepseek-harness",
+            "zhipu-coding-plan",
+            "https://open.bigmodel.cn/api/coding/paas/v4",
+            "glm-5",
+        )
+
+        assertEquals("zhipu-coding-plan", applied.snapshot.activeProviderId)
+        assertEquals("glm-5", applied.snapshot.defaultModel)
+        assertEquals(AgentCredentialPresence.Present, applied.snapshot.credentialPresence)
+        val settingsText = settings.readText()
+        assertTrue(settingsText.contains("ui:"))
+        assertTrue(settingsText.contains("llm-pi-ai:"))
+        assertTrue(settingsText.contains("openai-completions"))
+        assertTrue(settingsText.contains("agent-default-model:"))
+        assertTrue(settingsText.contains("supportsDeveloperRole: false"))
+        assertTrue(settingsText.contains("maxTokensField: max_tokens"))
+        assertFalse(settingsText.contains(SECRET))
+        assertTrue(credentials.readText().contains("KEEP_ME"))
+        assertTrue(credentials.readText().contains(SECRET))
+        assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
     private suspend fun configure(
         adapter: AgentConfigAdapter,
         agentId: String,

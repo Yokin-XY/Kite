@@ -76,6 +76,29 @@ class AgentProviderPresetCatalogContractTest {
         assertTrue(AgentProviderPresetCatalog.presetsFor(null).isEmpty())
     }
 
+    @Test
+    fun everyVerifiedOpenAiCompatibleAdapterReceivesTheZhipuCodingPlanRoute() {
+        val adapters = listOf(
+            "opencode",
+            "openclaw",
+            "hermes",
+            "mimo-code",
+            "kimi-code",
+            "pi-coding-agent",
+            "qwen-code",
+            "reasonix",
+            "github-copilot",
+            "deepseek-harness",
+        )
+
+        adapters.forEach { adapterId ->
+            val codingPlan = AgentProviderPresetCatalog.presetsFor(adapterId)
+                .single { it.id == "zhipu-coding-plan" }
+            assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", codingPlan.baseUrl)
+            assertTrue(codingPlan.models.any { it.id == "glm-5.2" })
+        }
+    }
+
     private fun assertUniqueAndComplete(presets: List<AgentProviderPreset>) {
         assertEquals(presets.size, presets.map { it.id }.distinct().size)
         assertEquals(presets.size, presets.map { it.providerId }.distinct().size)

@@ -70,6 +70,11 @@ class KiteResourceManifestProtocolTest {
         assertEquals(expectedArguments, manifest.installActions.single().installSteps.first().arguments)
         assertEquals(expectedRegistries, manifest.source.registries)
         assertEquals(expectedRegistries, manifest.installActions.single().installSteps.first().registries)
+        assertEquals("github-copilot", manifest.agentProfiles.single().configAdapterId)
+        assertEquals(
+            "github-copilot",
+            AgentResourceRegistrationMapper.registrations(manifest).single().configAdapterId,
+        )
         assertTrue(
             KiteResourceInstallPlanCompiler.compile(manifest.installActions.single())
                 .contains("--registry=\"${'$'}npm_registry\""),
@@ -729,11 +734,12 @@ class KiteResourceManifestProtocolTest {
         assertEquals(listOf("kite-dsh-acp"), profile.argv)
         assertEquals(120_000L, profile.initializeTimeoutMs)
         assertFalse(profile.configurationRequired)
-        assertEquals("", profile.configAdapterId)
+        assertEquals("deepseek-harness", profile.configAdapterId)
         assertEquals(listOf("kite-dsh-acp", "login"), profile.officialAccounts.single().login.argv)
 
         val registration = AgentResourceRegistrationMapper.registrations(manifest).single()
         assertEquals("deepseek-harness", registration.definition.agentId)
+        assertEquals("deepseek-harness", registration.configAdapterId)
         assertEquals(AgentRegistrationSource.Resource("kite.deepseek.harness"), registration.source)
         assertTrue(registration.launch is AgentLaunchSpec.Managed)
         val openStep = manifest.openRecipe?.optJSONArray("recipe")?.optJSONObject(0)

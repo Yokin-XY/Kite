@@ -3,8 +3,10 @@ package com.kite.app.agent.config
 import android.content.Context
 import com.kite.app.agent.config.native.ClaudeCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.CodeBuddyCodeAgentConfigAdapter
+import com.kite.app.agent.config.native.CopilotAgentConfigAdapter
 import com.kite.app.agent.config.native.CodexAgentConfigAdapter
 import com.kite.app.agent.config.native.CursorCliAgentConfigAdapter
+import com.kite.app.agent.config.native.DeepSeekHarnessAgentConfigAdapter
 import com.kite.app.agent.config.native.DevinCliAgentConfigAdapter
 import com.kite.app.agent.config.native.HermesAgentConfigAdapter
 import com.kite.app.agent.config.native.GeminiCliAgentConfigAdapter
@@ -30,6 +32,8 @@ internal fun defaultAgentConfigAdapters(
     CodexAgentConfigAdapter(context.applicationContext),
     ClaudeCodeAgentConfigAdapter(context.applicationContext),
     CodeBuddyCodeAgentConfigAdapter(context.applicationContext),
+    CopilotAgentConfigAdapter(context.applicationContext),
+    DeepSeekHarnessAgentConfigAdapter(context.applicationContext),
     KimiCodeAgentConfigAdapter(context.applicationContext),
     HermesAgentConfigAdapter(context.applicationContext),
     GeminiCliAgentConfigAdapter(context.applicationContext),

@@ -92,6 +92,7 @@
       "name": "GitHub Copilot CLI",
       "description": "GitHub Copilot CLI 原生 ACP 会话",
       "configuration": {
+        "adapter": "github-copilot",
         "required": false
       },
       "launch": {

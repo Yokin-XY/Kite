@@ -2,10 +2,16 @@ package com.kite.app.agent.config
 
 import android.content.Context
 import com.kite.app.agent.config.native.ClaudeCodeAgentConfigAdapter
+import com.kite.app.agent.config.native.CopilotAgentConfigAdapter
 import com.kite.app.agent.config.native.CodexAgentConfigAdapter
+import com.kite.app.agent.config.native.DeepSeekHarnessAgentConfigAdapter
 import com.kite.app.agent.config.native.HermesAgentConfigAdapter
+import com.kite.app.agent.config.native.KimiCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.MiMoCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.OpenClawAgentConfigAdapter
+import com.kite.app.agent.config.native.PiCodingAgentConfigAdapter
+import com.kite.app.agent.config.native.QwenCodeAgentConfigAdapter
+import com.kite.app.agent.config.native.ReasonixAgentConfigAdapter
 import com.kite.app.agent.config.opencode.OpenCodeAgentConfigAdapter
 import com.kite.app.agent.sdk.configuration.AgentProviderPresetRefreshResult
 import kotlinx.coroutines.Dispatchers
@@ -459,6 +465,12 @@ internal object ModelsDevProviderPresetParser {
         OpenClawAgentConfigAdapter.ADAPTER_ID,
         HermesAgentConfigAdapter.ADAPTER_ID,
         MiMoCodeAgentConfigAdapter.ADAPTER_ID,
+        KimiCodeAgentConfigAdapter.ADAPTER_ID,
+        PiCodingAgentConfigAdapter.ADAPTER_ID,
+        QwenCodeAgentConfigAdapter.ADAPTER_ID,
+        ReasonixAgentConfigAdapter.ADAPTER_ID,
+        CopilotAgentConfigAdapter.ADAPTER_ID,
+        DeepSeekHarnessAgentConfigAdapter.ADAPTER_ID,
     )
     private val VENDOR_ALIASES = mapOf(
         "zhipuai" to "zhipu",

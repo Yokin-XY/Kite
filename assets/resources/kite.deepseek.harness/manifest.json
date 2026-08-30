@@ -63,6 +63,7 @@
       "name": "DeepSeek Harness",
       "description": "DeepSeek Harness 完整 ACP 会话",
       "configuration": {
+        "adapter": "deepseek-harness",
         "required": false
       },
       "accounts": [
