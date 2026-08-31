@@ -34,7 +34,12 @@ class ZCodeResourceManifestTest {
         assertEquals(listOf("zcode", "app-server", "--surface", "desktop"), profile.argv)
         assertEquals("zcode", profile.configAdapterId)
         assertTrue(AgentResourceRegistrationMapper.registrations(manifest).single().launch is AgentLaunchSpec.Managed)
-        assertTrue(profile.officialAccounts.single().modelGroupIds.contains("builtin:zai-coding-plan"))
+        val account = profile.officialAccounts.single()
+        assertTrue(account.modelGroupIds.contains("zai"))
+        assertEquals("node", account.status?.argv?.first())
+        assertTrue(account.status?.loggedInPatterns?.contains("\"loggedIn\":true") == true)
+        assertEquals(listOf("zcode", "login", "--no-browser", "--json"), account.login.argv)
+        assertEquals(listOf("\"status\":\"ready\""), account.login.successPatterns)
 
         assertEquals("regex", manifest.source.latestFormat)
         assertEquals(3, manifest.source.latestVersionWindow.size)

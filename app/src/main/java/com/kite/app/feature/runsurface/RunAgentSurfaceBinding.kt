@@ -140,6 +140,7 @@ import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
 import com.kite.app.agent.sdk.configuration.AgentConfigurationIntent
 import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
 import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
+import com.kite.app.agent.sdk.configuration.recordProtocolOfficialModels
 import com.kite.app.agent.sdk.configuration.toConfigurationProjection
 import com.kite.app.agent.sdk.configuration.AgentSessionControlApi
 import com.kite.app.agent.sdk.configuration.RuntimeBackedAgentSessionControlApi
@@ -281,6 +282,7 @@ internal class RunAgentSurfaceBinding(
     private val settingsPageView: View by lazy(LazyThreadSafetyMode.NONE, ::buildSettingsPage)
     private var observation: Job? = null
     private var officialAccountObservation: Job? = null
+    private var officialModelCatalogRefreshJob: Job? = null
     private var officialAccountObservedAgentId: String? = null
     private var navigationJob: Job? = null
     private var observedKey: AgentConversationKey? = null
@@ -537,6 +539,8 @@ internal class RunAgentSurfaceBinding(
         observation = null
         officialAccountObservation?.cancel()
         officialAccountObservation = null
+        officialModelCatalogRefreshJob?.cancel()
+        officialModelCatalogRefreshJob = null
         officialAccountObservedAgentId = null
         navigationJob?.cancel()
         navigationJob = null
@@ -4036,7 +4040,15 @@ internal class RunAgentSurfaceBinding(
                     }.collect { (relevantStates, relevantSaved, relevantCurrent) ->
                         val relevant = Triple(relevantStates, relevantSaved, relevantCurrent)
                         if (relevant == previous) return@collect
+                        val previousStates = previous.first
                         previous = relevant
+                        val becameLoggedIn = relevantStates.any { (key, state) ->
+                            state.status == AgentOfficialAccountStatus.LoggedIn &&
+                                previousStates[key]?.status != AgentOfficialAccountStatus.LoggedIn
+                        }
+                        if (becameLoggedIn) {
+                            refreshOfficialModelCatalog(targetAgentId, selected, target)
+                        }
                         if (
                             navigationScreen == AgentNavigationScreen.ProviderList &&
                             providerPageAgentId == targetAgentId
@@ -4052,6 +4064,40 @@ internal class RunAgentSurfaceBinding(
             }
         }
         // 页面只观察已知状态。任何官方账号命令都必须来自用户明确点击，避免状态探测触发登录或浏览器。
+    }
+
+    /** 登录完成后从 Adapter 的真实原生配置同步一次；不会在页面绘制或普通刷新时探测账号。 */
+    private fun refreshOfficialModelCatalog(
+        targetAgentId: String,
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+    ) {
+        officialModelCatalogRefreshJob?.cancel()
+        officialModelCatalogRefreshJob = lifecycleOwner.lifecycleScope.launch {
+            val refreshed = withContext(Dispatchers.IO) {
+                val options = agentConfigurationApi.readSessionConfiguration(target)
+                if (options.none { option ->
+                        option is AgentConfigOption.Select &&
+                            option.category == AgentConfigCategory.Model &&
+                            option.choices.any { it.modelSource == AgentModelSource.OfficialLogin }
+                    }
+                ) return@withContext null
+                agentProviderCatalogApi.recordProtocolOfficialModels(target, options)
+                agentProviderCatalogApi.snapshot(target)
+            } ?: return@launch
+            if (providerPageAgentId != targetAgentId) return@launch
+            val projection = refreshed.toConfigurationProjection(target)
+            providerPageSnapshot = projection
+            if (agentId == targetAgentId) {
+                draftProviderCatalogSnapshot = refreshed
+                draftModelSnapshot = projection
+                applyDraftModelDefault(targetAgentId, projection)
+            }
+            if (navigationScreen == AgentNavigationScreen.ProviderList) {
+                showProviderManager(selected, target, projection)
+            }
+            renderSessionConfigurationControls()
+        }
     }
 
     private fun showMcpManager(
@@ -7833,6 +7879,17 @@ internal class RunAgentSurfaceBinding(
             },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36)),
         )
+
+        if (account.status != null && !pending && status != AgentOfficialAccountStatus.SigningIn) {
+            addView(
+                actionButton(if (status == AgentOfficialAccountStatus.LoggedIn) "刷新" else "检查") {
+                    officialAccountManager.refresh(agentId, account.id)
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36)).apply {
+                    marginStart = ui.dp(6)
+                },
+            )
+        }
 
         val capabilities = officialAccountManager.accountCapabilities(agentId)
         val savedAccounts = officialAccountManager.savedAccounts(agentId)

@@ -292,7 +292,30 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
         val config = nativeFile(
             "workspace/.kf/software/kite.zcode/user-home/.zcode/cli/config.json",
         )
-        config.writeText("""{"ui":{"locale":"zh-CN"}}""")
+        config.writeText(
+            """
+            {
+              "ui": {"locale": "zh-CN"},
+              "model": {"main": "zai/glm-5.3"},
+              "provider": {
+                "zai": {
+                  "name": "Z.AI 官方账号",
+                  "kind": "openai-compatible",
+                  "options": {
+                    "baseURL": "https://api.z.ai/api/coding/paas/v4",
+                    "apiKey": "official-session-key"
+                  },
+                  "models": {
+                    "glm-5.3-flash": {"name": "GLM-5.3 Flash"},
+                    "glm-5.3": {"name": "GLM-5.3"},
+                    "glm-5.2": {"name": "GLM-5.2"},
+                    "glm-4.7": {"name": "GLM-4.7"}
+                  }
+                }
+              }
+            }
+            """.trimIndent(),
+        )
         nativeFile(
             "workspace/.kf/software/kite.zcode/user-home/.zcode/v2/config.json",
         ).writeText(
@@ -315,6 +338,7 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
         assertEquals(AgentSessionConfigurationEffect.Reconnect, adapter.providerConfigurationEffect())
 
         val before = (adapter.readLive("zcode") as AgentConfigReadResult.Ready).snapshot
+        assertTrue(before.providers.isEmpty())
         val result = adapter.apply(
             AgentConfigApplyRequest(
                 "zcode",
@@ -354,23 +378,33 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
         assertEquals(2, runtime?.getJSONObject("provider")?.getJSONArray("models")?.length())
         val allModels = requireNotNull(adapter.runtimeModelCatalog()).models()
         assertTrue(allModels.any { it.selectionId == "builtin:bigmodel-coding-plan/GLM-5.3" })
+        assertTrue(allModels.any {
+            it.selectionId == "zai/glm-4.7" && it.modelSource == AgentModelSource.OfficialLogin
+        })
         assertTrue(allModels.any { it.selectionId == "zhipu-coding-plan/glm-5.3-flash" })
+        val sessionModels = adapter.readSessionConfiguration("zcode")
+            .single() as AgentConfigOption.Select
+        assertEquals(8, sessionModels.choices.size)
+        assertTrue(sessionModels.choices.single { it.value == "zai/glm-5.2" }
+            .modelSource == AgentModelSource.OfficialLogin)
 
         val officialSelection = AgentConfigOption.Select(
             id = "model",
             name = "模型",
             category = AgentConfigCategory.Model,
-            currentValue = "builtin:zai-coding-plan/glm-5.3-flash",
+            currentValue = "zai/glm-4.7",
             choices = listOf(
                 AgentConfigChoice(
-                    value = "builtin:zai-coding-plan/glm-5.3-flash",
-                    name = "GLM-5.3 Flash",
+                    value = "zai/glm-4.7",
+                    name = "GLM-4.7",
+                    groupId = "zai",
+                    groupName = "Z.AI 官方账号",
                     modelSource = AgentModelSource.OfficialLogin,
                 ),
             ),
         )
         val officialChange = requireNotNull(adapter.defaultModelChange(officialSelection))
-        assertTrue(officialChange.clearProviderOverride)
+        assertEquals(AgentPersistentConfigChange.SetDefaultModel("zai/glm-4.7"), officialChange)
         val switched = adapter.apply(
             AgentConfigApplyRequest(
                 "zcode",
@@ -379,9 +413,28 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
             ),
         ) as AgentConfigApplyResult.Applied
         assertEquals(null, switched.snapshot.activeProviderId)
-        assertEquals(null, switched.snapshot.defaultModel)
+        assertEquals("zai/glm-4.7", switched.snapshot.defaultModel)
         assertEquals(2, switched.snapshot.providers.single().models.size)
-        assertEquals(null, adapter.runtimeModelCatalog()?.selectedRuntimeModel())
+        assertEquals(
+            "glm-4.7",
+            adapter.runtimeModelCatalog()?.selectedRuntimeModel()
+                ?.getJSONObject("model")?.getString("modelId"),
+        )
+    }
+
+    @Test
+    fun zcodeDoesNotInventOfficialModelsBeforeLogin() = runTest {
+        nativeFile(
+            "workspace/.kf/software/kite.zcode/user-home/.zcode/cli/config.json",
+        ).writeText("{}")
+        nativeFile(
+            "workspace/.kf/software/kite.zcode/user-home/.zcode/v2/config.json",
+        ).writeText("{}")
+
+        val adapter = ZCodeAgentConfigAdapter(context, ::container)
+
+        assertEquals(null, adapter.runtimeModelCatalog())
+        assertTrue(adapter.readSessionConfiguration("zcode").isEmpty())
     }
 
     @Test

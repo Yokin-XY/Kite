@@ -100,8 +100,19 @@
             "builtin:bigmodel-coding-plan",
             "builtin:bigmodel-start-plan"
           ],
+          "status": {
+            "argv": [
+              "node",
+              "-e",
+              "const fs=require('fs');const base='/workspace/.kf/software/kite.zcode/user-home/.zcode';let loggedIn=false;try{const credentials=JSON.parse(fs.readFileSync(base+'/v2/credentials.json','utf8'));const config=JSON.parse(fs.readFileSync(base+'/cli/config.json','utf8'));const provider=(config.provider||{}).zai||(config.provider||{}).bigmodel;const token=credentials['oauth:zai:access_token']||credentials.zcodejwttoken;loggedIn=Boolean(credentials['oauth:active_provider']&&token&&provider&&provider.options&&provider.options.apiKey&&provider.models&&Object.keys(provider.models).length);}catch(_){}process.stdout.write(JSON.stringify({loggedIn}));"
+            ],
+            "loggedInPatterns": ["\"loggedIn\":true"],
+            "loggedOutPatterns": ["\"loggedIn\":false"],
+            "timeoutMs": 15000
+          },
           "login": {
-            "argv": ["zcode", "login", "--no-browser"],
+            "argv": ["zcode", "login", "--no-browser", "--json"],
+            "successPatterns": ["\"status\":\"ready\""],
             "timeoutMs": 300000
           },
           "logout": {

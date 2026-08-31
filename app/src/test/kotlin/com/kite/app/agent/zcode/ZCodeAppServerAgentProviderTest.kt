@@ -69,8 +69,8 @@ class ZCodeAppServerAgentProviderTest {
             generatedAt = 123L,
             providers = listOf(
                 ZCodeRuntimeModelProvider(
-                    providerId = "zhipu-coding-plan",
-                    label = "智谱 Coding Plan",
+                    providerId = "zai",
+                    label = "Z.AI 官方账号",
                     kind = "openai-compatible",
                     apiFormat = "openai-chat-completions",
                     baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4",
@@ -79,9 +79,10 @@ class ZCodeAppServerAgentProviderTest {
                         com.kite.app.agent.config.AgentProviderModelSummary("glm-5.3", "GLM-5.3"),
                         com.kite.app.agent.config.AgentProviderModelSummary("glm-5.3-flash", "GLM-5.3 Flash"),
                     ),
+                    modelSource = AgentModelSource.OfficialLogin,
                 )
             ),
-            selectedProviderId = "zhipu-coding-plan",
+            selectedProviderId = "zai",
             selectedModelId = "glm-5.3-flash",
         )
         val connection = connect(channel, runtimeModelCatalogSource = { catalog }) { }
@@ -92,13 +93,15 @@ class ZCodeAppServerAgentProviderTest {
         val requests = channel.requests()
         val upsert = requests.single { it.optString("method") == "workspace/upsertModelProvider" }
         val provider = upsert.getJSONObject("params").getJSONObject("provider")
-        assertEquals("zhipu-coding-plan", provider.getString("providerId"))
+        assertEquals("zai", provider.getString("providerId"))
         assertEquals(2, provider.getJSONArray("models").length())
         assertEquals("inline", provider.getJSONObject("apiKey").getString("source"))
         val create = requests.single { it.optString("method") == "session/create" }
         val runtimeModel = create.getJSONObject("params").getJSONObject("runtimeModel")
-        assertEquals("zhipu-coding-plan", runtimeModel.getJSONObject("model").getString("providerId"))
+        assertEquals("zai", runtimeModel.getJSONObject("model").getString("providerId"))
         assertEquals("glm-5.3-flash", runtimeModel.getJSONObject("model").getString("modelId"))
+        val model = (created as AgentOperationResult.Success).value.configuration.select(AgentConfigCategory.Model)
+        assertEquals(AgentModelSource.OfficialLogin, model.choices.single { it.value == "zai/glm-5.3" }.modelSource)
         connection.disconnect()
     }
 
@@ -281,7 +284,6 @@ class ZCodeAppServerAgentProviderTest {
             .put("ref", JSONObject().put("providerId", "zai").put("modelId", id))
             .put("label", name)
             .put("providerLabel", "Z.AI")
-            .put("providerSource", "builtin")
 
         private fun history() = JSONObject().put(
             "messages",

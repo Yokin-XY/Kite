@@ -46,6 +46,9 @@ class AdapterBackedAgentConfigurationApi(
         adapters.adapter(target.adapterId)?.readLive(target.agentId)
             ?: AgentConfigReadResult.Unavailable(target.unsupportedDiscovery())
 
+    override suspend fun readSessionConfiguration(target: AgentConfigurationTarget) =
+        adapters.adapter(target.adapterId)?.readSessionConfiguration(target.agentId).orEmpty()
+
     override suspend fun apply(
         target: AgentConfigurationTarget,
         expectedRevision: String,

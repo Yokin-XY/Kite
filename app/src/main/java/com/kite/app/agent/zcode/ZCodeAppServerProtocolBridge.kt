@@ -153,14 +153,23 @@ internal fun JSONObject.toZCodeModel(): ZCodeModel? {
         modelId = modelId,
         displayName = nullableString("label") ?: nullableString("displayName") ?: nullableString("name") ?: modelId,
         providerName = nullableString("providerLabel") ?: providerId,
-        modelSource = if (providerSource == "builtin" || providerId.startsWith("builtin:")) {
-            AgentModelSource.OfficialLogin
-        } else {
-            AgentModelSource.UserConfigured
-        },
+        modelSource = zcodeModelSource(providerId, providerSource),
         variant = ref.nullableString("variant"),
     )
 }
+
+/** ZCode 登录流程保留的 Provider ID；会话快照和原生配置必须使用同一来源判断。 */
+internal fun zcodeModelSource(providerId: String, providerSource: String? = null): AgentModelSource =
+    if (
+        providerSource == "builtin" ||
+        providerId.startsWith("builtin:") ||
+        providerId == "zai" ||
+        providerId == "bigmodel"
+    ) {
+        AgentModelSource.OfficialLogin
+    } else {
+        AgentModelSource.UserConfigured
+    }
 
 /** ZCode 官方 runtimeModel/workspace Provider 协议所需的内存态，不向 UI 暴露凭据。 */
 internal class ZCodeRuntimeModelProvider(
@@ -171,6 +180,7 @@ internal class ZCodeRuntimeModelProvider(
     val baseUrl: String?,
     private val apiKey: String?,
     val models: List<AgentProviderModelSummary>,
+    val modelSource: AgentModelSource = AgentModelSource.UserConfigured,
 ) {
     fun toProtocol(): JSONObject = JSONObject()
         .put("providerId", providerId)
@@ -216,7 +226,7 @@ internal class ZCodeRuntimeModelCatalog(
                         modelId = model.id,
                         displayName = model.displayName.ifBlank { model.id },
                         providerName = provider.label,
-                        modelSource = AgentModelSource.UserConfigured,
+                        modelSource = provider.modelSource,
                     )
                 )
             }

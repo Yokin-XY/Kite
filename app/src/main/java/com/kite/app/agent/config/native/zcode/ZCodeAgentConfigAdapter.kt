@@ -15,11 +15,14 @@ import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.config.AtomicConfigFileStore
+import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.zcode.ZCodeModel
 import com.kite.app.agent.zcode.ZCodeRuntimeModelCatalog
 import com.kite.app.agent.zcode.ZCodeRuntimeModelProvider
+import com.kite.app.agent.zcode.zcodeModelSource
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import java.security.MessageDigest
@@ -68,15 +71,48 @@ internal class ZCodeAgentConfigAdapter internal constructor(
     override fun defaultModelChange(
         option: AgentConfigOption.Select,
     ): AgentPersistentConfigChange.SetDefaultModel? {
-        val change = super.defaultModelChange(option) ?: return null
         val selected = option.choices.firstOrNull { it.value == option.currentValue } ?: return null
-        if (selected.modelSource != AgentModelSource.OfficialLogin) return change
-        return change.copy(clearProviderOverride = true)
+        if (selected.modelSource != AgentModelSource.OfficialLogin) {
+            return super.defaultModelChange(option)
+        }
+        val providerId = selected.groupId?.trim()?.takeIf(String::isNotBlank)
+            ?: selected.value.substringBefore('/').takeIf { it != selected.value && it.isNotBlank() }
+            ?: return null
+        val modelId = selected.value.removePrefix("$providerId/").trim().takeIf(String::isNotBlank)
+            ?: return null
+        return AgentPersistentConfigChange.SetDefaultModel(providerModelRef(providerId, modelId))
+    }
+
+    /** 官方登录和用户 Provider 都以 ZCode CLI 实际生成的配置为准，不由页面维护第二份模型表。 */
+    override suspend fun readSessionConfiguration(agentId: String): List<AgentConfigOption> {
+        val catalog = runtimeModelCatalog() ?: return emptyList()
+        val models = catalog.models()
+        if (models.isEmpty()) return emptyList()
+        return listOf(
+            AgentConfigOption.Select(
+                id = com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID,
+                name = "模型",
+                description = "来自 ZCode 当前账号与原生供应商配置；切换后用于新会话",
+                category = AgentConfigCategory.Model,
+                currentValue = catalog.selectedModel()?.selectionId.orEmpty(),
+                choices = models.map { model ->
+                    AgentConfigChoice(
+                        value = model.selectionId,
+                        name = model.displayName,
+                        groupId = model.providerId,
+                        groupName = model.providerName,
+                        modelSource = model.modelSource,
+                    )
+                },
+            )
+        )
     }
 
     override fun decode(files: Map<String, ByteArray>): NativeState {
         val root = parse(files.getValue(CONFIG_KEY))
-        val configured = configuredProviders(root)
+        val configured = configuredProviders(root).filter { provider ->
+            provider.modelSource == AgentModelSource.UserConfigured
+        }
         val providers = configured.map { provider ->
             AgentProviderSummary(
                 id = provider.id,
@@ -157,17 +193,15 @@ internal class ZCodeAgentConfigAdapter internal constructor(
                 baseUrl = provider.baseUrl,
                 apiKey = provider.apiKey,
                 models = provider.models,
+                modelSource = provider.modelSource,
             )
         }
         val main = selectedModelRef(root)
-        val officialModels = officialModels(parse(nativeBytes)).ifEmpty {
-            ZCODE_3_10_1_OFFICIAL_MODELS
-        }
+        val officialModels = officialModels(parse(nativeBytes))
         if (providers.isEmpty() && officialModels.isEmpty()) return null
         val digest = MessageDigest.getInstance("SHA-256").also { sha ->
             sha.update(bytes)
             sha.update(nativeBytes)
-            if (nativeBytes.isEmpty()) sha.update(ZCODE_OFFICIAL_FALLBACK_REVISION.toByteArray())
         }
         return ZCodeRuntimeModelCatalog(
             revision = "sha256:" + digest.digest()
@@ -186,7 +220,7 @@ internal class ZCodeAgentConfigAdapter internal constructor(
      */
     private fun officialModels(root: JsonObject): List<ZCodeModel> =
         root.getObject(NATIVE_PROVIDER_KEY)?.entries.orEmpty().flatMap { (providerId, value) ->
-            if (providerId !in OFFICIAL_LOGIN_PROVIDER_IDS) return@flatMap emptyList()
+            if (zcodeModelSource(providerId) != AgentModelSource.OfficialLogin) return@flatMap emptyList()
             val provider = value as? JsonObject ?: return@flatMap emptyList()
             val providerName = provider.string(NATIVE_PROVIDER_NAME_KEY)?.takeIf(String::isNotBlank)
                 ?: providerId
@@ -245,9 +279,7 @@ internal class ZCodeAgentConfigAdapter internal constructor(
             ?.takeIf { it.providerId == provider.id && provider.models.any { model -> model.id == it.modelId } }
             ?.modelId
             ?: provider.models.first().id
-        if (currentMain == null || currentMain.providerId == provider.id) {
-            setMain(root, ModelRef(provider.id, selectedModelId))
-        }
+        setMain(root, ModelRef(provider.id, selectedModelId))
     }
 
     private fun removeProvider(root: JsonObject, providerId: String) {
@@ -307,6 +339,7 @@ internal class ZCodeAgentConfigAdapter internal constructor(
                 baseUrl = baseUrl,
                 apiKey = options.string(API_KEY_KEY),
                 models = models,
+                modelSource = zcodeModelSource(id),
             )
         }
         if (native.isNotEmpty()) return native.sortedBy(ConfiguredProvider::id)
@@ -321,6 +354,7 @@ internal class ZCodeAgentConfigAdapter internal constructor(
                 models = targets.distinctBy(LegacyTarget::modelId).map { target ->
                     AgentProviderModelSummary(target.modelId, target.modelId)
                 },
+                modelSource = zcodeModelSource(providerId),
             )
         }.sortedBy(ConfiguredProvider::id)
     }
@@ -414,6 +448,7 @@ internal class ZCodeAgentConfigAdapter internal constructor(
         val baseUrl: String?,
         val apiKey: String?,
         val models: List<AgentProviderModelSummary>,
+        val modelSource: AgentModelSource,
     )
 
     private data class ModelRef(val providerId: String, val modelId: String)
@@ -460,34 +495,5 @@ internal class ZCodeAgentConfigAdapter internal constructor(
         private const val NATIVE_PROVIDER_NAME_KEY = "name"
         private const val NATIVE_MODELS_KEY = "models"
         private const val NATIVE_MODEL_LABEL_KEY = "label"
-        private const val ZCODE_OFFICIAL_FALLBACK_REVISION = "zcode-3.10.1-official-login-models-v1"
-
-        private val OFFICIAL_LOGIN_PROVIDER_IDS = setOf(
-            "builtin:bigmodel-coding-plan",
-            "builtin:bigmodel-start-plan",
-            "builtin:zai-coding-plan",
-            "builtin:zai-start-plan",
-        )
-
-        /** 手机尚未登录时 v2/config.json 可能不存在；该清单只对应资源卡固定的 ZCode 3.10.1。 */
-        private val ZCODE_3_10_1_OFFICIAL_MODELS = listOf(
-            officialModel("builtin:bigmodel-coding-plan", "BigModel - Coding Plan", "GLM-5.3"),
-            officialModel("builtin:bigmodel-coding-plan", "BigModel - Coding Plan", "GLM-5.3-Flash"),
-            officialModel("builtin:bigmodel-coding-plan", "BigModel - Coding Plan", "GLM-5-Turbo"),
-            officialModel("builtin:bigmodel-start-plan", "BigModel - Start Plan", "GLM-5.3-Flash"),
-            officialModel("builtin:zai-coding-plan", "Z.AI - Coding Plan", "GLM-5.3"),
-            officialModel("builtin:zai-coding-plan", "Z.AI - Coding Plan", "GLM-5.3-Flash"),
-            officialModel("builtin:zai-coding-plan", "Z.AI - Coding Plan", "GLM-5-Turbo"),
-            officialModel("builtin:zai-start-plan", "Z.AI - Start Plan", "GLM-5.2"),
-            officialModel("builtin:zai-start-plan", "Z.AI - Start Plan", "GLM-5-Turbo"),
-        )
-
-        private fun officialModel(providerId: String, providerName: String, modelId: String) = ZCodeModel(
-            providerId = providerId,
-            modelId = modelId,
-            displayName = modelId,
-            providerName = providerName,
-            modelSource = AgentModelSource.OfficialLogin,
-        )
     }
 }
