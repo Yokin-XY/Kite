@@ -111,7 +111,13 @@ class KiteResourceInstallPlanCompilerTest {
                         "https://registry.npmjs.org",
                     ),
                 )
-            )
+            ),
+            verifications = listOf(
+                KiteResourceInstallVerification(
+                    id = "installed-version",
+                    cmd = "example --version",
+                ),
+            ),
         )
 
         val script = KiteResourceInstallPlanCompiler.compile(action)
@@ -120,8 +126,16 @@ class KiteResourceInstallPlanCompilerTest {
         assertTrue(script.contains("KITE_RESOURCE_ROUTE stage=acquire"))
         assertTrue(script.contains("npm install -g --loglevel=http"))
         assertTrue(script.contains("--registry=\"${'$'}npm_registry\""))
-        assertTrue(script.contains("[ \"${'$'}last_status\" -eq 0 ] && [ \"${'$'}source_unavailable\" -eq 0 ]"))
-        assertTrue(script.contains("then last_status=69"))
+        assertTrue(script.contains("[ \"${'$'}last_status\" -ne 0 ] && kite_resource_is_source_failure"))
+        assertFalse(script.contains("[ \"${'$'}last_status\" -eq 0 ] && [ \"${'$'}source_unavailable\" -eq 0 ]"))
+        assertTrue(script.contains("attempt_prefix=\"${'$'}npm_config_prefix\""))
+        assertTrue(script.contains("mkdir -p \"${'$'}attempt_root\" \"${'$'}attempt_prefix\""))
+        assertTrue(script.contains("export PATH=\"${'$'}attempt_prefix/bin:${'$'}PATH\""))
+        assertTrue(script.contains("example --version"))
+        assertTrue(script.contains("reason=candidate-verification"))
+        assertTrue(script.contains("retry_reason=source-incomplete"))
+        assertFalse(script.contains("if [ \"${'$'}last_status\" -eq 0 ]; then last_status=69"))
+        assertFalse(script.contains("mv \"${'$'}attempt_prefix\" \"${'$'}npm_config_prefix\""))
         assertTrue(script.contains("kite_resource_run 'npm-package' install kite_resource_npm_npm_package"))
     }
 

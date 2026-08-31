@@ -11,7 +11,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
-class KiteResourceInstallMethodPolicyTest {
+class KiteResourceCardAuthoringPolicyTest {
     private val context by lazy { ApplicationProvider.getApplicationContext<Context>() }
 
     @Test
@@ -24,23 +24,23 @@ class KiteResourceInstallMethodPolicyTest {
                 val manifest = loader.parseManifestJson(manifestFile.readText())
                 assertNotNull(
                     "Unclassified source type ${manifest.source.type} from ${manifest.id}",
-                    KiteResourceInstallMethodPolicy.ruleFor(manifest.source.type),
+                    KiteResourceCardAuthoringPolicy.ruleFor(manifest.source.type),
                 )
             }
     }
 
     @Test
     fun `官方包管理方式优先于发布包和安装脚本`() {
-        assertEquals("npm", KiteResourceInstallMethodPolicy.prefer("official_script", "npm"))
-        assertEquals("pypi", KiteResourceInstallMethodPolicy.prefer("pypi", "git"))
-        assertEquals("github_release", KiteResourceInstallMethodPolicy.prefer("git", "github_release"))
+        assertEquals("npm", KiteResourceCardAuthoringPolicy.prefer("official_script", "npm"))
+        assertEquals("pypi", KiteResourceCardAuthoringPolicy.prefer("pypi", "git"))
+        assertEquals("github_release", KiteResourceCardAuthoringPolicy.prefer("git", "github_release"))
     }
 
     @Test
     fun `安装方式不在运行时静默互换`() {
         listOf("npm", "pypi", "github_release", "official_script", "git").forEach { sourceType ->
             assertFalse(
-                KiteResourceInstallMethodPolicy.ruleFor(sourceType)?.runtimeMethodFallbackAllowed ?: true,
+                KiteResourceCardAuthoringPolicy.ruleFor(sourceType)?.runtimeMethodFallbackAllowed ?: true,
             )
         }
     }

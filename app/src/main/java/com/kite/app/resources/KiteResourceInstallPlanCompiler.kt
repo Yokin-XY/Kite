@@ -32,8 +32,11 @@ object KiteResourceInstallPlanCompiler {
             if (routedAction.installSteps.any { it.type == STEP_GIT }) {
                 appendLine(gitHelper())
             }
+            val npmAttemptVerifications = routedAction.verifications.takeIf {
+                routedAction.installSteps.singleOrNull()?.type == STEP_NPM
+            }.orEmpty()
             routedAction.installSteps.forEach { step ->
-                appendLine(compileStep(step))
+                appendLine(compileStep(step, npmAttemptVerifications))
             }
         }.trim()
     }
@@ -84,11 +87,14 @@ object KiteResourceInstallPlanCompiler {
         }.take(160)
     }
 
-    private fun compileStep(step: KiteResourceInstallStep): String = when (step.type) {
+    private fun compileStep(
+        step: KiteResourceInstallStep,
+        npmAttemptVerifications: List<KiteResourceInstallVerification> = emptyList(),
+    ): String = when (step.type) {
         STEP_DOWNLOAD -> compileDownload(step)
         STEP_ARCHIVE -> error("Archive step ${step.id} must be compiled by the Android native archive planner")
         STEP_SCRIPT -> compileScript(step)
-        STEP_NPM -> compileNpm(step)
+        STEP_NPM -> compileNpm(step, npmAttemptVerifications)
         STEP_APT -> compileApt(step)
         STEP_GIT -> compileGit(step)
         STEP_SHELL, STEP_BUNDLED -> compileInlineShell(step)
@@ -136,7 +142,10 @@ object KiteResourceInstallPlanCompiler {
         return "kite_resource_run ${shellLiteral(safeId(step.id))} install $command"
     }
 
-    private fun compileNpm(step: KiteResourceInstallStep): String {
+    private fun compileNpm(
+        step: KiteResourceInstallStep,
+        attemptVerifications: List<KiteResourceInstallVerification>,
+    ): String {
         require(step.packages.isNotEmpty()) { "npm step ${step.id} has no packages" }
         step.registries.forEach { registry ->
             require(isSecureRegistryUrl(registry)) {
@@ -146,6 +155,7 @@ object KiteResourceInstallPlanCompiler {
         val arguments = step.arguments.joinToString(" ") { shellLiteral(it) }
         val packages = step.packages.joinToString(" ") { shellLiteral(it) }
         val installArguments = listOf(arguments, packages).filter { it.isNotBlank() }.joinToString(" ")
+        val attemptVerification = compileNpmAttemptVerification(attemptVerifications)
         val installCommand = if (step.registries.isEmpty()) {
             "npm install -g $installArguments"
         } else {
@@ -161,25 +171,42 @@ object KiteResourceInstallPlanCompiler {
                     source_id="${'$'}{npm_route%%|*}"
                     npm_registry="${'$'}{npm_route#*|}"
                     attempt_root="${'$'}install_root/.kite-source-attempt/npm/${'$'}source_id"
-                    attempt_prefix="${'$'}attempt_root/prefix"
+                    attempt_prefix="${'$'}npm_config_prefix"
                     attempt_cache="${'$'}install_root/.kite-source-cache/npm/${'$'}source_id"
                     attempt_log="${'$'}attempt_root/npm-install.log"
                     rm -rf "${'$'}attempt_root"
-                    mkdir -p "${'$'}attempt_prefix" "${'$'}attempt_cache"
+                    rm -rf "${'$'}attempt_prefix"
+                    mkdir -p "${'$'}attempt_root" "${'$'}attempt_prefix" "${'$'}attempt_cache"
                     echo "KITE_RESOURCE_ROUTE stage=acquire step=${safeId(step.id)} source=${'$'}source_id registry=${'$'}npm_registry"
                     set +e
                     npm install -g --loglevel=http --prefix="${'$'}attempt_prefix" --cache="${'$'}attempt_cache" --registry="${'$'}npm_registry" $installArguments >"${'$'}attempt_log" 2>&1
                     last_status=${'$'}?
                     set -e
-                    cat "${'$'}attempt_log"
                     source_unavailable=0
-                    if kite_resource_is_source_failure "${'$'}last_status" "${'$'}attempt_log"; then
+                    retry_reason=source-unavailable
+                    if [ "${'$'}last_status" -ne 0 ] && kite_resource_is_source_failure "${'$'}last_status" "${'$'}attempt_log"; then
                       source_unavailable=1
                     fi
-                    if [ "${'$'}last_status" -eq 0 ] && [ "${'$'}source_unavailable" -eq 0 ]; then
-                      rm -rf "${'$'}npm_config_prefix"
-                      mkdir -p "${'$'}(dirname "${'$'}npm_config_prefix")"
-                      mv "${'$'}attempt_prefix" "${'$'}npm_config_prefix"
+                    if [ "${'$'}last_status" -eq 0 ]; then
+                      set +e
+                      (
+                        export PATH="${'$'}attempt_prefix/bin:${'$'}PATH"
+                        export npm_config_prefix="${'$'}attempt_prefix"
+                        export HOME="${'$'}attempt_root/home"
+                        mkdir -p "${'$'}HOME"
+                        $attemptVerification
+                      ) >>"${'$'}attempt_log" 2>&1
+                      attempt_verification_status=${'$'}?
+                      set -e
+                      if [ "${'$'}attempt_verification_status" -ne 0 ]; then
+                        last_status=69
+                        source_unavailable=1
+                        retry_reason=source-incomplete
+                        echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id reason=candidate-verification exit=${'$'}attempt_verification_status" >>"${'$'}attempt_log"
+                      fi
+                    fi
+                    cat "${'$'}attempt_log"
+                    if [ "${'$'}last_status" -eq 0 ]; then
                       rm -rf "${'$'}install_root/.kite-source-attempt"
                       echo "KITE_RESOURCE_STEP acquire-complete ${safeId(step.id)} source=${'$'}source_id"
                       return 0
@@ -189,8 +216,8 @@ object KiteResourceInstallPlanCompiler {
                       rm -rf "${'$'}install_root/.kite-source-attempt"
                       return "${'$'}last_status"
                     fi
-                    if [ "${'$'}last_status" -eq 0 ]; then last_status=69; fi
-                    echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}last_status reason=source-unavailable"
+                    echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}last_status reason=${'$'}retry_reason"
+                    rm -rf "${'$'}attempt_prefix"
                     rm -rf "${'$'}attempt_root"
                   done
                   rm -rf "${'$'}install_root/.kite-source-attempt"
@@ -206,6 +233,25 @@ object KiteResourceInstallPlanCompiler {
             export npm_config_fetch_retry_maxtimeout=$(( ${step.retryDelaySeconds} * ${step.retryAttempts} * 4000 ))
             $installCommand
         """.trimIndent()
+    }
+
+    private fun compileNpmAttemptVerification(
+        verifications: List<KiteResourceInstallVerification>,
+    ): String = if (verifications.isEmpty()) {
+        ":"
+    } else {
+        buildString {
+            appendLine("set -e")
+            appendLine("echo \"KITE_RESOURCE_STEP verify-source-candidate\"")
+            verifications.forEach { verification ->
+                val stepId = safeId(verification.id)
+                appendLine("echo \"KITE_RESOURCE_STEP verify-source $stepId\"")
+                appendLine("(")
+                appendLine("  set -e")
+                verification.cmd.lineSequence().forEach { appendLine("  $it") }
+                appendLine(")")
+            }
+        }.trim()
     }
 
     private fun isSecureRegistryUrl(value: String): Boolean = runCatching {
