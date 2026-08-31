@@ -204,7 +204,31 @@ internal class ZCodeRuntimeModelCatalog(
     val providers: List<ZCodeRuntimeModelProvider>,
     private val selectedProviderId: String?,
     private val selectedModelId: String?,
+    val advertisedModels: List<ZCodeModel> = emptyList(),
 ) {
+    fun models(): List<ZCodeModel> = buildList {
+        addAll(advertisedModels)
+        providers.forEach { provider ->
+            provider.models.forEach { model ->
+                add(
+                    ZCodeModel(
+                        providerId = provider.providerId,
+                        modelId = model.id,
+                        displayName = model.displayName.ifBlank { model.id },
+                        providerName = provider.label,
+                        modelSource = AgentModelSource.UserConfigured,
+                    )
+                )
+            }
+        }
+    }.distinctBy(ZCodeModel::selectionId)
+
+    fun selectedModel(): ZCodeModel? {
+        val providerId = selectedProviderId ?: return null
+        val modelId = selectedModelId ?: return null
+        return models().firstOrNull { it.providerId == providerId && it.modelId == modelId }
+    }
+
     fun selectedRuntimeModel(): JSONObject? {
         val providerId = selectedProviderId ?: return null
         val modelId = selectedModelId ?: return null

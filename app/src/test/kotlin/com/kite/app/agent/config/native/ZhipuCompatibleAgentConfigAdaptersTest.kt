@@ -293,6 +293,24 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
             "workspace/.kf/software/kite.zcode/user-home/.zcode/cli/config.json",
         )
         config.writeText("""{"ui":{"locale":"zh-CN"}}""")
+        nativeFile(
+            "workspace/.kf/software/kite.zcode/user-home/.zcode/v2/config.json",
+        ).writeText(
+            """
+            {
+              "provider": {
+                "builtin:bigmodel-coding-plan": {
+                  "name": "BigModel - Coding Plan",
+                  "enabled": true,
+                  "models": {
+                    "GLM-5.3": {},
+                    "GLM-5.3-Flash": {}
+                  }
+                }
+              }
+            }
+            """.trimIndent(),
+        )
         val adapter = ZCodeAgentConfigAdapter(context, ::container)
         assertEquals(AgentSessionConfigurationEffect.Reconnect, adapter.providerConfigurationEffect())
 
@@ -331,6 +349,9 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
         assertEquals("zhipu-coding-plan", runtime?.getJSONObject("model")?.getString("providerId"))
         assertEquals("glm-5.3-flash", runtime?.getJSONObject("model")?.getString("modelId"))
         assertEquals(2, runtime?.getJSONObject("provider")?.getJSONArray("models")?.length())
+        val allModels = requireNotNull(adapter.runtimeModelCatalog()).models()
+        assertTrue(allModels.any { it.selectionId == "builtin:bigmodel-coding-plan/GLM-5.3" })
+        assertTrue(allModels.any { it.selectionId == "zhipu-coding-plan/glm-5.3-flash" })
 
         val officialSelection = AgentConfigOption.Select(
             id = "model",

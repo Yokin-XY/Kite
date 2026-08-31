@@ -180,8 +180,12 @@ private class ZCodeAppServerConnection(
                 params.put("model", runtimeModel.getJSONObject("model"))
             }
             val response = rpc.request(METHOD_SESSION_CREATE, params)
-            val state = response.toSessionState(request.cwd)
+            val state = response.toSessionState(
+                fallbackCwd = request.cwd,
+                fallbackModel = catalog?.selectedModel(),
+            )
                 ?: error("ZCode session/create 未返回会话")
+            state.mergeCatalog(catalog)
             sessions[state.id] = state
             subscribe(state.id)
             snapshot(state).also { announceReady(state) }
@@ -207,8 +211,12 @@ private class ZCodeAppServerConnection(
             METHOD_SESSION_RESUME,
             params,
         )
-        val state = response.toSessionState(request.cwd)
+        val state = response.toSessionState(
+            fallbackCwd = request.cwd,
+            fallbackModel = catalog?.selectedModel(),
+        )
             ?: error("ZCode session/resume 未返回会话")
+        state.mergeCatalog(catalog)
         sessions[state.id] = state
         replayHistory(state.id)
         subscribe(state.id)
@@ -332,6 +340,7 @@ private class ZCodeAppServerConnection(
                         METHOD_SESSION_SET_THOUGHT,
                         JSONObject().put("sessionId", sessionId).put("thoughtLevel", selected),
                     )
+                    state.thoughtLevel = selected
                 }
                 AGENT_SESSION_PERMISSION_CONFIG_ID -> setNativeMode(state, selected)
                 else -> error("ZCode 不支持该配置项")
@@ -534,7 +543,13 @@ private class ZCodeAppServerConnection(
             catalog?.runtimeModel(model.providerId, model.modelId)?.let { params.put("runtimeModel", it) }
         }
         val response = rpc.request(METHOD_SESSION_RESUME, params)
-        response.toSessionState(state.cwd)?.let { refreshed ->
+        response.toSessionState(
+            fallbackCwd = state.cwd,
+            fallbackModel = state.model,
+            fallbackThoughtLevel = state.thoughtLevel,
+            fallbackMode = state.mode,
+        )?.let { refreshed ->
+            refreshed.mergeCatalog(catalog)
             state.cwd = refreshed.cwd
             state.model = refreshed.model
             state.models = refreshed.models
@@ -597,13 +612,26 @@ private class ZCodeAppServerConnection(
                 "assistant" -> AgentMessageRole.Assistant
                 else -> return@forEachIndexed
             }
-            val messageId = info.nullableString("id") ?: "zcode-history-$index"
-            message.optJSONArray("parts").zcodeObjects().forEach { part ->
-                if (part.optString("type") != "text") return@forEach
-                part.nullableString("text")?.let { text ->
+            val messageId = info.nullableString("messageId")
+                ?: info.nullableString("id")
+                ?: "zcode-history-$index"
+            message.zcodeParts().forEachIndexed { partIndex, part ->
+                val partRole = when (part.optString("type")) {
+                    "text" -> role
+                    "reasoning", "thought" -> AgentMessageRole.Thought
+                    else -> return@forEachIndexed
+                }
+                val text = part.nullableString("text")
+                    ?: part.nullableString("content")
+                    ?: return@forEachIndexed
+                if (text.isNotBlank()) {
                     endpoint.eventSink.onEvent(
                         sessionId,
-                        AgentSessionEvent.MessageChunk(role, AgentContent.Text(text), messageId),
+                        AgentSessionEvent.MessageChunk(
+                            partRole,
+                            AgentContent.Text(text),
+                            if (partRole == AgentMessageRole.Thought) "$messageId:thought:$partIndex" else messageId,
+                        ),
                     )
                 }
             }
@@ -627,7 +655,7 @@ private class ZCodeAppServerConnection(
                 AgentConfigOption.Select(
                     id = MODEL_CONFIG_ID,
                     name = "模型",
-                    description = "来自 ZCode 当前会话的实时模型目录",
+                    description = "ZCode 官方账号与自定义供应商模型",
                     category = AgentConfigCategory.Model,
                     currentValue = currentModel.selectionId,
                     choices = state.models.distinctBy(ZCodeModel::selectionId).map { model ->
@@ -684,6 +712,7 @@ private class ZCodeAppServerConnection(
             METHOD_SESSION_SET_MODE,
             JSONObject().put("sessionId", state.id).put("mode", modeId),
         )
+        state.mode = modeId
     }
 
     private suspend fun <T> operation(label: String, block: suspend () -> T): AgentOperationResult<T> = try {
@@ -752,13 +781,18 @@ private class ZCodeAppServerConnection(
 
 private data class ZCodeMode(val choice: AgentConfigChoice)
 
-private fun JSONObject.toSessionState(fallbackCwd: String): ZCodeSessionState? {
+private fun JSONObject.toSessionState(
+    fallbackCwd: String,
+    fallbackModel: ZCodeModel? = null,
+    fallbackThoughtLevel: String? = null,
+    fallbackMode: String = "build",
+): ZCodeSessionState? {
     val session = optJSONObject("session") ?: this
     val sessionId = session.nullableString("sessionId") ?: nullableString("sessionId") ?: return null
     val cwd = session.optJSONObject("workspace")?.nullableString("workspacePath") ?: fallbackCwd
     val settings = optJSONObject("settings") ?: JSONObject()
     val modelSettings = settings.optJSONObject("model") ?: JSONObject()
-    val currentModel = modelSettings.optJSONObject("current")?.toZCodeModel()
+    val currentModel = modelSettings.optJSONObject("current")?.toZCodeModel() ?: fallbackModel
     val availableModels = modelSettings.optJSONArray("available").zcodeObjects()
         .mapNotNull(JSONObject::toZCodeModel)
         .toMutableList()
@@ -766,10 +800,11 @@ private fun JSONObject.toSessionState(fallbackCwd: String): ZCodeSessionState? {
     val thoughtSettings = settings.optJSONObject("thoughtLevel") ?: JSONObject()
     val thoughtLevel = thoughtSettings.nullableString("current")
         ?: thoughtSettings.optJSONObject("current")?.nullableString("value")
+        ?: fallbackThoughtLevel
     val modeSettings = settings.optJSONObject("mode") ?: JSONObject()
     val mode = modeSettings.nullableString("current")
         ?: settings.optJSONObject("permission")?.nullableString("mode")
-        ?: "build"
+        ?: fallbackMode
     return ZCodeSessionState(
         id = sessionId,
         cwd = cwd,
@@ -779,4 +814,24 @@ private fun JSONObject.toSessionState(fallbackCwd: String): ZCodeSessionState? {
         thoughtLevels = thoughtSettings.optJSONArray("available").zcodeStrings(),
         mode = mode,
     )
+}
+
+private fun ZCodeSessionState.mergeCatalog(catalog: ZCodeRuntimeModelCatalog?) {
+    if (catalog == null) return
+    if (model == null) model = catalog.selectedModel()
+    models = buildList {
+        addAll(models)
+        addAll(catalog.models())
+        model?.let(::add)
+    }.distinctBy(ZCodeModel::selectionId)
+}
+
+private fun JSONObject.zcodeParts(): List<JSONObject> = when (val value = opt("parts")) {
+    is JSONArray -> value.zcodeObjects()
+    is JSONObject -> if (value.has("type")) {
+        listOf(value)
+    } else {
+        value.keys().asSequence().mapNotNull(value::optJSONObject).toList()
+    }
+    else -> emptyList()
 }

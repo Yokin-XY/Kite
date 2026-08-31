@@ -103,6 +103,50 @@ class ZCodeAppServerAgentProviderTest {
     }
 
     @Test
+    fun `真实快照不返回available时仍合并官方与自定义模型并显示全部权限`() = runBlocking {
+        val channel = FakeZCodeChannel(includeAvailableModels = false)
+        val catalog = ZCodeRuntimeModelCatalog(
+            revision = "sha256:merged",
+            generatedAt = 456L,
+            providers = listOf(
+                ZCodeRuntimeModelProvider(
+                    providerId = "zhipu-coding-plan",
+                    label = "智谱 Coding Plan",
+                    kind = "openai-compatible",
+                    apiFormat = "openai-chat-completions",
+                    baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4",
+                    apiKey = "test-secret",
+                    models = listOf(
+                        com.kite.app.agent.config.AgentProviderModelSummary("glm-5.3", "GLM-5.3"),
+                        com.kite.app.agent.config.AgentProviderModelSummary("glm-5.3-flash", "GLM-5.3 Flash"),
+                    ),
+                )
+            ),
+            selectedProviderId = "zhipu-coding-plan",
+            selectedModelId = "glm-5.3-flash",
+            advertisedModels = listOf(
+                ZCodeModel(
+                    providerId = "builtin:bigmodel-coding-plan",
+                    modelId = "GLM-5.3",
+                    displayName = "GLM-5.3",
+                    providerName = "BigModel - Coding Plan",
+                    modelSource = AgentModelSource.OfficialLogin,
+                )
+            ),
+        )
+        val connection = connect(channel, runtimeModelCatalogSource = { catalog }) { }
+
+        val created = connection.newSession(AgentNewSessionRequest("/workspace"))
+            as AgentOperationResult.Success
+        val model = created.value.configuration.select(AgentConfigCategory.Model)
+        val permission = created.value.configuration.select(AgentConfigCategory.Permission)
+        assertTrue(model.choices.any { it.value == "zhipu-coding-plan/glm-5.3-flash" })
+        assertTrue(model.choices.any { it.value == "builtin:bigmodel-coding-plan/GLM-5.3" })
+        assertEquals(listOf("build", "edit", "plan", "yolo"), permission.choices.map { it.value })
+        connection.disconnect()
+    }
+
+    @Test
     fun `加载会话读取ZCode权威历史且设置使用原生方法`() = runBlocking {
         val channel = FakeZCodeChannel()
         val events = mutableListOf<AgentSessionEvent>()
@@ -144,7 +188,9 @@ class ZCodeAppServerAgentProviderTest {
         ),
     ) as AgentOperationResult.Success).value
 
-    private class FakeZCodeChannel : AgentProcessChannel {
+    private class FakeZCodeChannel(
+        private val includeAvailableModels: Boolean = true,
+    ) : AgentProcessChannel {
         private val output = MutableSharedFlow<String>(replay = 64, extraBufferCapacity = 64)
         private val recorded = mutableListOf<JSONObject>()
         override val stdoutLines: Flow<String> = output
@@ -212,17 +258,16 @@ class ZCodeAppServerAgentProviderTest {
             .put(
                 "settings",
                 JSONObject()
-                    .put(
-                        "model",
-                        JSONObject()
-                            .put("current", model("glm-5.3", "GLM-5.3"))
-                            .put(
+                    .put("model", JSONObject().put("current", model("glm-5.3", "GLM-5.3")).apply {
+                        if (includeAvailableModels) {
+                            put(
                                 "available",
                                 JSONArray()
                                     .put(model("glm-5.3", "GLM-5.3"))
                                     .put(model("glm-5.3-flash", "GLM-5.3 Flash")),
-                            ),
-                    )
+                            )
+                        }
+                    })
                     .put(
                         "thoughtLevel",
                         JSONObject()
@@ -249,7 +294,7 @@ class ZCodeAppServerAgentProviderTest {
             .put(
                 "info",
                 JSONObject()
-                    .put("id", "$role-message")
+                    .put("messageId", "$role-message")
                     .put("role", role)
                     .put("semantics", JSONObject().put("uiVisibility", "visible")),
             )
