@@ -4,7 +4,7 @@
   "base": {
     "name": "Hermes",
     "description": "Hermes Agent 本体与 CLI",
-    "version": "v2026.8.27.4",
+    "version": "v2026.8.27.5",
     "icon": {
       "type": "asset",
       "value": "resources/kite.hermes.core/icon.png",
@@ -19,7 +19,7 @@
       "pattern": "(v?[0-9]+(?:\\.[0-9]+)+)"
     },
     "latestVersionProbe": {
-      "command": "printf '%s\\n' 'v2026.8.27.4'",
+      "command": "printf '%s\\n' 'v2026.8.27.5'",
       "pattern": "(v?[0-9]+(?:\\.[0-9]+)+)"
     },
     "preservePaths": ["home"]
@@ -33,7 +33,7 @@
     "category": "AI",
     "accent": "teal",
     "sizeLabel": "网络包",
-    "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 固定官方版本和提交，只安装核心运行依赖与 ACP，不自动安装桌面、浏览器、TTS、ffmpeg 或其他可选能力；代码、venv 和数据目录都固定在这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。Nous Portal 官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Hermes 自己管理。",
+    "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 向用户排序的来源请求最新版本，并只放行签名资源清单近期版本窗口内且提交身份一致的候选；只安装核心运行依赖与 ACP，不自动安装桌面、浏览器、TTS、ffmpeg 或其他可选能力。代码、venv 和数据目录都固定在这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。Nous Portal 官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Hermes 自己管理。",
     "recommendations": [
       {
         "resourceId": "kite.uv",
@@ -117,6 +117,7 @@
     }
   ],
   "actions": {
+    "updateStrategy": "reinstall",
     "install": [
       {
         "type": "managed",
@@ -129,8 +130,23 @@
               "https://gitcode.com/GitHub_Trending/he/hermes-agent.git"
             ],
             "destination": "$install_root/hermes-agent",
-            "ref": "v2026.8.27",
-            "commit": "5fc308a70719a83cccdbba4c0e39c23f5a8239d5",
+            "latestVersionWindow": [
+              {
+                "version": "v2026.8.27",
+                "ref": "v2026.8.27",
+                "commit": "5fc308a70719a83cccdbba4c0e39c23f5a8239d5"
+              },
+              {
+                "version": "v2026.8.19",
+                "ref": "v2026.8.19",
+                "commit": "fcbd1076a93841fa88855acce810e342a5b78101"
+              },
+              {
+                "version": "v2026.8.18",
+                "ref": "v2026.8.18",
+                "commit": "e624e9fde561e1add9388384012b295fde669ade"
+              }
+            ],
             "depth": 1,
             "retryAttempts": 1,
             "retryDelaySeconds": 0
@@ -171,7 +187,7 @@
           {
             "id": "write-hermes-launcher",
             "type": "shell",
-            "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif [ ! -x \"$install_root/hermes-agent/venv/bin/hermes\" ]; then echo 'Hermes Agent entrypoint missing'; exit 127; fi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s\\n' 'v2026.8.27.4' > \"$install_root/.kite-version\""
+            "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif [ ! -x \"$install_root/hermes-agent/venv/bin/hermes\" ]; then echo 'Hermes Agent entrypoint missing'; exit 127; fi\nsource_version=\"$(cat \"$install_root/.kite-source-selection/acquire-hermes-source.version\")\"\ntest -n \"$source_version\" || { echo 'Hermes source version missing'; exit 65; }\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s.5\\n' \"$source_version\" > \"$install_root/.kite-version\""
           }
         ],
         "managedCommands": [
@@ -181,7 +197,7 @@
         "verify": [
           {
             "id": "hermes-source-commit",
-            "cmd": "test \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\""
+            "cmd": "test \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"$(cat \"$install_root/.kite-source-selection/acquire-hermes-source.commit\")\""
           },
           {
             "id": "hermes-command",
@@ -229,7 +245,7 @@
           {
             "id": "update-hermes-launcher",
             "type": "shell",
-            "cmd": "test -x \"$install_root/hermes-agent/venv/bin/hermes\" || { echo 'Hermes Agent entrypoint missing'; exit 127; }\ntest \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\" || { echo 'Hermes source revision mismatch'; exit 65; }\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s\\n' 'v2026.8.27.4' > \"$install_root/.kite-version\""
+            "cmd": "test -x \"$install_root/hermes-agent/venv/bin/hermes\" || { echo 'Hermes Agent entrypoint missing'; exit 127; }\ntest \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\" || { echo 'Hermes source revision mismatch'; exit 65; }\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s\\n' 'v2026.8.27.5' > \"$install_root/.kite-version\""
           }
         ],
         "managedCommands": [
@@ -271,7 +287,7 @@
           },
           {
             "id": "hermes-kite-version",
-            "cmd": "test \"$(cat \"$install_root/.kite-version\")\" = \"v2026.8.27.4\""
+            "cmd": "test \"$(cat \"$install_root/.kite-version\")\" = \"$(cat \"$install_root/.kite-source-selection/acquire-hermes-source.version\").5\""
           }
         ],
         "timeoutMs": 120000

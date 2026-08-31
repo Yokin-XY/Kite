@@ -307,10 +307,6 @@
           "--allow-scripts=@anthropic-ai/claude-code"
         ],
         "package": "@anthropic-ai/claude-code",
-        "registries": [
-          "https://registry.npmmirror.com",
-          "https://registry.npmjs.org"
-        ],
         "type": "npm"
       }
     },
@@ -334,10 +330,6 @@
                 "id": "install-codebuddy-package",
                 "packages": [
                   "@tencent-ai/codebuddy-code@latest"
-                ],
-                "registries": [
-                  "https://registry.npmmirror.com",
-                  "https://registry.npmjs.org"
                 ],
                 "type": "npm"
               }
@@ -530,10 +522,6 @@
       "schemaVersion": 1,
       "source": {
         "package": "@tencent-ai/codebuddy-code",
-        "registries": [
-          "https://registry.npmmirror.com",
-          "https://registry.npmjs.org"
-        ],
         "repository": "https://www.codebuddy.ai/docs/cli/quickstart",
         "type": "npm"
       }
@@ -754,7 +742,7 @@
             ],
             "steps": [
               {
-                "cmd": "export UV_TOOL_DIR=\"$install_root/uv-tools\"\nexport UV_TOOL_BIN_DIR=\"$install_root/bin\"\nexport UV_CACHE_DIR=\"$install_root/uv-cache\"\nmkdir -p \"$UV_TOOL_BIN_DIR\"\nuv tool install --force --python /workspace/.kf/bin/python3 'codex-relay==0.5.5'",
+                "cmd": "export UV_TOOL_DIR=\"$install_root/uv-tools\"\nexport UV_TOOL_BIN_DIR=\"$install_root/bin\"\nrelay_status=1\nfor pypi_route in $KITE_RESOURCE_PYPI_ROUTES; do\n  source_id=\"${pypi_route%%|*}\"\n  pypi_index=\"${pypi_route#*|}\"\n  attempt_root=\"$install_root/.kite-source-attempt/pypi/$source_id\"\n  attempt_cache=\"$install_root/.kite-source-cache/pypi/$source_id\"\n  attempt_log=\"$attempt_root/uv-tool-install.log\"\n  rm -rf \"$attempt_root\" \"$UV_TOOL_DIR\" \"$UV_TOOL_BIN_DIR\"\n  mkdir -p \"$attempt_root\" \"$attempt_cache\" \"$UV_TOOL_BIN_DIR\"\n  echo \"KITE_RESOURCE_ROUTE stage=acquire step=install-codex-relay source=$source_id index=$pypi_index\"\n  set +e\n  timeout 300 env UV_DEFAULT_INDEX=\"$pypi_index\" UV_CACHE_DIR=\"$attempt_cache\" uv tool install --force --python /workspace/.kf/bin/python3 'codex-relay==0.5.5' >\"$attempt_log\" 2>&1\n  relay_status=$?\n  set -e\n  cat \"$attempt_log\"\n  if [ \"$relay_status\" -eq 0 ]; then\n    rm -rf \"$install_root/.kite-source-attempt\"\n    echo \"KITE_RESOURCE_STEP acquire-complete install-codex-relay source=$source_id\"\n    break\n  fi\n  rm -rf \"$UV_TOOL_DIR\" \"$UV_TOOL_BIN_DIR\"\n  if ! kite_resource_is_source_failure \"$relay_status\" \"$attempt_log\"; then\n    echo \"KITE_RESOURCE_FAILURE stage=install step=install-codex-relay source=$source_id exit=$relay_status reason=non-network\"\n    exit \"$relay_status\"\n  fi\n  echo \"KITE_RESOURCE_RETRY stage=acquire step=install-codex-relay source=$source_id exit=$relay_status reason=source-unavailable\"\n  rm -rf \"$attempt_root\"\ndone\n[ \"$relay_status\" -eq 0 ] || { rm -rf \"$install_root/.kite-source-attempt\"; echo \"KITE_RESOURCE_FAILURE stage=acquire step=install-codex-relay exit=$relay_status\"; exit \"$relay_status\"; }",
                 "id": "install-codex-relay",
                 "type": "shell"
               },
@@ -1020,8 +1008,21 @@
                 "url": "https://downloads.cursor.com/lab/2026.08.11-e8db854/linux/arm64/agent-cli-package.tar.gz"
               },
               {
-                "cmd": "tar -xzf \"$install_root/.kite-downloads/cursor-arm64.tar.gz\" -C \"$install_root\"\nmkdir -p \"$install_root/bin\"\nchmod 755 \"$install_root/dist-package/cursor-agent\"\nln -sfn ../dist-package/cursor-agent \"$install_root/bin/cursor-agent\"",
+                "destination": "$install_root",
+                "format": "tar.gz",
                 "id": "extract-cursor-arm64",
+                "maxDepth": 48,
+                "maxEntries": 20000,
+                "maxExpansionRatio": 32,
+                "maxFileBytes": 268435456,
+                "maxOutputBytes": 536870912,
+                "path": "$install_root/.kite-downloads/cursor-arm64.tar.gz",
+                "specialEntryPolicy": "reject",
+                "type": "archive"
+              },
+              {
+                "cmd": "mkdir -p \"$install_root/bin\"\nchmod 755 \"$install_root/dist-package/cursor-agent\"\nln -sfn ../dist-package/cursor-agent \"$install_root/bin/cursor-agent\"",
+                "id": "link-cursor-arm64",
                 "type": "shell"
               }
             ],
@@ -1270,10 +1271,6 @@
                   "@deepseek-ai/dsh@0.1.1-rc.2",
                   "@openma/deepseek-harness-acp@0.4.26"
                 ],
-                "registries": [
-                  "https://registry.npmmirror.com",
-                  "https://registry.npmjs.org"
-                ],
                 "type": "npm"
               },
               {
@@ -1514,10 +1511,6 @@
           "@openma/deepseek-harness-acp"
         ],
         "package": "@deepseek-ai/dsh",
-        "registries": [
-          "https://registry.npmmirror.com",
-          "https://registry.npmjs.org"
-        ],
         "repository": "https://github.com/deepseek-ai/deepseek-harness",
         "tag": "0.1.1-rc.2",
         "type": "npm"
@@ -1543,8 +1536,21 @@
                 "url": "https://static.devin.ai/cli/3000.6.7/devin-3000.6.7-aarch64-unknown-linux.tar.gz"
               },
               {
-                "cmd": "tar -xzf \"$install_root/.kite-downloads/devin-arm64.tar.gz\" -C \"$install_root\"\nchmod 755 \"$install_root/bin/devin\"",
+                "destination": "$install_root",
+                "format": "tar.gz",
                 "id": "extract-devin-arm64",
+                "maxDepth": 48,
+                "maxEntries": 20000,
+                "maxExpansionRatio": 32,
+                "maxFileBytes": 268435456,
+                "maxOutputBytes": 536870912,
+                "path": "$install_root/.kite-downloads/devin-arm64.tar.gz",
+                "specialEntryPolicy": "reject",
+                "type": "archive"
+              },
+              {
+                "cmd": "chmod 755 \"$install_root/bin/devin\"",
+                "id": "prepare-devin-arm64",
                 "type": "shell"
               }
             ],
@@ -2079,10 +2085,6 @@
                 "packages": [
                   "@github/copilot@latest"
                 ],
-                "registries": [
-                  "https://registry.npmmirror.com",
-                  "https://registry.npmjs.org"
-                ],
                 "type": "npm"
               },
               {
@@ -2277,10 +2279,6 @@
           "--no-fund"
         ],
         "package": "@github/copilot",
-        "registries": [
-          "https://registry.npmmirror.com",
-          "https://registry.npmjs.org"
-        ],
         "repository": "https://github.com/github/copilot-cli",
         "type": "npm"
       }
@@ -2493,11 +2491,26 @@
             ],
             "steps": [
               {
-                "commit": "5fc308a70719a83cccdbba4c0e39c23f5a8239d5",
                 "depth": 1,
                 "destination": "$install_root/hermes-agent",
                 "id": "acquire-hermes-source",
-                "ref": "v2026.8.27",
+                "latestVersionWindow": [
+                  {
+                    "commit": "5fc308a70719a83cccdbba4c0e39c23f5a8239d5",
+                    "ref": "v2026.8.27",
+                    "version": "v2026.8.27"
+                  },
+                  {
+                    "commit": "fcbd1076a93841fa88855acce810e342a5b78101",
+                    "ref": "v2026.8.19",
+                    "version": "v2026.8.19"
+                  },
+                  {
+                    "commit": "e624e9fde561e1add9388384012b295fde669ade",
+                    "ref": "v2026.8.18",
+                    "version": "v2026.8.18"
+                  }
+                ],
                 "repositories": [
                   "https://github.com/NousResearch/hermes-agent.git",
                   "https://gitcode.com/GitHub_Trending/he/hermes-agent.git"
@@ -2507,7 +2520,7 @@
                 "type": "git"
               },
               {
-                "cmd": "mkdir -p \"$install_root/home\" \"$install_root/user-home\" \"/workspace/.kf/cache/resources/kite.hermes.core/uv\"\ncat > \"$install_root/kite-install-core-acp.sh\" <<'KITE_HERMES_INSTALL'\n#!/usr/bin/env bash\nset -e\n: \"${KITE_HERMES_INSTALL_ROOT:?KITE_HERMES_INSTALL_ROOT is required}\"\nrepo_dir=\"$KITE_HERMES_INSTALL_ROOT/hermes-agent\"\ncommand -v uv >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=uv-missing'; exit 127; }\nagent_python=\"\"\nfor candidate in /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11; do\n  if [ -x \"$candidate\" ]; then\n    agent_python=\"$candidate\"\n    break\n  fi\ndone\n[ -n \"$agent_python\" ] || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=compatible-system-python-missing'; exit 127; }\nagent_python_version=\"$(\"$agent_python\" -c 'import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")')\"\ncase \"$agent_python_version\" in\n  3.11|3.12|3.13) ;;\n  *) echo \"KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=unsupported-version version=$agent_python_version\"; exit 65 ;;\nesac\necho \"KITE_RESOURCE_STEP prepare hermes-python-$agent_python_version source=system\"\necho \"KITE_RESOURCE_STEP install hermes-core-acp python=$agent_python\"\necho 'KITE_RESOURCE_STEP acquire hermes-python-packages source=aliyun'\nif timeout 600 env UV_DEFAULT_INDEX=\"https://mirrors.aliyun.com/pypi/simple/\" UV_PROJECT_ENVIRONMENT=\"$repo_dir/venv\" UV_PYTHON=\"$agent_python\" uv sync --project \"$repo_dir\" --locked --no-default-groups --extra acp; then\n  echo 'KITE_RESOURCE_STEP acquire-complete hermes-python-packages source=aliyun'\nelse\n  mirror_status=$?\n  echo \"KITE_RESOURCE_RETRY stage=acquire step=hermes-python-packages source=aliyun exit=$mirror_status\"\n  rm -rf \"$repo_dir/venv\"\n  echo 'KITE_RESOURCE_STEP acquire hermes-python-packages source=pypi'\n  env UV_DEFAULT_INDEX=\"https://pypi.org/simple\" UV_PROJECT_ENVIRONMENT=\"$repo_dir/venv\" UV_PYTHON=\"$agent_python\" uv sync --project \"$repo_dir\" --locked --no-default-groups --extra acp\n  echo 'KITE_RESOURCE_STEP acquire-complete hermes-python-packages source=pypi'\nfi\n[ -x \"$repo_dir/venv/bin/hermes\" ] || { echo 'KITE_RESOURCE_FAILURE stage=install step=hermes-core-acp reason=entrypoint-missing'; exit 127; }\nprintf '%s\\n' 'core+acp' > \"$KITE_HERMES_INSTALL_ROOT/install-profile\"\necho 'KITE_RESOURCE_STEP install-complete hermes-core-acp'\nKITE_HERMES_INSTALL\nchmod +x \"$install_root/kite-install-core-acp.sh\"",
+                "cmd": "mkdir -p \"$install_root/home\" \"$install_root/user-home\" \"/workspace/.kf/cache/resources/kite.hermes.core/uv\"\ncat > \"$install_root/kite-install-core-acp.sh\" <<'KITE_HERMES_INSTALL'\n#!/usr/bin/env bash\nset -e\n: \"${KITE_HERMES_INSTALL_ROOT:?KITE_HERMES_INSTALL_ROOT is required}\"\nrepo_dir=\"$KITE_HERMES_INSTALL_ROOT/hermes-agent\"\ncommand -v uv >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=uv-missing'; exit 127; }\nagent_python=\"\"\nfor candidate in /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11; do\n  if [ -x \"$candidate\" ]; then\n    agent_python=\"$candidate\"\n    break\n  fi\ndone\n[ -n \"$agent_python\" ] || { echo 'KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=compatible-system-python-missing'; exit 127; }\nagent_python_version=\"$(\"$agent_python\" -c 'import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")')\"\ncase \"$agent_python_version\" in\n  3.11|3.12|3.13) ;;\n  *) echo \"KITE_RESOURCE_FAILURE stage=prepare step=hermes-python reason=unsupported-version version=$agent_python_version\"; exit 65 ;;\nesac\necho \"KITE_RESOURCE_STEP prepare hermes-python-$agent_python_version source=system\"\necho \"KITE_RESOURCE_STEP install hermes-core-acp python=$agent_python\"\ninstall_status=1\nfor pypi_route in $KITE_RESOURCE_PYPI_ROUTES; do\n  source_id=\"${pypi_route%%|*}\"\n  pypi_index=\"${pypi_route#*|}\"\n  attempt_root=\"$KITE_HERMES_INSTALL_ROOT/.kite-source-attempt/pypi/$source_id\"\n  attempt_cache=\"$KITE_HERMES_INSTALL_ROOT/.kite-source-cache/pypi/$source_id\"\n  attempt_log=\"$attempt_root/uv-sync.log\"\n  rm -rf \"$attempt_root\" \"$repo_dir/venv\"\n  mkdir -p \"$attempt_root\" \"$attempt_cache\"\n  echo \"KITE_RESOURCE_ROUTE stage=acquire step=hermes-python-packages source=$source_id index=$pypi_index\"\n  set +e\n  timeout 900 env UV_DEFAULT_INDEX=\"$pypi_index\" UV_CACHE_DIR=\"$attempt_cache\" UV_PROJECT_ENVIRONMENT=\"$repo_dir/venv\" UV_PYTHON=\"$agent_python\" uv sync --project \"$repo_dir\" --locked --no-default-groups --extra acp >\"$attempt_log\" 2>&1\n  install_status=$?\n  set -e\n  cat \"$attempt_log\"\n  if [ \"$install_status\" -eq 0 ]; then\n    rm -rf \"$KITE_HERMES_INSTALL_ROOT/.kite-source-attempt\"\n    echo \"KITE_RESOURCE_STEP acquire-complete hermes-python-packages source=$source_id\"\n    break\n  fi\n  rm -rf \"$repo_dir/venv\"\n  if ! kite_resource_is_source_failure \"$install_status\" \"$attempt_log\"; then\n    echo \"KITE_RESOURCE_FAILURE stage=install step=hermes-python-packages source=$source_id exit=$install_status reason=non-network\"\n    exit \"$install_status\"\n  fi\n  echo \"KITE_RESOURCE_RETRY stage=acquire step=hermes-python-packages source=$source_id exit=$install_status reason=source-unavailable\"\n  rm -rf \"$attempt_root\"\ndone\n[ \"$install_status\" -eq 0 ] || { rm -rf \"$KITE_HERMES_INSTALL_ROOT/.kite-source-attempt\"; echo \"KITE_RESOURCE_FAILURE stage=acquire step=hermes-python-packages exit=$install_status\"; exit \"$install_status\"; }\n[ -x \"$repo_dir/venv/bin/hermes\" ] || { echo 'KITE_RESOURCE_FAILURE stage=install step=hermes-core-acp reason=entrypoint-missing'; exit 127; }\nprintf '%s\\n' 'core+acp' > \"$KITE_HERMES_INSTALL_ROOT/install-profile\"\necho 'KITE_RESOURCE_STEP install-complete hermes-core-acp'\nKITE_HERMES_INSTALL\nchmod +x \"$install_root/kite-install-core-acp.sh\"",
                 "id": "write-hermes-core-acp-installer",
                 "type": "shell"
               },
@@ -2540,7 +2553,7 @@
                 "type": "shell"
               },
               {
-                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif [ ! -x \"$install_root/hermes-agent/venv/bin/hermes\" ]; then echo 'Hermes Agent entrypoint missing'; exit 127; fi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s\\n' 'v2026.8.27.4' > \"$install_root/.kite-version\"",
+                "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif [ ! -x \"$install_root/hermes-agent/venv/bin/hermes\" ]; then echo 'Hermes Agent entrypoint missing'; exit 127; fi\nsource_version=\"$(cat \"$install_root/.kite-source-selection/acquire-hermes-source.version\")\"\ntest -n \"$source_version\" || { echo 'Hermes source version missing'; exit 65; }\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s.5\\n' \"$source_version\" > \"$install_root/.kite-version\"",
                 "id": "write-hermes-launcher",
                 "type": "shell"
               }
@@ -2549,7 +2562,7 @@
             "type": "managed",
             "verify": [
               {
-                "cmd": "test \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\"",
+                "cmd": "test \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"$(cat \"$install_root/.kite-source-selection/acquire-hermes-source.commit\")\"",
                 "id": "hermes-source-commit"
               },
               {
@@ -2632,7 +2645,7 @@
                 "type": "shell"
               },
               {
-                "cmd": "test -x \"$install_root/hermes-agent/venv/bin/hermes\" || { echo 'Hermes Agent entrypoint missing'; exit 127; }\ntest \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\" || { echo 'Hermes source revision mismatch'; exit 65; }\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s\\n' 'v2026.8.27.4' > \"$install_root/.kite-version\"",
+                "cmd": "test -x \"$install_root/hermes-agent/venv/bin/hermes\" || { echo 'Hermes Agent entrypoint missing'; exit 127; }\ntest \"$(git -C \"$install_root/hermes-agent\" rev-parse HEAD)\" = \"5fc308a70719a83cccdbba4c0e39c23f5a8239d5\" || { echo 'Hermes source revision mismatch'; exit 65; }\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nif [ \"\\${1:-}\" = \"acp\" ]; then\n  export HERMES_DISABLE_LAZY_INSTALLS=1\nfi\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\"\nprintf '%s\\n' 'v2026.8.27.5' > \"$install_root/.kite-version\"",
                 "id": "update-hermes-launcher",
                 "type": "shell"
               }
@@ -2669,7 +2682,7 @@
                 "id": "hermes-acp-command"
               },
               {
-                "cmd": "test \"$(cat \"$install_root/.kite-version\")\" = \"v2026.8.27.4\"",
+                "cmd": "test \"$(cat \"$install_root/.kite-version\")\" = \"$(cat \"$install_root/.kite-source-selection/acquire-hermes-source.version\").5\"",
                 "id": "hermes-kite-version"
               }
             ],
@@ -2678,7 +2691,8 @@
               "/workspace/.kf/bin/hermes"
             ]
           }
-        ]
+        ],
+        "updateStrategy": "reinstall"
       },
       "agents": [
         {
@@ -2751,12 +2765,12 @@
           "value": "resources/kite.hermes.core/icon.png"
         },
         "name": "Hermes",
-        "version": "v2026.8.27.4"
+        "version": "v2026.8.27.5"
       },
       "display": {
         "accent": "teal",
         "category": "AI",
-        "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 固定官方版本和提交，只安装核心运行依赖与 ACP，不自动安装桌面、浏览器、TTS、ffmpeg 或其他可选能力；代码、venv 和数据目录都固定在这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。Nous Portal 官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Hermes 自己管理。",
+        "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 向用户排序的来源请求最新版本，并只放行签名资源清单近期版本窗口内且提交身份一致的候选；只安装核心运行依赖与 ACP，不自动安装桌面、浏览器、TTS、ffmpeg 或其他可选能力。代码、venv 和数据目录都固定在这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。Nous Portal 官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Hermes 自己管理。",
         "order": 40,
         "recommendations": [
           {
@@ -2812,7 +2826,7 @@
       "id": "kite.hermes.core",
       "management": {
         "latestVersionProbe": {
-          "command": "printf '%s\\n' 'v2026.8.27.4'",
+          "command": "printf '%s\\n' 'v2026.8.27.5'",
           "pattern": "(v?[0-9]+(?:\\.[0-9]+)+)"
         },
         "managedCommands": [
@@ -2929,17 +2943,17 @@
           "value": "resources/kite.kimi.code/icon.png"
         },
         "name": "Kimi Code",
-        "version": "official"
+        "version": "npm"
       },
       "display": {
         "accent": "blue",
         "category": "AI",
-        "longDescription": "Kimi Code 是 Moonshot AI 的开源 AI 编码 Agent，可以读写代码、运行命令、搜索文件和获取网页。Kite 使用官方 install script 获取 kimi 命令，并通过原生 ACP stdio 能力建立 Agent 会话；登录凭据和 Provider 配置仍由 Kimi Code 自己保存，不写入资源卡 JSON。",
+        "longDescription": "Kimi Code 是 Moonshot AI 的开源 AI 编码 Agent，可以读写代码、运行命令、搜索文件和获取网页。Kite 使用官方 npm 包获取 kimi 命令，并通过原生 ACP stdio 能力建立 Agent 会话；登录凭据和 Provider 配置仍由 Kimi Code 自己保存，不写入资源卡 JSON。",
         "order": 80,
         "recommendations": [
           {
-            "label": "下载工具",
-            "resourceId": "kite.curl"
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
           },
           {
             "label": "源码工具",
@@ -3018,8 +3032,8 @@
       },
       "relations": {
         "base": [
-          "kite.git",
-          "kite.curl"
+          "kite.nodejs",
+          "kite.git"
         ],
         "defaults": [],
         "extensions": [],
@@ -3030,20 +3044,10 @@
       },
       "schemaVersion": 1,
       "source": {
-        "environment": {
-          "KIMI_INSTALL_DIR": "$install_root",
-          "KIMI_NO_MODIFY_PATH": "1"
-        },
-        "latestFormat": "text",
-        "latestUrl": "https://code.kimi.com/kimi-code/latest",
-        "maxBytes": 16777216,
+        "package": "@moonshot-ai/kimi-code",
         "repository": "https://github.com/MoonshotAI/kimi-code",
-        "type": "official_script",
-        "url": "https://code.kimi.com/kimi-code/install.sh",
-        "versionArguments": [
-          "--version",
-          "{version}"
-        ]
+        "tag": "latest",
+        "type": "npm"
       }
     },
     "kite.mimo.code": {
@@ -3676,17 +3680,17 @@
           "value": "resources/kite.opencode/icon.png"
         },
         "name": "OpenCode",
-        "version": "official"
+        "version": "npm"
       },
       "display": {
         "accent": "blue",
         "category": "AI",
-        "longDescription": "OpenCode 是开源的终端 AI 编码 Agent，可以连接 Claude、GPT、Gemini 等模型。Kite 通过官方发布包安装 opencode 命令，并使用 OpenCode 的 ACP stdio 能力建立原生 Agent 会话。",
+        "longDescription": "OpenCode 是开源的终端 AI 编码 Agent，可以连接 Claude、GPT、Gemini 等模型。Kite 通过官方 npm 包安装 opencode 命令，并使用 OpenCode 的 ACP stdio 能力建立原生 Agent 会话。",
         "order": 10,
         "recommendations": [
           {
-            "label": "下载工具",
-            "resourceId": "kite.curl"
+            "label": "运行时",
+            "resourceId": "kite.nodejs"
           },
           {
             "label": "同类 Agent",
@@ -3764,8 +3768,8 @@
       },
       "relations": {
         "base": [
-          "kite.git",
-          "kite.curl"
+          "kite.nodejs",
+          "kite.git"
         ],
         "defaults": [],
         "extensions": [],
@@ -3776,17 +3780,10 @@
       },
       "schemaVersion": 1,
       "source": {
-        "architectures": {
-          "aarch64|arm64": "linux-arm64",
-          "x86_64|amd64": "linux-x64"
-        },
-        "archiveType": "tar.gz",
-        "assetPattern": "opencode-{target}.tar.gz",
-        "binaryPath": "opencode",
-        "maxBytes": 536870912,
-        "releaseTagTemplate": "v{version}",
+        "package": "opencode-ai",
         "repository": "https://github.com/anomalyco/opencode",
-        "type": "github_release"
+        "tag": "latest",
+        "type": "npm"
       }
     },
     "kite.pi.coding.agent": {
@@ -4097,10 +4094,6 @@
                 "packages": [
                   "@qoder-ai/qodercli@latest"
                 ],
-                "registries": [
-                  "https://registry.npmmirror.com",
-                  "https://registry.npmjs.org"
-                ],
                 "type": "npm"
               }
             ],
@@ -4303,10 +4296,6 @@
       "schemaVersion": 1,
       "source": {
         "package": "@qoder-ai/qodercli",
-        "registries": [
-          "https://registry.npmmirror.com",
-          "https://registry.npmjs.org"
-        ],
         "repository": "https://qoder.com",
         "type": "npm"
       }
@@ -4662,6 +4651,134 @@
         "package": "reasonix",
         "repository": "https://github.com/esengine/deepseek-reasonix",
         "type": "npm"
+      }
+    },
+    "kite.shizuku": {
+      "actions": {
+        "install": [
+          {
+            "cleanInstallRoot": true,
+            "handoff": {
+              "packageName": "moe.shizuku.privileged.api",
+              "path": "/workspace/.kf/software/kite.shizuku/shizuku.apk",
+              "type": "android_apk",
+              "waitTimeoutMs": 300000
+            },
+            "steps": [
+              {
+                "destination": "$install_root/shizuku.apk",
+                "id": "download-shizuku-apk",
+                "maxBytes": 5242880,
+                "retryAttempts": 4,
+                "retryDelaySeconds": 2,
+                "sha256": "6e273ab0e991c4e79bc8b1bbb9b9dd739ccac1a8712a541a214078886b7b790f",
+                "type": "download",
+                "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "writeScopes": [
+              "android-package:moe.shizuku.privileged.api"
+            ]
+          }
+        ],
+        "update": [
+          {
+            "cleanInstallRoot": true,
+            "handoff": {
+              "packageName": "moe.shizuku.privileged.api",
+              "path": "/workspace/.kf/software/kite.shizuku/shizuku.apk",
+              "type": "android_apk",
+              "waitTimeoutMs": 300000
+            },
+            "steps": [
+              {
+                "destination": "$install_root/shizuku.apk",
+                "id": "download-shizuku-apk",
+                "maxBytes": 5242880,
+                "retryAttempts": 4,
+                "retryDelaySeconds": 2,
+                "sha256": "6e273ab0e991c4e79bc8b1bbb9b9dd739ccac1a8712a541a214078886b7b790f",
+                "type": "download",
+                "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk"
+              }
+            ],
+            "timeoutMs": 600000,
+            "type": "managed",
+            "writeScopes": [
+              "android-package:moe.shizuku.privileged.api"
+            ]
+          }
+        ]
+      },
+      "base": {
+        "description": "把 Android 系统能力安全桥接给 Kite",
+        "icon": {
+          "fallbackText": "Sh",
+          "fit": "contain",
+          "type": "asset",
+          "value": "resources/kite.shizuku/icon.png"
+        },
+        "name": "Shizuku",
+        "version": "13.6.0.r1086"
+      },
+      "display": {
+        "accent": "green",
+        "category": "系统工具",
+        "longDescription": "Shizuku 是 Kite 设备能力桥的 Android 权限后端。Kite 会从官方发布页下载并校验 APK，再交给系统安装器由用户确认；应用安装、Shizuku 服务运行和 Kite 授权是三个独立事实，不会互相冒充成功。服务就绪后，Ubuntu 中的 Agent 可通过 kite-device 使用经过统一策略约束的设备能力。",
+        "order": 10,
+        "requirementRows": [
+          {
+            "label": "应用安装",
+            "value": "由 Android 系统安装器确认"
+          },
+          {
+            "label": "服务运行",
+            "value": "在 Shizuku 中启动"
+          },
+          {
+            "label": "Kite 授权",
+            "value": "在 Shizuku 中单独允许"
+          }
+        ],
+        "sections": [
+          "more"
+        ],
+        "sizeLabel": "约 2.5 MB",
+        "tags": [
+          "shizuku",
+          "android",
+          "device-bridge",
+          "adb",
+          "agent"
+        ]
+      },
+      "id": "kite.shizuku",
+      "management": {
+        "managedCommands": [],
+        "mode": "managed_extension"
+      },
+      "paths": {
+        "cacheRoot": "/workspace/.kf/cache/resources/kite.shizuku",
+        "installRoot": "/workspace/.kf/software/kite.shizuku"
+      },
+      "relations": {
+        "base": [],
+        "defaults": [],
+        "extensions": [],
+        "provides": [
+          "android.device.bridge.shizuku"
+        ]
+      },
+      "schemaVersion": 1,
+      "source": {
+        "maxBytes": 5242880,
+        "package": "moe.shizuku.privileged.api",
+        "repository": "https://github.com/RikkaApps/Shizuku",
+        "tag": "v13.6.0",
+        "type": "android_apk",
+        "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk"
       }
     },
     "kite.tool.env": {
@@ -5236,7 +5353,7 @@
                 "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.10.1/linux-arm64/ZCode-3.10.1-linux-arm64.deb"
               },
               {
-                "cmd": "set -eu\narchive=\"$install_root/.kite-downloads/ZCode-3.10.1-linux-arm64.deb\"\nextract_root=\"$install_root/.kite-zcode-extract\"\nruntime_root=\"$install_root/runtime\"\ncommand -v dpkg-deb >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=install step=extract-zcode-native-runtime reason=dpkg-deb-missing'; exit 127; }\nrm -rf \"$extract_root\"\nmkdir -p \"$extract_root\" \"$runtime_root\" \"$install_root/bin\" \"$install_root/user-home\"\ndpkg-deb --fsys-tarfile \"$archive\" | tar -xf - -C \"$extract_root\" ./opt/ZCode/resources/glm/zcode.cjs ./opt/ZCode/resources/glm/.node-bundle-meta.json\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/zcode.cjs\" \"$runtime_root/zcode.cjs\"\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/.node-bundle-meta.json\" \"$runtime_root/.node-bundle-meta.json\"\ncat > \"$install_root/bin/zcode\" <<EOF\n#!/usr/bin/env bash\nset -eu\nexport ZCODE_HOME=\"$install_root/user-home\"\nexport ZCODE_DATA_BASE_DIR=\"$install_root/user-home\"\nexec node \"$install_root/runtime/zcode.cjs\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/zcode\"\nprintf '%s\\n' '3.10.1' > \"$install_root/.kite-version\"\nrm -rf \"$extract_root\"\nrm -f \"$archive\"",
+                "cmd": "set -eu\narchive=\"$install_root/.kite-downloads/ZCode-3.10.1-linux-arm64.deb\"\nextract_root=\"$install_root/.kite-zcode-extract\"\nruntime_root=\"$install_root/runtime\"\ncommand -v dpkg-deb >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=install step=extract-zcode-native-runtime reason=dpkg-deb-missing'; exit 127; }\nrm -rf \"$extract_root\"\nmkdir -p \"$extract_root\" \"$runtime_root\" \"$install_root/bin\" \"$install_root/user-home/.zcode/cli\" \"$install_root/user-home/.zcode/v2\"\ndpkg-deb --fsys-tarfile \"$archive\" | tar -xf - -C \"$extract_root\" ./opt/ZCode/resources/glm/zcode.cjs ./opt/ZCode/resources/glm/.node-bundle-meta.json\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/zcode.cjs\" \"$runtime_root/zcode.cjs\"\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/.node-bundle-meta.json\" \"$runtime_root/.node-bundle-meta.json\"\ncat > \"$install_root/bin/zcode\" <<EOF\n#!/usr/bin/env bash\nset -eu\nmanaged_home=\"$install_root/user-home\"\nlegacy_home=\"\\${HOME:-/root}\"\nmkdir -p \"\\$managed_home/.zcode/cli\" \"\\$managed_home/.zcode/v2\"\nif [ ! -e \"\\$managed_home/.zcode/cli/config.json\" ] && [ \"\\$legacy_home\" != \"\\$managed_home\" ] && [ -f \"\\$legacy_home/.zcode/cli/config.json\" ]; then\n  cp \"\\$legacy_home/.zcode/cli/config.json\" \"\\$managed_home/.zcode/cli/config.json\"\nfi\nexport HOME=\"\\$managed_home\"\nexport ZCODE_HOME=\"\\$managed_home/.zcode\"\nexport ZCODE_DATA_BASE_DIR=\"\\$managed_home\"\nexec node \"$install_root/runtime/zcode.cjs\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/zcode\"\nprintf '%s\\n' '3.10.1' > \"$install_root/.kite-version\"\nrm -rf \"$extract_root\"\nrm -f \"$archive\"",
                 "id": "extract-zcode-native-runtime",
                 "type": "shell"
               }
@@ -5316,12 +5433,17 @@
               },
               "modelGroupIds": [
                 "zai",
-                "bigmodel"
+                "bigmodel",
+                "builtin:zai-coding-plan",
+                "builtin:zai-start-plan",
+                "builtin:bigmodel-coding-plan",
+                "builtin:bigmodel-start-plan"
               ],
               "name": "Z.AI 官方账号"
             }
           ],
           "configuration": {
+            "adapter": "zcode",
             "required": false
           },
           "description": "ZCode 官方原生 app-server 会话",
@@ -5459,6 +5581,6 @@
       }
     }
   },
-  "revision": 14,
+  "revision": 15,
   "schemaVersion": 1
 }

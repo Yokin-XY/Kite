@@ -545,6 +545,16 @@ class KiteResourceManifestProtocolTest {
         )
         assertEquals(listOf("home"), hermes.management.preservePaths)
         assertEquals(listOf("kite.git", "kite.uv"), hermes.baseRequirements)
+        val sourceAcquire = hermes.installActions.single().installSteps.single {
+            it.id == "acquire-hermes-source"
+        }
+        assertTrue(sourceAcquire.ref.isBlank())
+        assertTrue(sourceAcquire.commit.isBlank())
+        assertEquals(
+            listOf("v2026.8.27", "v2026.8.19", "v2026.8.18"),
+            sourceAcquire.latestVersionWindow.map { it.version },
+        )
+        assertEquals(3, sourceAcquire.latestVersionWindow.map { it.commit }.distinct().size)
         val minimalInstall = hermes.installActions.single().installSteps.single {
             it.id == "install-hermes-core-acp"
         }
@@ -596,10 +606,15 @@ class KiteResourceManifestProtocolTest {
                 it.id == "hermes-acp-bare-provider-selection"
             }
         )
-        assertEquals("v2026.8.27.4", hermes.version)
+        assertEquals("v2026.8.27.5", hermes.version)
         assertEquals(1, hermes.updateActions.size)
+        assertEquals("reinstall", hermes.updateStrategy)
         assertTrue(hermes.management.versionProbe?.command.orEmpty().contains(".kite-version"))
-        assertTrue(hermes.management.latestVersionProbe?.command.orEmpty().contains("v2026.8.27.4"))
+        assertTrue(hermes.management.latestVersionProbe?.command.orEmpty().contains("v2026.8.27.5"))
+        assertEquals(
+            hermes.installActions,
+            KiteResourceSourcePlanFactory.plan(hermes, targetVersion = hermes.version).installActions,
+        )
         val lightweightUpdate = hermes.updateActions.single()
         assertFalse(lightweightUpdate.cleanInstallRoot)
         assertTrue(
