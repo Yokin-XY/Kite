@@ -170,6 +170,13 @@ object KiteResourceSourcePolicy {
                             preferences = normalized,
                         ),
                     )
+                    KiteResourceInstallPlanCompiler.STEP_PYPI -> step.copy(
+                        registries = mergeRoutes(
+                            configured = step.registries,
+                            catalog = pypiRoutes(normalized).map(KiteResourceSourceRoute::endpoint),
+                            preferences = normalized,
+                        ),
+                    )
                     else -> step
                 }
             },

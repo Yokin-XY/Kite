@@ -212,6 +212,47 @@ class KiteResourceInstallPlanCompilerTest {
     }
 
     @Test
+    fun pypiSourcesRequestLatestThenRequireSignedVersionAndWheelDigest() {
+        val action = managedAction(
+            steps = listOf(
+                KiteResourceInstallStep(
+                    id = "pypi-tool",
+                    type = KiteResourceInstallPlanCompiler.STEP_PYPI,
+                    packages = listOf("example-tool"),
+                    registries = listOf(
+                        "https://repo.huaweicloud.com/repository/pypi/simple",
+                        "https://pypi.org/simple",
+                    ),
+                    latestVersionWindow = listOf(
+                        KiteResourceSourceVersion(
+                            artifact = "example-tool",
+                            version = "3.0.0",
+                            sha256 = "a".repeat(64),
+                        ),
+                        KiteResourceSourceVersion(
+                            artifact = "example-tool",
+                            version = "2.9.0",
+                            sha256 = "b".repeat(64),
+                        ),
+                    ),
+                )
+            )
+        )
+
+        val script = KiteResourceInstallPlanCompiler.compile(action)
+
+        assertTrue(script.contains("request=latest"))
+        assertTrue(script.contains("/example-tool/"))
+        assertTrue(script.contains("latest-version-outside-window"))
+        assertTrue(script.contains("latest-artifact-hash-mismatch"))
+        assertTrue(script.contains("artifact-sha256-mismatch"))
+        assertTrue(script.contains("uv tool install --force --python /workspace/.kf/bin/python3"))
+        assertTrue(script.contains(".kite-source-selection"))
+        assertTrue(script.contains("\nKITE_PYPI_INDEX\n"))
+        assertTrue(script.indexOf("repo.huaweicloud.com") < script.indexOf("pypi.org"))
+    }
+
+    @Test
     fun npmRegistryRejectsInsecureOrCredentialBearingUrls() {
         listOf(
             "http://registry.example.test",

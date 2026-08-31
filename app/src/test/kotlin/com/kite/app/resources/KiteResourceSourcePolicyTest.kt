@@ -23,6 +23,11 @@ class KiteResourceSourcePolicyTest {
                 destination = "\$install_root/tool",
                 commit = "5fc308a70719a83cccdbba4c0e39c23f5a8239d5",
             ),
+            KiteResourceInstallStep(
+                id = "pypi",
+                type = KiteResourceInstallPlanCompiler.STEP_PYPI,
+                packages = listOf("example-tool"),
+            ),
         )
 
         val domestic = KiteResourceSourcePolicy.apply(
@@ -42,6 +47,11 @@ class KiteResourceSourcePolicyTest {
         assertEquals("https://registry.npmjs.org", official.installSteps[0].registries.first())
         assertEquals("https://gitcode.com/example/tool.git", domestic.installSteps[1].repositories.first())
         assertEquals("https://github.com/example/tool.git", official.installSteps[1].repositories.first())
+        assertEquals(
+            "https://repo.huaweicloud.com/repository/pypi/simple",
+            domestic.installSteps[2].registries.first(),
+        )
+        assertEquals("https://pypi.org/simple", official.installSteps[2].registries.first())
     }
 
     @Test

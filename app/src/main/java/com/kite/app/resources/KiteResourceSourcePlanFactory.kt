@@ -115,13 +115,18 @@ object KiteResourceSourcePlanFactory {
         actions: List<KiteResourceShellAction>,
     ): List<KiteResourceShellAction> {
         val window = manifest.source.latestVersionWindow
-        if (manifest.source.type != SOURCE_NPM || window.isEmpty()) return actions
+        if (manifest.source.type !in setOf(SOURCE_NPM, SOURCE_PYPI) || window.isEmpty()) return actions
         return actions.map { action ->
             if (action.type != KiteResourceInstallPlanCompiler.ACTION_MANAGED) return@map action
             action.copy(
                 installSteps = action.installSteps.map { step ->
+                    val matchingStepType = when (manifest.source.type) {
+                        SOURCE_NPM -> KiteResourceInstallPlanCompiler.STEP_NPM
+                        SOURCE_PYPI -> KiteResourceInstallPlanCompiler.STEP_PYPI
+                        else -> ""
+                    }
                     if (
-                        step.type == KiteResourceInstallPlanCompiler.STEP_NPM &&
+                        step.type == matchingStepType &&
                         step.latestVersionWindow.isEmpty()
                     ) {
                         step.copy(latestVersionWindow = window)
@@ -614,6 +619,7 @@ object KiteResourceSourcePlanFactory {
         "'" + value.replace("'", "'\"'\"'") + "'"
 
     private const val SOURCE_NPM = "npm"
+    private const val SOURCE_PYPI = "pypi"
     private const val SOURCE_GITHUB_RELEASE = "github_release"
     private const val SOURCE_OFFICIAL_SCRIPT = "official_script"
     private const val SOURCE_BUNDLED = "bundled"

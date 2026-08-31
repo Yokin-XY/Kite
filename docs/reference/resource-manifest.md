@@ -167,6 +167,8 @@ NPM 资源把同类窗口写在 `source.latestVersionWindow`。单包可以省�
 
 存在窗口时，`packages` 只能声明裸包名或 `@latest`，不能固定某个版本。运行时对用户排序后的每个注册源查询 `latest` 与 `dist.integrity`，全部包命中窗口后才按查询到的精确版本安装；选中身份写入 `.kite-source-selection/<step>.<package>.version|integrity`，主包同时写入无包名后缀的版本与摘要文件。
 
+PyPI 资源使用同一来源级窗口，但摘要字段为目标 ARM64 Linux wheel 的 `sha256`。安装步骤声明 `type: "pypi"` 和一个裸包名；运行时先读取当前索引的 Simple API，确认该索引公开的最新版本命中窗口，并同时校验索引片段摘要和下载后文件摘要，再把 wheel 交给 `uv tool install`。找不到当前版本的 ARM64/通用 wheel、版本越窗或摘要不一致时只淘汰当前索引，不能退回窗口中的旧版本。
+
 ## 成功边界
 
 只有以下条件都满足，资源才能登记为已安装：

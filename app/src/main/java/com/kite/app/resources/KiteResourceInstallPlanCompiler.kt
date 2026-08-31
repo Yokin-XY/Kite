@@ -8,6 +8,7 @@ object KiteResourceInstallPlanCompiler {
     const val STEP_ARCHIVE = "archive"
     const val STEP_GIT = "git"
     const val STEP_NPM = "npm"
+    const val STEP_PYPI = "pypi"
     const val STEP_SCRIPT = "script"
     const val STEP_SHELL = "shell"
 
@@ -23,7 +24,7 @@ object KiteResourceInstallPlanCompiler {
         return buildString {
             appendLine("set -e")
             appendLine(sourceRoutingHelper(sourcePreferences))
-            if (routedAction.installSteps.any { it.type in setOf(STEP_APT, STEP_GIT, STEP_NPM, STEP_SCRIPT) }) {
+            if (routedAction.installSteps.any { it.type in setOf(STEP_APT, STEP_GIT, STEP_NPM, STEP_PYPI, STEP_SCRIPT) }) {
                 appendLine(stepRunnerHelper())
             }
             if (routedAction.installSteps.any { it.type == STEP_DOWNLOAD }) {
@@ -81,7 +82,7 @@ object KiteResourceInstallPlanCompiler {
             STEP_DOWNLOAD -> step.urls.firstOrNull().orEmpty()
             STEP_ARCHIVE -> listOf(step.archiveFormat, step.path, step.destination).joinToString(" ")
             STEP_GIT -> step.repository
-            STEP_NPM, STEP_APT -> step.packages.joinToString(" ")
+            STEP_NPM, STEP_PYPI, STEP_APT -> step.packages.joinToString(" ")
             STEP_SCRIPT -> listOf(step.interpreter, step.path).filter { it.isNotBlank() }.joinToString(" ")
             else -> step.cmd.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty()
         }.take(160)
@@ -95,6 +96,7 @@ object KiteResourceInstallPlanCompiler {
         STEP_ARCHIVE -> error("Archive step ${step.id} must be compiled by the Android native archive planner")
         STEP_SCRIPT -> compileScript(step)
         STEP_NPM -> compileNpm(step, npmAttemptVerifications)
+        STEP_PYPI -> compilePypi(step)
         STEP_APT -> compileApt(step)
         STEP_GIT -> compileGit(step)
         STEP_SHELL, STEP_BUNDLED -> compileInlineShell(step)
@@ -495,6 +497,190 @@ object KiteResourceInstallPlanCompiler {
         }.trim()
     }
 
+    private fun compilePypi(step: KiteResourceInstallStep): String {
+        require(step.packages.size == 1) { "pypi step ${step.id} requires exactly one package" }
+        val packageName = step.packages.single().trim()
+        require(SAFE_PYPI_PACKAGE.matches(packageName)) { "pypi step ${step.id} has an invalid package" }
+        require(step.registries.isNotEmpty()) { "pypi step ${step.id} requires at least one index" }
+        step.registries.forEach { index ->
+            require(isSecureRegistryUrl(index)) { "pypi step ${step.id} has an invalid HTTPS index" }
+        }
+        val window = step.latestVersionWindow.map { candidate ->
+            candidate.copy(artifact = candidate.artifact.ifBlank { packageName })
+        }
+        require(window.size in 1..MAX_LATEST_VERSION_WINDOW) {
+            "pypi step ${step.id} latest version window must contain 1 to $MAX_LATEST_VERSION_WINDOW entries"
+        }
+        require(window.all { it.artifact == packageName }) {
+            "pypi step ${step.id} latest version window contains an unknown package"
+        }
+        require(window.map { it.version }.distinct().size == window.size) {
+            "pypi step ${step.id} latest version window contains duplicate versions"
+        }
+        window.forEach { candidate ->
+            require(isSafeNpmVersion(candidate.version) && SHA256.matches(candidate.sha256)) {
+                "pypi step ${step.id} latest version window contains an invalid version or SHA-256"
+            }
+        }
+        val routes = step.registries.distinct().joinToString(" ") { index ->
+            shellLiteral("${KiteResourceSourceCatalog.sourceIdFor(index)}|$index")
+        }
+        val versionWindow = window.joinToString(" ") { candidate ->
+            shellLiteral("${candidate.version}|${candidate.sha256}")
+        }
+        val normalizedName = packageName.lowercase().replace(Regex("[-_.]+"), "-")
+        val uvArguments = step.arguments.joinToString(" ") { shellLiteral(it) }
+        return """
+            command -v curl >/dev/null 2>&1 || { echo "KITE_RESOURCE_FAILURE stage=prepare step=${safeId(step.id)} reason=curl-missing"; exit 127; }
+            command -v python3 >/dev/null 2>&1 || { echo "KITE_RESOURCE_FAILURE stage=prepare step=${safeId(step.id)} reason=python-missing"; exit 127; }
+            command -v uv >/dev/null 2>&1 || { echo "KITE_RESOURCE_FAILURE stage=prepare step=${safeId(step.id)} reason=uv-missing"; exit 127; }
+            export UV_TOOL_DIR="${'$'}install_root/uv-tools"
+            export UV_TOOL_BIN_DIR="${'$'}install_root/bin"
+            pypi_last_status=1
+            version_window=($versionWindow)
+            for pypi_route in $routes; do
+              source_id="${'$'}{pypi_route%%|*}"
+              pypi_index="${'$'}{pypi_route#*|}"
+              project_url="${'$'}{pypi_index%/}/${normalizedName}/"
+              attempt_root="${'$'}install_root/.kite-source-attempt/pypi/${'$'}source_id"
+              attempt_cache="${'$'}install_root/.kite-source-cache/pypi/${'$'}source_id"
+              attempt_log="${'$'}attempt_root/uv-tool-install.log"
+              index_file="${'$'}attempt_root/simple-index.html"
+              candidates_file="${'$'}attempt_root/candidates.txt"
+              wheel_file="${'$'}attempt_root/candidate.whl"
+              rm -rf "${'$'}attempt_root" "${'$'}UV_TOOL_DIR" "${'$'}UV_TOOL_BIN_DIR"
+              mkdir -p "${'$'}attempt_root" "${'$'}attempt_cache" "${'$'}UV_TOOL_BIN_DIR"
+              : > "${'$'}attempt_log"
+              echo "KITE_RESOURCE_ROUTE stage=acquire step=${safeId(step.id)} source=${'$'}source_id index=${'$'}pypi_index request=latest"
+              set +e
+              curl -fL --compressed --connect-timeout 30 --speed-time 60 --speed-limit 1 -o "${'$'}index_file" "${'$'}project_url" 2>>"${'$'}attempt_log"
+              pypi_last_status=${'$'}?
+              set -e
+              if [ "${'$'}pypi_last_status" -ne 0 ]; then
+                cat "${'$'}attempt_log"
+                echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}pypi_last_status reason=source-unavailable"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              set +e
+              python3 - "${'$'}project_url" ${shellLiteral(packageName)} "${'$'}index_file" >"${'$'}candidates_file" 2>>"${'$'}attempt_log" <<'KITE_PYPI_INDEX'
+            import html.parser
+            import sys
+            import urllib.parse
+
+            project_url, package_name, index_path = sys.argv[1:]
+            normalized = package_name.lower().replace('-', '_').replace('.', '_') + '-'
+
+            class Links(html.parser.HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.hrefs = []
+                def handle_starttag(self, tag, attrs):
+                    if tag.lower() == 'a':
+                        href = dict(attrs).get('href')
+                        if href:
+                            self.hrefs.append(href)
+
+            parser = Links()
+            parser.feed(open(index_path, encoding='utf-8', errors='replace').read())
+            for href in parser.hrefs:
+                absolute = urllib.parse.urljoin(project_url, href)
+                parsed = urllib.parse.urlparse(absolute)
+                filename = urllib.parse.unquote(parsed.path.rsplit('/', 1)[-1])
+                lowered = filename.lower()
+                if parsed.scheme != 'https' or '|' in absolute:
+                    continue
+                if not lowered.startswith(normalized):
+                    continue
+                if not (lowered.endswith('.whl') or lowered.endswith('.tar.gz') or lowered.endswith('.zip')):
+                    continue
+                version = filename[len(normalized):].split('-', 1)[0]
+                sha256 = urllib.parse.parse_qs(parsed.fragment).get('sha256', [''])[0].lower()
+                if version and len(sha256) == 64:
+                    compatible = int(
+                        lowered.endswith('.whl') and (
+                            ('aarch64' in lowered and 'manylinux' in lowered) or
+                            lowered.endswith('-none-any.whl')
+                        )
+                    )
+                    print(f'{version}|{sha256}|{absolute}|{compatible}')
+            KITE_PYPI_INDEX
+              metadata_status=${'$'}?
+              set -e
+              if [ "${'$'}metadata_status" -ne 0 ] || [ ! -s "${'$'}candidates_file" ]; then
+                cat "${'$'}attempt_log"
+                pypi_last_status=69
+                echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=69 reason=source-incomplete"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              latest_version="${'$'}(cut -d '|' -f 1 "${'$'}candidates_file" | LC_ALL=C sort -V | tail -n 1)"
+              expected_sha256=
+              for window_entry in "${'$'}{version_window[@]}"; do
+                window_version="${'$'}{window_entry%%|*}"
+                window_sha256="${'$'}{window_entry#*|}"
+                if [ "${'$'}latest_version" = "${'$'}window_version" ]; then
+                  expected_sha256="${'$'}window_sha256"
+                  break
+                fi
+              done
+              if [ -z "${'$'}expected_sha256" ]; then
+                pypi_last_status=69
+                echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id reason=latest-version-outside-window version=${'$'}latest_version"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              latest_record="${'$'}(awk -F '|' -v version="${'$'}latest_version" -v sha="${'$'}expected_sha256" '${'$'}1 == version && ${'$'}2 == sha && ${'$'}4 == 1 { print; exit }' "${'$'}candidates_file")"
+              if [ -z "${'$'}latest_record" ]; then
+                pypi_last_status=69
+                echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id reason=latest-artifact-hash-mismatch version=${'$'}latest_version"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              artifact_url="${'$'}(printf '%s\n' "${'$'}latest_record" | cut -d '|' -f 3)"
+              set +e
+              curl -fL --compressed --connect-timeout 30 --speed-time 60 --speed-limit 1 -o "${'$'}wheel_file" "${'$'}artifact_url" 2>>"${'$'}attempt_log"
+              pypi_last_status=${'$'}?
+              set -e
+              if [ "${'$'}pypi_last_status" -ne 0 ]; then
+                cat "${'$'}attempt_log"
+                echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}pypi_last_status reason=source-unavailable"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              actual_sha256="${'$'}(sha256sum "${'$'}wheel_file" | cut -d ' ' -f 1)"
+              if [ "${'$'}actual_sha256" != "${'$'}expected_sha256" ]; then
+                pypi_last_status=69
+                echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id reason=artifact-sha256-mismatch version=${'$'}latest_version"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              set +e
+              timeout 300 env UV_DEFAULT_INDEX="${'$'}pypi_index" UV_CACHE_DIR="${'$'}attempt_cache" uv tool install --force --python /workspace/.kf/bin/python3 $uvArguments "${'$'}wheel_file" >>"${'$'}attempt_log" 2>&1
+              pypi_last_status=${'$'}?
+              set -e
+              cat "${'$'}attempt_log"
+              if [ "${'$'}pypi_last_status" -eq 0 ]; then
+                selection_root="${'$'}install_root/.kite-source-selection"
+                mkdir -p "${'$'}selection_root"
+                printf '%s\n' "${'$'}latest_version" > "${'$'}selection_root/${safeId(step.id)}.version"
+                printf '%s\n' "${'$'}expected_sha256" > "${'$'}selection_root/${safeId(step.id)}.sha256"
+                rm -rf "${'$'}install_root/.kite-source-attempt"
+                echo "KITE_RESOURCE_STEP acquire-complete ${safeId(step.id)} source=${'$'}source_id version=${'$'}latest_version"
+                break
+              fi
+              rm -rf "${'$'}UV_TOOL_DIR" "${'$'}UV_TOOL_BIN_DIR"
+              if ! kite_resource_is_source_failure "${'$'}pypi_last_status" "${'$'}attempt_log"; then
+                echo "KITE_RESOURCE_FAILURE stage=install step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}pypi_last_status reason=non-network"
+                exit "${'$'}pypi_last_status"
+              fi
+              echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}pypi_last_status reason=source-unavailable"
+              rm -rf "${'$'}attempt_root"
+            done
+            [ "${'$'}pypi_last_status" -eq 0 ] || { rm -rf "${'$'}install_root/.kite-source-attempt"; echo "KITE_RESOURCE_FAILURE stage=acquire step=${safeId(step.id)} exit=${'$'}pypi_last_status reason=no-verified-latest-source"; exit "${'$'}pypi_last_status"; }
+        """.trimIndent()
+    }
+
     private fun isSecureRegistryUrl(value: String): Boolean = runCatching {
         val uri = java.net.URI(value.trim())
         uri.scheme.equals("https", ignoreCase = true) &&
@@ -870,6 +1056,7 @@ object KiteResourceInstallPlanCompiler {
 
     private val SAFE_ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
     private val SAFE_NPM_PACKAGE = Regex("(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*")
+    private val SAFE_PYPI_PACKAGE = Regex("[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
     private val NPM_INTEGRITY = Regex("sha(?:1|256|384|512)-[A-Za-z0-9+/]+={0,2}")
     private val GIT_COMMIT = Regex("[a-f0-9]{40}")
     private const val MAX_LATEST_VERSION_WINDOW = 3
