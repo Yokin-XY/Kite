@@ -135,7 +135,7 @@ internal class ResourceFeatureController(
             facts.currentOperation.isNotBlank() -> facts.currentOperation
             else -> KiteResourceInstallStore.OP_INSTALL
         }
-        val repairRequired = registryEntry?.installed == true &&
+        val repairRequired = registryEntry?.status == KiteResourceInstallStore.STATUS_INSTALLED &&
             registryEntry.operation == KiteResourceInstallRecipes.OP_REPAIR &&
             registryEntry.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_FAILED
         return ResourceItemUiState(
@@ -168,7 +168,7 @@ internal class ResourceFeatureController(
         val plan = KiteResourceSourcePlanFactory.plan(manifest)
         val userManaged = manifest.management.userLifecycleEnabled
         val idle = !facts.extraBusy && !facts.preparing && !facts.installing && !facts.uninstalling
-        val repairRequired = registryEntry?.installed == true &&
+        val repairRequired = registryEntry?.status == KiteResourceInstallStore.STATUS_INSTALLED &&
             registryEntry.operation == KiteResourceInstallRecipes.OP_REPAIR &&
             registryEntry.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_FAILED
         return ResourceMaintenanceUiState(
@@ -231,7 +231,11 @@ internal class ResourceFeatureController(
     private fun requestPrimary(action: ResourceFeatureAction.Primary): ResourceFeatureEffect {
         val item = state.value.item(action.resourceId)
             ?: return ResourceFeatureEffect.ActionUnavailable(action.resourceId, "resource_not_in_catalog")
-        if (!item.projection.actionEnabled && item.primaryIntent != KiteResourceActionIntent.ReopenInstall) {
+        if (!item.projection.actionEnabled && item.primaryIntent !in setOf(
+                KiteResourceActionIntent.ReopenInstall,
+                KiteResourceActionIntent.ReopenOperation,
+            )
+        ) {
             return ResourceFeatureEffect.ActionUnavailable(action.resourceId, "action_busy")
         }
         if (item.primaryIntent == KiteResourceActionIntent.Unsupported ||

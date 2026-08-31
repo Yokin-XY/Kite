@@ -3,6 +3,7 @@ package com.kite.app.action
 internal enum class KiteResourceActionIntent {
     Install,
     ReopenInstall,
+    ReopenOperation,
     Open,
     Stop,
     Uninstall,
@@ -39,6 +40,7 @@ internal object KiteResourceActionCoordinator {
         return when (actionLabel) {
             in installLabels -> KiteResourceActionIntent.Install
             "处理中", "获取中" -> KiteResourceActionIntent.ReopenInstall
+            "查看进度" -> KiteResourceActionIntent.ReopenOperation
             "打开", "运行中" -> KiteResourceActionIntent.Open
             "更新" -> KiteResourceActionIntent.Update
             "修复" -> KiteResourceActionIntent.Repair

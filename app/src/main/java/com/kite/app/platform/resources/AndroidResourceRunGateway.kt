@@ -286,12 +286,8 @@ internal class AndroidResourceRunGateway(
         reason: String,
         environmentId: String
     ) {
-        if (operation in setOf(
-                KiteResourceInstallRecipes.OP_UPDATE,
-                KiteResourceInstallRecipes.OP_REINSTALL,
-                KiteResourceInstallRecipes.OP_REPAIR,
-            ) &&
-            installStore.registryEntry(resourceId, environmentId)?.version?.isNotBlank() == true
+        if (operation in KiteResourceInstallRecipes.MAINTENANCE_OPERATIONS &&
+            installStore.registryEntry(resourceId, environmentId)?.installed == true
         ) {
             installStore.markMaintenanceFailed(resourceId, operation, reason, environmentId)
         } else {

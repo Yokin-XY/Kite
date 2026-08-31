@@ -115,6 +115,69 @@ class AndroidResourceFeatureGatewayTest {
     }
 
     @Test
+    fun `进程重建会释放没有当前所有者的修复运行且不依赖版本号`() {
+        val store = KiteResourceInstallStore(context)
+        val resourceId = "test.resource.orphaned.repair.${System.nanoTime()}"
+        store.clear(resourceId)
+        store.markInstalled(resourceId, "", "old-run", "done")
+        store.markInstalling(
+            resourceId,
+            runId = "orphaned-repair",
+            operation = KiteResourceInstallRecipes.OP_REPAIR,
+        )
+        val recipe = KiteRecipe(
+            id = KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_REPAIR),
+            name = "Repair",
+            description = "",
+            type = KiteRecipe.TYPE_START_SERVICE,
+            category = "resource",
+            defaultUrl = "",
+            shortcut = false,
+            icon = KiteRecipeIcon(name = KiteRecipeIcon.ICON_TOOLS),
+            launch = KiteLaunchConfig(openInstance = false),
+            execution = KiteExecution.steps(emptyList()),
+        )
+        CardRunStore.start(recipe, instanceId = "orphaned-repair")
+
+        AndroidResourceFeatureGateway.create(
+            KiteResourceManifestLoader(context),
+            store,
+            nodeRuntimeInstalled = { false },
+            activeResourceRunOwned = { false },
+        )
+
+        val reconciled = store.registryEntry(resourceId)
+        assertTrue(reconciled?.installed == true)
+        assertEquals(KiteResourceInstallStore.UPDATE_STATUS_FAILED, reconciled?.updateStatus)
+        assertEquals(KiteResourceInstallRecipes.OP_REPAIR, reconciled?.operation)
+        assertTrue(reconciled?.summary?.contains("已中断") == true)
+        store.clear(resourceId)
+    }
+
+    @Test
+    fun `当前进程仍持有修复运行时不会被启动投影错误释放`() {
+        val store = KiteResourceInstallStore(context)
+        val resourceId = "test.resource.active.repair.${System.nanoTime()}"
+        store.clear(resourceId)
+        store.markInstalled(resourceId, "1.0.0", "old-run", "done")
+        store.markInstalling(
+            resourceId,
+            runId = "active-repair",
+            operation = KiteResourceInstallRecipes.OP_REPAIR,
+        )
+
+        AndroidResourceFeatureGateway.create(
+            KiteResourceManifestLoader(context),
+            store,
+            nodeRuntimeInstalled = { false },
+            activeResourceRunOwned = { instanceId -> instanceId == "active-repair" },
+        )
+
+        assertTrue(store.registryEntry(resourceId)?.installing == true)
+        store.clear(resourceId)
+    }
+
+    @Test
     fun `目录合同升级在点击打开前投影为可更新`() = runBlocking {
         val store = KiteResourceInstallStore(context)
         val loader = KiteResourceManifestLoader(context)

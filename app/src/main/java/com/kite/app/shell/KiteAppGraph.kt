@@ -284,7 +284,8 @@ internal class KiteAppGraph private constructor(context: Context) {
             installStore = resourceInstallStore,
             nodeRuntimeInstalled = {
                 resourceInstallStore.isInstalled(ToolchainPackInstaller.RESOURCE_NODEJS)
-            }
+            },
+            activeResourceRunOwned = resourceRunCoordinator::owns,
         )
     }
     val recipeFeatureGateway: RecipeFeatureGateway by lazy {

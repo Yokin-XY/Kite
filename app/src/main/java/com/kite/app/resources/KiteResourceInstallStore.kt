@@ -106,6 +106,23 @@ class KiteResourceInstallStore(
             snapshotForLocked(normalizeEnvironmentId(environmentId))[KiteResourceInstallRecipes.safeId(resourceId)]
         }
 
+    /** 动作在写入状态前被拒绝时，重新发布现有事实，撤销页面的瞬时确认态。 */
+    fun republish(
+        resourceId: String,
+        reason: String,
+        environmentId: String = currentEnvironmentId(),
+    ) {
+        val entry = refreshRegistryEntry(resourceId, environmentId)
+        emitSignal(
+            reason = reason,
+            resourceId = resourceId,
+            affectedResourceIds = listOf(resourceId),
+            status = entry?.status,
+            operation = entry?.operation.orEmpty(),
+            environmentId = environmentId,
+        )
+    }
+
     fun planSnapshot(environmentId: String = currentEnvironmentId()): KiteResourcePlanSnapshot =
         synchronized(signalLock) {
             sharedPlanSnapshots[normalizeEnvironmentId(environmentId)] ?: KiteResourcePlanSnapshot()

@@ -250,6 +250,7 @@ internal class ResourceFeatureViewFactory(
     fun acknowledgementLabel(intent: KiteResourceActionIntent): String = context.getString(when (intent) {
         KiteResourceActionIntent.Install,
         KiteResourceActionIntent.ReopenInstall -> R.string.resource_state_preparing
+        KiteResourceActionIntent.ReopenOperation -> R.string.resource_action_view_progress
         KiteResourceActionIntent.Open -> R.string.resource_state_starting
         KiteResourceActionIntent.Stop -> R.string.resource_state_stopping
         KiteResourceActionIntent.Uninstall -> R.string.resource_state_uninstalling
@@ -279,6 +280,7 @@ internal class ResourceFeatureViewFactory(
     fun actionLabel(intent: KiteResourceActionIntent): String = context.getString(when (intent) {
         KiteResourceActionIntent.Install -> R.string.resource_action_install
         KiteResourceActionIntent.ReopenInstall -> R.string.resource_action_view_progress
+        KiteResourceActionIntent.ReopenOperation -> R.string.resource_action_view_progress
         KiteResourceActionIntent.Open -> R.string.resource_action_open
         KiteResourceActionIntent.Stop -> R.string.resource_action_stop
         KiteResourceActionIntent.Uninstall -> R.string.resource_action_uninstall

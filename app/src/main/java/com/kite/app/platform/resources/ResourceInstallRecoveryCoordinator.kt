@@ -45,7 +45,7 @@ internal class ResourceInstallRecoveryCoordinator(
                 val entry = installStore.registryEntry(resourceId)
                 when (result.disposition) {
                     ResourceInstallRecoveryDisposition.RESTORED -> {
-                        if (entry?.version?.isNotBlank() == true) {
+                        if (entry != null && result.operation in KiteResourceInstallRecipes.MAINTENANCE_OPERATIONS) {
                             installStore.markMaintenanceFailed(
                                 resourceId = resourceId,
                                 operation = result.operation,
@@ -92,7 +92,7 @@ internal class ResourceInstallRecoveryCoordinator(
                         }
                     }
                     ResourceInstallRecoveryDisposition.FAILED -> {
-                        if (entry?.version?.isNotBlank() == true) {
+                        if (entry != null && result.operation in KiteResourceInstallRecipes.MAINTENANCE_OPERATIONS) {
                             installStore.markMaintenanceFailed(
                                 resourceId = resourceId,
                                 operation = result.operation,

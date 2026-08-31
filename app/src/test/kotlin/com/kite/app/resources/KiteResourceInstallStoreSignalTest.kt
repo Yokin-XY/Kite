@@ -13,6 +13,23 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class KiteResourceInstallStoreSignalTest {
+
+    @Test
+    fun `动作启动前被拒绝会重新发布原事实供页面撤销确认态`() {
+        val store = KiteResourceInstallStore(context)
+        val resourceId = "test.resource.republish.${System.nanoTime()}"
+        store.clear(resourceId)
+        store.markInstalled(resourceId, "1.0.0", "install-run", "done")
+        val before = store.signals.value.revision
+
+        store.republish(resourceId, "maintenanceOperationRejected")
+
+        assertTrue(store.signals.value.revision > before)
+        assertEquals("maintenanceOperationRejected", store.signals.value.reason)
+        assertEquals(KiteResourceInstallStore.STATUS_INSTALLED, store.signals.value.status)
+        assertTrue(store.registryEntry(resourceId)?.installed == true)
+        store.clear(resourceId)
+    }
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @Test
@@ -118,6 +135,8 @@ class KiteResourceInstallStoreSignalTest {
 
         store.markInstalling(resourceId, operation = KiteResourceInstallRecipes.OP_UPDATE)
         assertTrue(store.registryEntry(resourceId)?.installing == true)
+        assertTrue(store.registryEntry(resourceId)?.installed == true)
+        assertTrue(store.isInstalled(resourceId))
         store.markMaintenanceFailed(resourceId, KiteResourceInstallRecipes.OP_UPDATE, "download")
         val updateFailed = store.registryEntry(resourceId)
         assertTrue(updateFailed?.installed == true)

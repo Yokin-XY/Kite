@@ -27,10 +27,11 @@ import kotlinx.coroutines.withContext
 internal class AndroidResourceFeatureGateway(
     private val manifestLoader: KiteResourceManifestLoader,
     private val installStore: KiteResourceInstallStore,
-    private val nodeRuntimeInstalled: () -> Boolean
+    private val nodeRuntimeInstalled: () -> Boolean,
+    private val activeResourceRunOwned: (String) -> Boolean,
 ) : ResourceFeatureGateway {
     init {
-        reconcileTerminatedMaintenanceRuns()
+        reconcileInterruptedMaintenanceRuns()
     }
 
     override val changes: Flow<ResourceFeatureChange> = merge(
@@ -176,21 +177,22 @@ internal class AndroidResourceFeatureGateway(
             }
     }
 
-    private fun reconcileTerminatedMaintenanceRuns() {
+    private fun reconcileInterruptedMaintenanceRuns() {
         installStore.registrySnapshot().values
             .filter { entry ->
-                entry.installing && entry.operation in MAINTENANCE_OPERATIONS
+                entry.installing && entry.operation in KiteResourceInstallRecipes.MAINTENANCE_OPERATIONS
             }
             .forEach { entry ->
                 val recipeId = KiteResourceInstallRecipes.recipeId(entry.resourceId, entry.operation)
                 val environmentId = installStore.currentEnvironmentId()
-                val latestCurrent = CardRunStore.currentForRecipe(recipeId, environmentId)
-                if (latestCurrent != null && latestCurrent.status !in TERMINATED_FAILURE_STATUSES) {
+                if (entry.runId.isNotBlank() && activeResourceRunOwned(entry.runId)) {
                     return@forEach
                 }
-                val current = latestCurrent?.takeIf { run ->
-                    run.status in TERMINATED_FAILURE_STATUSES
-                }
+                val registered = entry.runId.takeIf(String::isNotBlank)
+                    ?.let { instanceId -> CardRunStore.get(instanceId, environmentId) }
+                    ?.takeIf { run -> run.recipeId == recipeId }
+                val latestCurrent = registered ?: CardRunStore.currentForRecipe(recipeId, environmentId)
+                val current = latestCurrent?.takeIf { run -> run.status in TERMINATED_FAILURE_STATUSES }
                 val history = CardRunStore.historyForRecipe(recipeId, limit = 1, environmentId = environmentId)
                     .firstOrNull()
                     ?.takeIf { run ->
@@ -198,15 +200,16 @@ internal class AndroidResourceFeatureGateway(
                     }
                 val failure = current?.let { run ->
                     run.lastError.orEmpty() to run.lastMeaningfulOutput.orEmpty()
-                } ?: history?.let { run ->
+                } ?: history?.takeIf { latestCurrent == null }?.let { run ->
                     run.error to run.summary
-                } ?: return@forEach
+                }
                 installStore.markMaintenanceFailed(
                     entry.resourceId,
                     entry.operation,
-                    failure.first.ifBlank {
-                        failure.second.ifBlank { "上次维护任务未完成，已恢复原有版本" }
-                    }
+                    failure?.first.orEmpty().ifBlank {
+                        failure?.second.orEmpty().ifBlank { "上次维护任务已中断，已恢复原有安装状态" }
+                    },
+                    environmentId,
                 )
             }
     }
@@ -215,11 +218,6 @@ internal class AndroidResourceFeatureGateway(
         provides.any { it.startsWith("runtime.node") }
 
     companion object {
-        private val MAINTENANCE_OPERATIONS = setOf(
-            KiteResourceInstallRecipes.OP_UPDATE,
-            KiteResourceInstallRecipes.OP_REINSTALL,
-            KiteResourceInstallRecipes.OP_REPAIR,
-        )
         private val TERMINATED_FAILURE_STATUSES = setOf(
             CardRunStatus.Failed,
             CardRunStatus.Stopped,
@@ -229,12 +227,14 @@ internal class AndroidResourceFeatureGateway(
         fun create(
             manifestLoader: KiteResourceManifestLoader,
             installStore: KiteResourceInstallStore,
-            nodeRuntimeInstalled: () -> Boolean
+            nodeRuntimeInstalled: () -> Boolean,
+            activeResourceRunOwned: (String) -> Boolean = { false },
         ): AndroidResourceFeatureGateway =
             AndroidResourceFeatureGateway(
                 manifestLoader,
                 installStore,
-                nodeRuntimeInstalled
+                nodeRuntimeInstalled,
+                activeResourceRunOwned,
             )
     }
 }

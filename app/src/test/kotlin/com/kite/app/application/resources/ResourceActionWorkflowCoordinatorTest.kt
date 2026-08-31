@@ -19,7 +19,7 @@ class ResourceActionWorkflowCoordinatorTest {
 
         assertEquals(
             listOf(
-                "install", "reopen", "open", "stop", "uninstall",
+                "install", "reopen", "reopen_operation", "open", "stop", "uninstall",
                 "check_update", "update", "reinstall", "repair", "cancel", "cancel_failed"
             ),
             gateway.calls
@@ -62,6 +62,7 @@ class ResourceActionWorkflowCoordinatorTest {
         private fun record(value: String) = listOf(ResourceActionEffect.Message(value)).also { calls += value }
         override suspend fun install(resourceId: String) = record("install")
         override suspend fun reopenInstall(resourceId: String) = record("reopen")
+        override suspend fun reopenOperation(resourceId: String) = record("reopen_operation")
         override suspend fun open(resourceId: String) = record("open")
         override suspend fun stop(resourceId: String) = record("stop")
         override suspend fun uninstall(resourceId: String) = record("uninstall")

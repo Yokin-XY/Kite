@@ -45,6 +45,7 @@ internal object ResourceActionMessagePolicy {
 internal interface ResourceActionGateway {
     suspend fun install(resourceId: String): List<ResourceActionEffect>
     suspend fun reopenInstall(resourceId: String): List<ResourceActionEffect>
+    suspend fun reopenOperation(resourceId: String): List<ResourceActionEffect>
     suspend fun open(resourceId: String): List<ResourceActionEffect>
     suspend fun stop(resourceId: String): List<ResourceActionEffect>
     suspend fun uninstall(resourceId: String): List<ResourceActionEffect>
@@ -79,6 +80,7 @@ internal class ResourceActionWorkflowCoordinator(
         when (request.intent) {
             KiteResourceActionIntent.Install -> gateway.install(request.resourceId)
             KiteResourceActionIntent.ReopenInstall -> gateway.reopenInstall(request.resourceId)
+            KiteResourceActionIntent.ReopenOperation -> gateway.reopenOperation(request.resourceId)
             KiteResourceActionIntent.Open -> gateway.open(request.resourceId)
             KiteResourceActionIntent.Stop -> gateway.stop(request.resourceId)
             KiteResourceActionIntent.Uninstall -> gateway.uninstall(request.resourceId)

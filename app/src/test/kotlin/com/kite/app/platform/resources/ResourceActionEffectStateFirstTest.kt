@@ -1,6 +1,8 @@
 package com.kite.app.platform.resources
 
 import com.kite.app.application.resources.ResourceActionEffect
+import com.kite.app.application.resources.ResourceActionMessagePresentation
+import com.kite.app.application.resources.ResourceRunLaunchResult
 import com.kite.app.application.runs.RunCommandResult
 import com.kite.app.application.runs.RunStartRequest
 import com.kite.app.recipe.KiteExecution
@@ -164,6 +166,37 @@ class ResourceActionEffectStateFirstTest {
         assertEquals(wizard.createdAt, install.generation)
         assertEquals(wizard.instanceId, install.instanceId)
         assertEquals(listOf("dependency", "target-resource"), install.planResourceIds)
+    }
+
+    @Test
+    fun `维护任务接受后立即打开同一运行报告而不是留下死按钮`() {
+        val run = state(request("repair-recipe", "repair-instance"), generation = 101L)
+
+        val effects = managedOperationStartEffects(
+            result = ResourceRunLaunchResult.Accepted(run),
+            resourceName = "Hermes",
+            operationLabel = "修复",
+        )
+
+        val open = effects.filterIsInstance<ResourceActionEffect.OpenRun>().single()
+        assertEquals(run.recipeId, open.recipeId)
+        assertEquals(run.instanceId, open.instanceId)
+        assertEquals(run.createdAt, open.generation)
+        assertFalse(open.autoStart)
+    }
+
+    @Test
+    fun `维护任务启动被拒绝时返回不可过滤的明确结果`() {
+        val effects = managedOperationStartEffects(
+            result = ResourceRunLaunchResult.Rejected("resource_write_conflict"),
+            resourceName = "Hermes",
+            operationLabel = "修复",
+        )
+
+        val message = effects.filterIsInstance<ResourceActionEffect.Message>().single()
+        assertEquals(ResourceActionMessagePresentation.ExplicitResult, message.presentation)
+        assertTrue(message.text.contains("resource_write_conflict"))
+        assertTrue(effects.none { it is ResourceActionEffect.OpenRun })
     }
 
     private fun request(recipeId: String, instanceId: String): RunStartRequest = RunStartRequest(

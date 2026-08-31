@@ -136,20 +136,25 @@ internal class ResourceRunCoordinator(
             return ResourceRunLaunchResult.Rejected("resource_write_conflict:${conflict.scope}")
         }
         val state = try {
-            gateway.beginRun(boundRequest).also { started ->
-                gateway.markOperationStarted(
-                    resourceId = boundRequest.resourceId,
-                    operation = boundRequest.operation,
-                    instanceId = started.instanceId,
-                    environmentId = boundRequest.environmentId,
-                )
-            }
+            gateway.beginRun(boundRequest)
         } catch (error: Throwable) {
             writeScopeLeases.release(writeScopeOwnerId)
             throw error
         }
         val active = ActiveRun(boundRequest, writeScopeOwnerId)
         activeRuns[state.instanceId] = active
+        try {
+            gateway.markOperationStarted(
+                resourceId = boundRequest.resourceId,
+                operation = boundRequest.operation,
+                instanceId = state.instanceId,
+                environmentId = boundRequest.environmentId,
+            )
+        } catch (error: Throwable) {
+            activeRuns.remove(state.instanceId, active)
+            releaseWriteScopes(active)
+            throw error
+        }
         runCatching {
             gateway.prepare(boundRequest, state.instanceId) { result ->
                 serialExecutor.execute {
