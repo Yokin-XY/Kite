@@ -71,6 +71,11 @@
   "source": {
     "type": "npm",
     "package": "@google/gemini-cli",
+    "latestVersionWindow": [
+      { "version": "0.57.0", "integrity": "sha512-I0V03d3k0J0ZN2m9u54XhN3VcMG+VjyPzoy7E9QV8lhzd39C6UgaZGLZNsOgODOtDhK8YMijHJWJn+Qxop2umw==" },
+      { "version": "0.56.0", "integrity": "sha512-q4oBfb/Oh/HNLMYBOJMp88/QQ8hLffnB0ykoVThi6A5isbGHJ/ylWLMosMGqukKY0Q1Jv/XRDpb46Q1BV+zQqw==" },
+      { "version": "0.55.1", "integrity": "sha512-leEv91V7J3YWhZdXqYIj4nTl0hXl8oNos5aVR0whPCFqVbRvoFPTzaQOHdI2UIT1wGgp+XdCi4qUrFDnUFN7RQ==" }
+    ],
     "repository": "https://github.com/google-gemini/gemini-cli"
   },
   "paths": {

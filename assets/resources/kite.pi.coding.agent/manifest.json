@@ -45,6 +45,11 @@
   "source": {
     "type": "npm",
     "package": "@earendil-works/pi-coding-agent",
+    "latestVersionWindow": [
+      { "version": "0.84.4", "integrity": "sha512-jmOlrqUmvhh/siNWFRXjYLJzhKFIHNsAQaysRwzQPQFnPAaV/vhqHsLH/MBsIISA1Rjj7WTUFR3nJrpXoLx39w==" },
+      { "version": "0.84.3", "integrity": "sha512-Yr2p9PubrbFZmYEPYI+C8KmZP9xlFuLDnAG64RtU0ZDgrdiXYWa+y7WGyJO5OlqPliOkVCMd9IzVszO3/t0D0w==" },
+      { "version": "0.84.2", "integrity": "sha512-l4E+B7hgXKWddRo8bC/eSue2aWZjEgJ9xIpf5p0Og+lq8a2TArCwJ0HCoCPCgaBP/tN4zbYH/wOwvx9pJpeLCA==" }
+    ],
     "repository": "https://github.com/earendil-works/pi"
   },
   "paths": {

@@ -46,6 +46,11 @@
   "source": {
     "type": "npm",
     "package": "@tencent-ai/codebuddy-code",
+    "latestVersionWindow": [
+      { "version": "2.142.0", "integrity": "sha512-fiQDpMhcZQlbRaBwBIIFGAQyXyqjyuJ986Rp1ROyM6n7+ogKiVjsHin9Zmdk0bQcUltqAE1wNqq5LbxIeNqIfQ==" },
+      { "version": "2.141.0", "integrity": "sha512-G/JqZgUHKavx21OBDa7Zl6oXqCWYcUQpes1tgggxE8IZTWQmm+WpQm/Q0Et0UjoDkENiSJFzO070MZgv9hb2fg==" },
+      { "version": "2.140.0", "integrity": "sha512-L8RQE29REjdnhznjRblJerPChlx7JrkRxc19vr/QxauTMTEQW9J18BX++8sXISlUmEDMnExIOGpEFvCzeTiUIQ==" }
+    ],
     "repository": "https://www.codebuddy.ai/docs/cli/quickstart"
   },
   "paths": {

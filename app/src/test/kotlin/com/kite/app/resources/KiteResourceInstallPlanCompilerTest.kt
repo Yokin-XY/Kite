@@ -140,6 +140,78 @@ class KiteResourceInstallPlanCompilerTest {
     }
 
     @Test
+    fun npmSourcesRequestLatestThenRequireSignedVersionAndIntegrityForEveryPackage() {
+        val action = managedAction(
+            steps = listOf(
+                KiteResourceInstallStep(
+                    id = "npm-agent",
+                    type = KiteResourceInstallPlanCompiler.STEP_NPM,
+                    packages = listOf("@example/agent", "@example/acp@latest"),
+                    registries = listOf(
+                        "https://registry.npmmirror.com",
+                        "https://registry.npmjs.org",
+                    ),
+                    latestVersionWindow = listOf(
+                        KiteResourceSourceVersion(
+                            artifact = "@example/agent",
+                            version = "3.0.0",
+                            integrity = "sha512-${"A".repeat(86)}==",
+                        ),
+                        KiteResourceSourceVersion(
+                            artifact = "@example/agent",
+                            version = "2.0.0",
+                            integrity = "sha512-${"B".repeat(86)}==",
+                        ),
+                        KiteResourceSourceVersion(
+                            artifact = "@example/acp",
+                            version = "8.0.0",
+                            integrity = "sha512-${"C".repeat(86)}==",
+                        ),
+                    ),
+                )
+            )
+        )
+
+        val script = KiteResourceInstallPlanCompiler.compile(action)
+
+        assertTrue(script.contains("request=latest"))
+        assertTrue(script.contains("npm view \"${'$'}package_name@latest\" version dist.integrity"))
+        assertTrue(script.contains("latest-version-or-integrity-outside-window"))
+        assertTrue(script.contains("selected_specs+=(\"${'$'}package_name@${'$'}latest_version\")"))
+        assertTrue(script.contains("\"${'$'}{selected_specs[@]}\""))
+        assertTrue(script.contains(".kite-source-selection"))
+        assertTrue(script.contains(".integrity"))
+        assertTrue(script.indexOf("registry.npmmirror.com") < script.indexOf("registry.npmjs.org"))
+    }
+
+    @Test
+    fun npmSignedWindowRejectsPinnedOrUncoveredPackageSpecs() {
+        val failure = runCatching {
+            KiteResourceInstallPlanCompiler.compile(
+                managedAction(
+                    steps = listOf(
+                        KiteResourceInstallStep(
+                            id = "npm-agent",
+                            type = KiteResourceInstallPlanCompiler.STEP_NPM,
+                            packages = listOf("@example/agent@1.0.0"),
+                            latestVersionWindow = listOf(
+                                KiteResourceSourceVersion(
+                                    artifact = "@example/agent",
+                                    version = "1.0.0",
+                                    integrity = "sha512-${"A".repeat(86)}==",
+                                )
+                            ),
+                        )
+                    )
+                )
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(failure?.message.orEmpty().contains("must request bare packages or @latest"))
+    }
+
+    @Test
     fun npmRegistryRejectsInsecureOrCredentialBearingUrls() {
         listOf(
             "http://registry.example.test",

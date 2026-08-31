@@ -103,6 +103,11 @@
   "source": {
     "type": "npm",
     "package": "@moonshot-ai/kimi-code",
+    "latestVersionWindow": [
+      { "version": "0.39.1", "integrity": "sha512-prxUZEhr4hFTnPtm3JLEpE3+1jFH9HvCpkAGFy4WErFHX0Ax7+7KdEgplOC+lm7IGv1cZLU6HdqT6con1IFbdQ==" },
+      { "version": "0.39.0", "integrity": "sha512-T+8IwTc3etpNQhJXbB6wNppLvC4URWBR0SycDM2mb2ObXmqwn8xbOKzaItQQ63ZxjyV6zSHQDaogw0BjlHmtvA==" },
+      { "version": "0.38.0", "integrity": "sha512-O/z6sfjFdoDPPeTnoXzdsJ2U8IqP6K2gD3LsT+Nu8BAlHwdhCjdCQFkFTjIbLBun+aZT6x81ha5FiFt7trEilg==" }
+    ],
     "repository": "https://github.com/MoonshotAI/kimi-code",
     "tag": "latest"
   },

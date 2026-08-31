@@ -74,12 +74,13 @@ object KiteResourceSourcePlanFactory {
             generatedInstallActions(manifest, targetVersion)
         }
         val generatedUninstall = if (explicitUninstall) emptyList() else generatedUninstallActions(manifest)
-        val installActions = when {
+        val rawInstallActions = when {
             targetVersion != null && reinstallOnUpdate -> manifest.installActions
             targetVersion != null && explicitUpdate -> manifest.updateActions
             explicitInstall -> manifest.installActions
             else -> generatedInstall
         }
+        val installActions = attachSourceVersionWindow(manifest, rawInstallActions)
         val uninstallActions = manifest.uninstallActions.ifEmpty { generatedUninstall }
         val versionCheck = versionCheckPlan(manifest)
         val supportsTargetVersion = when {
@@ -108,6 +109,29 @@ object KiteResourceSourcePlanFactory {
     }
 
     private const val UPDATE_STRATEGY_REINSTALL = "reinstall"
+
+    private fun attachSourceVersionWindow(
+        manifest: KiteResourceManifest,
+        actions: List<KiteResourceShellAction>,
+    ): List<KiteResourceShellAction> {
+        val window = manifest.source.latestVersionWindow
+        if (manifest.source.type != SOURCE_NPM || window.isEmpty()) return actions
+        return actions.map { action ->
+            if (action.type != KiteResourceInstallPlanCompiler.ACTION_MANAGED) return@map action
+            action.copy(
+                installSteps = action.installSteps.map { step ->
+                    if (
+                        step.type == KiteResourceInstallPlanCompiler.STEP_NPM &&
+                        step.latestVersionWindow.isEmpty()
+                    ) {
+                        step.copy(latestVersionWindow = window)
+                    } else {
+                        step
+                    }
+                }
+            )
+        }
+    }
 
     fun versionCheckPlan(
         manifest: KiteResourceManifest,
@@ -293,9 +317,12 @@ object KiteResourceSourcePlanFactory {
     ): KiteResourceShellAction? {
         val packageNames = npmPackageNames(manifest.source) ?: return null
         val packageName = packageNames.first()
+        val hasSignedLatestWindow = manifest.source.latestVersionWindow.isNotEmpty()
         val selector = targetVersion?.let(::safeVersion) ?: manifest.source.tag.ifBlank { "latest" }
-        val packageSpec = "$packageName@$selector"
-        val companionSpecs = packageNames.drop(1).map { "$it@latest" }
+        val packageSpec = if (hasSignedLatestWindow) packageName else "$packageName@$selector"
+        val companionSpecs = packageNames.drop(1).map { name ->
+            if (hasSignedLatestWindow) name else "$name@latest"
+        }
         return managedAction(
             steps = listOf(
                 KiteResourceInstallStep(
@@ -303,6 +330,7 @@ object KiteResourceSourcePlanFactory {
                     type = KiteResourceInstallPlanCompiler.STEP_NPM,
                     packages = listOf(packageSpec) + companionSpecs,
                     registries = manifest.source.registries,
+                    latestVersionWindow = manifest.source.latestVersionWindow,
                     arguments = manifest.source.installArguments,
                     retryAttempts = 5,
                     retryDelaySeconds = 3

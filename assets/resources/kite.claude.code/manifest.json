@@ -75,6 +75,14 @@
   "source": {
     "type": "npm",
     "package": "@anthropic-ai/claude-code",
+    "latestVersionWindow": [
+      { "artifact": "@anthropic-ai/claude-code", "version": "2.1.251", "integrity": "sha512-eG+ZPPpW2Dbmnntf1Fz9/T9ewS8I8SKfc1tcU2PqSwmftfjRPP7BXPaCyLuZ8kvgTdiPnJi/2/JnTvTRieneEQ==" },
+      { "artifact": "@anthropic-ai/claude-code", "version": "2.1.250", "integrity": "sha512-SsqdHBePKgpoquZdMPbwSZZc2PkQy/qBcekroihILhRdPAAtpXXH49POHl7e6bujj55MaKPk4Wa7gpFXuMKwnA==" },
+      { "artifact": "@anthropic-ai/claude-code", "version": "2.1.248", "integrity": "sha512-X9Xy+cdXNXkD47jj4Ro1mfm573nEwYc7iUuqT0SGHgdufjwFXIEOS6FTGBme6ngG8156dTibrK167sVcKeuntw==" },
+      { "artifact": "@agentclientprotocol/claude-agent-acp", "version": "0.70.0", "integrity": "sha512-Psqj6fhV4pQ8IM480zpJ+xGiMMIqNLxlsTj5Mzn+T8KSURCVNJdl0ktcqLMjgHJC/QnOvDdDkFf3xTW9VIV9aQ==" },
+      { "artifact": "@agentclientprotocol/claude-agent-acp", "version": "0.69.0", "integrity": "sha512-YH4k22QvewY4dlxR7IOEhPk4IyTSvvUMUYfTF1cfD/JasPWonjylCJjeUCp3bOyQhlh3LvxsCCAPKkTa+V/a/g==" },
+      { "artifact": "@agentclientprotocol/claude-agent-acp", "version": "0.68.0", "integrity": "sha512-G2rgBhVl8R/DWZoKb+OqTewROs3NxHwqf8xjFjxA7k0S+o8yFWsPgmrBRBjtHrteG2HbA/+g8KTlFjftmHBv4A==" }
+    ],
     "companionPackages": ["@agentclientprotocol/claude-agent-acp"],
     "installArguments": ["--allow-scripts=@anthropic-ai/claude-code"]
   },

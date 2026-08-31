@@ -46,6 +46,11 @@
   "source": {
     "type": "npm",
     "package": "@qoder-ai/qodercli",
+    "latestVersionWindow": [
+      { "version": "1.1.37", "integrity": "sha512-91XfcmdiGX+CrCdElpn36egUJQGcOQhOtqMCVHngu68GtAaULNQs0fbHJpB2udQqFxRACXMVTonPyzGQxFR37A==" },
+      { "version": "1.1.36", "integrity": "sha512-S+nyXPZYlgSG+Hed+Z44VOl7JHuSPEFLlztinQ36lN+syoabmuiTAJTQ89/AAAqLVLOGI8Br1hDIH8dJxVaqYg==" },
+      { "version": "1.1.35", "integrity": "sha512-SB6cu9vn9k4l6YSNsQ8VutRn0KxannbGular/r2xUYg6fWz9tPWUN/sHxR6sYUeAuytVFuV71cdGtsqj67tmFg==" }
+    ],
     "repository": "https://qoder.com"
   },
   "paths": {

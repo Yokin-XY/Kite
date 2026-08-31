@@ -152,6 +152,9 @@ object KiteResourceInstallPlanCompiler {
                 "npm step ${step.id} has an invalid HTTPS registry"
             }
         }
+        if (step.latestVersionWindow.isNotEmpty()) {
+            return compileVerifiedLatestNpm(step, attemptVerifications)
+        }
         val arguments = step.arguments.joinToString(" ") { shellLiteral(it) }
         val packages = step.packages.joinToString(" ") { shellLiteral(it) }
         val installArguments = listOf(arguments, packages).filter { it.isNotBlank() }.joinToString(" ")
@@ -233,6 +236,244 @@ object KiteResourceInstallPlanCompiler {
             export npm_config_fetch_retry_maxtimeout=$(( ${step.retryDelaySeconds} * ${step.retryAttempts} * 4000 ))
             $installCommand
         """.trimIndent()
+    }
+
+    private fun compileVerifiedLatestNpm(
+        step: KiteResourceInstallStep,
+        attemptVerifications: List<KiteResourceInstallVerification>,
+    ): String {
+        require(step.registries.isNotEmpty()) {
+            "npm step ${step.id} requires at least one registry for latest verification"
+        }
+        val packageNames = step.packages.map { packageSpec ->
+            npmLatestPackageName(packageSpec)
+                ?: throw IllegalArgumentException(
+                    "npm step ${step.id} must request bare packages or @latest when a signed version window is used"
+                )
+        }
+        require(packageNames.distinct().size == packageNames.size) {
+            "npm step ${step.id} contains duplicate packages"
+        }
+        val resolvedWindow = step.latestVersionWindow.map { candidate ->
+            val artifact = candidate.artifact.ifBlank { packageNames.singleOrNull().orEmpty() }
+            candidate.copy(artifact = artifact)
+        }
+        require(resolvedWindow.all { it.artifact in packageNames }) {
+            "npm step ${step.id} latest version window contains an unknown package"
+        }
+        require(resolvedWindow.groupBy(KiteResourceSourceVersion::artifact).keys == packageNames.toSet()) {
+            "npm step ${step.id} latest version window does not cover every package"
+        }
+        resolvedWindow.groupBy(KiteResourceSourceVersion::artifact).forEach { (artifact, candidates) ->
+            require(candidates.size in 1..MAX_LATEST_VERSION_WINDOW) {
+                "npm step ${step.id} latest version window for $artifact must contain 1 to $MAX_LATEST_VERSION_WINDOW entries"
+            }
+            require(candidates.map { it.version }.distinct().size == candidates.size) {
+                "npm step ${step.id} latest version window for $artifact contains duplicate versions"
+            }
+            candidates.forEach { candidate ->
+                require(isSafeNpmVersion(candidate.version)) {
+                    "npm step ${step.id} latest version window for $artifact contains an unsafe version"
+                }
+                require(NPM_INTEGRITY.matches(candidate.integrity)) {
+                    "npm step ${step.id} latest version window for $artifact contains an invalid integrity"
+                }
+            }
+        }
+        val selectionTokens = packageNames.associateWith(::safeId)
+        require(selectionTokens.values.distinct().size == selectionTokens.size) {
+            "npm step ${step.id} package selection file names collide"
+        }
+        val routes = step.registries.distinct().joinToString(" ") { registry ->
+            shellLiteral("${KiteResourceSourceCatalog.sourceIdFor(registry)}|$registry")
+        }
+        val packages = packageNames.joinToString(" ", transform = ::shellLiteral)
+        val versionWindow = resolvedWindow.joinToString(" ") { candidate ->
+            shellLiteral("${candidate.artifact}|${candidate.version}|${candidate.integrity}")
+        }
+        val arguments = step.arguments.joinToString(" ") { shellLiteral(it) }
+        val attemptVerification = compileNpmAttemptVerification(attemptVerifications)
+        val selectionCases = selectionTokens.entries.joinToString(" ") { (artifact, token) ->
+            "${shellLiteral(artifact)}) selection_token=${shellLiteral(token)} ;;"
+        }
+        val primaryPackage = packageNames.first()
+        val functionSuffix = safeId(step.id).replace(Regex("[^a-z0-9_]"), "_")
+        val functionName = "kite_resource_npm_$functionSuffix"
+        return """
+            command -v npm >/dev/null 2>&1 || { echo "KITE_RESOURCE_FAILURE stage=prepare step=${safeId(step.id)} reason=npm-missing"; exit 127; }
+            command -v node >/dev/null 2>&1 || { echo "KITE_RESOURCE_FAILURE stage=prepare step=${safeId(step.id)} reason=node-missing"; exit 127; }
+            export npm_config_fetch_retries=${step.retryAttempts}
+            export npm_config_fetch_retry_mintimeout=$(( ${step.retryDelaySeconds} * 1000 ))
+            export npm_config_fetch_retry_maxtimeout=$(( ${step.retryDelaySeconds} * ${step.retryAttempts} * 4000 ))
+            $functionName() {
+              last_status=1
+              package_names=($packages)
+              version_window=($versionWindow)
+              for npm_route in $routes; do
+                source_id="${'$'}{npm_route%%|*}"
+                npm_registry="${'$'}{npm_route#*|}"
+                attempt_root="${'$'}install_root/.kite-source-attempt/npm/${'$'}source_id"
+                attempt_prefix="${'$'}npm_config_prefix"
+                attempt_cache="${'$'}install_root/.kite-source-cache/npm/${'$'}source_id"
+                attempt_log="${'$'}attempt_root/npm-install.log"
+                rm -rf "${'$'}attempt_root" "${'$'}attempt_prefix"
+                mkdir -p "${'$'}attempt_root" "${'$'}attempt_prefix" "${'$'}attempt_cache"
+                : > "${'$'}attempt_log"
+                echo "KITE_RESOURCE_ROUTE stage=acquire step=${safeId(step.id)} source=${'$'}source_id registry=${'$'}npm_registry request=latest"
+                selected_records=()
+                selected_specs=()
+                source_rejected=0
+                source_unavailable=0
+                retry_reason=source-unavailable
+                for package_name in "${'$'}{package_names[@]}"; do
+                  metadata_token="${'$'}(printf '%s' "${'$'}package_name" | tr -c 'A-Za-z0-9._-' '-')"
+                  metadata_file="${'$'}attempt_root/${'$'}metadata_token.latest.json"
+                  set +e
+                  npm view "${'$'}package_name@latest" version dist.integrity --json --registry="${'$'}npm_registry" >"${'$'}metadata_file" 2>>"${'$'}attempt_log"
+                  last_status=${'$'}?
+                  set -e
+                  if [ "${'$'}last_status" -ne 0 ]; then
+                    if kite_resource_is_source_failure "${'$'}last_status" "${'$'}attempt_log"; then
+                      source_unavailable=1
+                      break
+                    fi
+                    cat "${'$'}attempt_log"
+                    echo "KITE_RESOURCE_FAILURE stage=acquire step=${safeId(step.id)} source=${'$'}source_id package=${'$'}package_name exit=${'$'}last_status reason=non-network"
+                    return "${'$'}last_status"
+                  fi
+                  latest_version="${'$'}(node - "${'$'}metadata_file" <<'KITE_NPM_VERSION'
+            const fs = require('fs');
+            let value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+            if (Array.isArray(value)) value = value[value.length - 1] || {};
+            process.stdout.write(String(value.version || ''));
+            KITE_NPM_VERSION
+            )"
+                  latest_integrity="${'$'}(node - "${'$'}metadata_file" <<'KITE_NPM_INTEGRITY'
+            const fs = require('fs');
+            let value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+            if (Array.isArray(value)) value = value[value.length - 1] || {};
+            process.stdout.write(String(value['dist.integrity'] || (value.dist && value.dist.integrity) || ''));
+            KITE_NPM_INTEGRITY
+            )"
+                  window_match=0
+                  for window_entry in "${'$'}{version_window[@]}"; do
+                    window_artifact="${'$'}{window_entry%%|*}"
+                    window_tail="${'$'}{window_entry#*|}"
+                    window_version="${'$'}{window_tail%%|*}"
+                    window_integrity="${'$'}{window_tail#*|}"
+                    if [ "${'$'}package_name" = "${'$'}window_artifact" ] && [ "${'$'}latest_version" = "${'$'}window_version" ] && [ "${'$'}latest_integrity" = "${'$'}window_integrity" ]; then
+                      window_match=1
+                      break
+                    fi
+                  done
+                  if [ "${'$'}window_match" -ne 1 ]; then
+                    last_status=69
+                    source_rejected=1
+                    echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id package=${'$'}package_name reason=latest-version-or-integrity-outside-window version=${'$'}latest_version" >>"${'$'}attempt_log"
+                    break
+                  fi
+                  selected_specs+=("${'$'}package_name@${'$'}latest_version")
+                  selected_records+=("${'$'}package_name|${'$'}latest_version|${'$'}latest_integrity")
+                done
+                if [ "${'$'}source_rejected" -eq 1 ]; then
+                  cat "${'$'}attempt_log"
+                  echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}last_status reason=source-unverified"
+                  rm -rf "${'$'}attempt_root" "${'$'}attempt_prefix"
+                  continue
+                fi
+                if [ "${'$'}source_unavailable" -eq 1 ]; then
+                  cat "${'$'}attempt_log"
+                  echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}last_status reason=source-unavailable"
+                  rm -rf "${'$'}attempt_root" "${'$'}attempt_prefix"
+                  continue
+                fi
+                set +e
+                npm install -g --loglevel=http --prefix="${'$'}attempt_prefix" --cache="${'$'}attempt_cache" --registry="${'$'}npm_registry" $arguments "${'$'}{selected_specs[@]}" >>"${'$'}attempt_log" 2>&1
+                last_status=${'$'}?
+                set -e
+                if [ "${'$'}last_status" -ne 0 ] && kite_resource_is_source_failure "${'$'}last_status" "${'$'}attempt_log"; then
+                  source_unavailable=1
+                fi
+                if [ "${'$'}last_status" -eq 0 ]; then
+                  set +e
+                  (
+                    export PATH="${'$'}attempt_prefix/bin:${'$'}PATH"
+                    export npm_config_prefix="${'$'}attempt_prefix"
+                    export HOME="${'$'}attempt_root/home"
+                    mkdir -p "${'$'}HOME"
+                    $attemptVerification
+                  ) >>"${'$'}attempt_log" 2>&1
+                  attempt_verification_status=${'$'}?
+                  set -e
+                  if [ "${'$'}attempt_verification_status" -ne 0 ]; then
+                    last_status=69
+                    source_unavailable=1
+                    retry_reason=source-incomplete
+                    echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id reason=candidate-verification exit=${'$'}attempt_verification_status" >>"${'$'}attempt_log"
+                  fi
+                fi
+                cat "${'$'}attempt_log"
+                if [ "${'$'}last_status" -eq 0 ]; then
+                  selection_root="${'$'}install_root/.kite-source-selection"
+                  mkdir -p "${'$'}selection_root"
+                  for selected_record in "${'$'}{selected_records[@]}"; do
+                    selected_artifact="${'$'}{selected_record%%|*}"
+                    selected_tail="${'$'}{selected_record#*|}"
+                    selected_version="${'$'}{selected_tail%%|*}"
+                    selected_integrity="${'$'}{selected_tail#*|}"
+                    selection_token=
+                    case "${'$'}selected_artifact" in $selectionCases esac
+                    [ -n "${'$'}selection_token" ] || { echo "KITE_RESOURCE_FAILURE stage=publish step=${safeId(step.id)} reason=selection-token-missing"; return 70; }
+                    printf '%s\n' "${'$'}selected_version" > "${'$'}selection_root/${safeId(step.id)}.${'$'}selection_token.version"
+                    printf '%s\n' "${'$'}selected_integrity" > "${'$'}selection_root/${safeId(step.id)}.${'$'}selection_token.integrity"
+                    if [ "${'$'}selected_artifact" = ${shellLiteral(primaryPackage)} ]; then
+                      printf '%s\n' "${'$'}selected_version" > "${'$'}selection_root/${safeId(step.id)}.version"
+                      printf '%s\n' "${'$'}selected_integrity" > "${'$'}selection_root/${safeId(step.id)}.integrity"
+                    fi
+                  done
+                  rm -rf "${'$'}install_root/.kite-source-attempt"
+                  echo "KITE_RESOURCE_STEP acquire-complete ${safeId(step.id)} source=${'$'}source_id version=${'$'}(cat "${'$'}selection_root/${safeId(step.id)}.version")"
+                  return 0
+                fi
+                if [ "${'$'}source_unavailable" -eq 0 ]; then
+                  echo "KITE_RESOURCE_FAILURE stage=install step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}last_status reason=non-network"
+                  rm -rf "${'$'}install_root/.kite-source-attempt"
+                  return "${'$'}last_status"
+                fi
+                echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}last_status reason=${'$'}retry_reason"
+                rm -rf "${'$'}attempt_root" "${'$'}attempt_prefix"
+              done
+              rm -rf "${'$'}install_root/.kite-source-attempt"
+              echo "KITE_RESOURCE_FAILURE stage=acquire step=${safeId(step.id)} exit=${'$'}last_status reason=no-verified-latest-source"
+              return "${'$'}last_status"
+            }
+            kite_resource_run ${shellLiteral(safeId(step.id))} install $functionName
+        """.trimIndent()
+    }
+
+    private fun npmLatestPackageName(spec: String): String? {
+        val value = spec.trim()
+        val separator = value.lastIndexOf('@')
+        val packageName: String
+        val selector: String
+        if (value.startsWith('@')) {
+            if (separator > 0) {
+                packageName = value.substring(0, separator)
+                selector = value.substring(separator + 1)
+            } else {
+                packageName = value
+                selector = ""
+            }
+        } else if (separator > 0) {
+            packageName = value.substring(0, separator)
+            selector = value.substring(separator + 1)
+        } else {
+            packageName = value
+            selector = ""
+        }
+        return packageName.takeIf {
+            SAFE_NPM_PACKAGE.matches(it) && (selector.isBlank() || selector == "latest")
+        }
     }
 
     private fun compileNpmAttemptVerification(
@@ -332,7 +573,8 @@ object KiteResourceInstallPlanCompiler {
                 "git step ${step.id} latest version window contains duplicate refs"
             }
             latestVersionWindow.forEach { candidate ->
-                require(isSafeGitWindowValue(candidate.version) && isSafeGitWindowValue(candidate.ref)) {
+                val candidateRef = candidate.ref.ifBlank { candidate.version }
+                require(isSafeGitWindowValue(candidate.version) && isSafeGitWindowValue(candidateRef)) {
                     "git step ${step.id} latest version window contains an unsafe version or ref"
                 }
                 require(GIT_COMMIT.matches(candidate.commit)) {
@@ -356,11 +598,14 @@ object KiteResourceInstallPlanCompiler {
             step.retryDelaySeconds.toString(),
             latestVersionWindow.size.toString(),
         ) + latestVersionWindow.map { candidate ->
-            shellLiteral("${candidate.version}|${candidate.ref}|${candidate.commit}")
+            shellLiteral("${candidate.version}|${candidate.ref.ifBlank { candidate.version }}|${candidate.commit}")
         } + listOf("--") + repositories.map(::shellExpression)).joinToString(" ", prefix = "kite_resource_git ")
     }
 
     private fun isSafeGitWindowValue(value: String): Boolean =
+        value.isNotBlank() && !value.startsWith('-') && value.none { it == '|' || it == '\n' || it == '\r' }
+
+    private fun isSafeNpmVersion(value: String): Boolean =
         value.isNotBlank() && !value.startsWith('-') && value.none { it == '|' || it == '\n' || it == '\r' }
 
     private fun compileInlineShell(step: KiteResourceInstallStep): String {
@@ -624,6 +869,8 @@ object KiteResourceInstallPlanCompiler {
         value.lowercase().replace(Regex("[^a-z0-9._-]+"), "-").trim('-').ifBlank { "step" }
 
     private val SAFE_ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
+    private val SAFE_NPM_PACKAGE = Regex("(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*")
+    private val NPM_INTEGRITY = Regex("sha(?:1|256|384|512)-[A-Za-z0-9+/]+={0,2}")
     private val GIT_COMMIT = Regex("[a-f0-9]{40}")
     private const val MAX_LATEST_VERSION_WINDOW = 3
 }

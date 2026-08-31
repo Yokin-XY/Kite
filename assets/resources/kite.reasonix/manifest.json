@@ -71,6 +71,11 @@
   "source": {
     "type": "npm",
     "package": "reasonix",
+    "latestVersionWindow": [
+      { "version": "1.34.0", "integrity": "sha512-Cin3xz1f5efE8IsmEF0N7ZpTg65B8XtTdxrnLvaQNxTkxIBWb+lE8ODUyaVmqxlFtMrrJpL22KOuxiqSn1w3Lg==" },
+      { "version": "1.33.0", "integrity": "sha512-giVMITa+puGeR0GAr3V/EY6KUeKZY8TRdmPDKXGVmo7HHWPDwZFPg0WM7LPXX8Wv+9lNRv7a733VOwQYyMoVQA==" },
+      { "version": "1.32.1", "integrity": "sha512-9KJsa/kaZVV4c81aLbDVEUUt6pAEolzz4eosmf+cShlXWNgZWiaTGVZqvkH/WNNUU8RhU8IUyGqUAQh/kIMiAg==" }
+    ],
     "repository": "https://github.com/esengine/deepseek-reasonix"
   },
   "paths": {

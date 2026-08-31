@@ -76,6 +76,11 @@
   "source": {
     "type": "npm",
     "package": "@openai/codex",
+    "latestVersionWindow": [
+      { "version": "0.151.0", "integrity": "sha512-mhtWmOZRdmWD1jPbLDnQb59BsaVP/V+lXe/OFNR9ZcLZU0UCiBwn98Fcav1ss7sDIlHkuqj6nWd44IPeXoOhJA==" },
+      { "version": "0.150.1", "integrity": "sha512-knrbhpJH3mEULAVStcZW4F5WEt9MQhBj6KFOonBSIUGTLcHlu9CE7FRmr95E33y94+sWNZSeVBBV/kYvlfgxkQ==" },
+      { "version": "0.150.0", "integrity": "sha512-AWrJENpRsvowLZeCEicYEmt4xD7EvSIX34+1DmFn7ZUwuX0Ku0/DMgouPHu5YKxJJF7/ixC1cIAu3oLSd8/H2g==" }
+    ],
     "repository": "https://github.com/openai/codex"
   },
   "paths": {

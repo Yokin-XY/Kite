@@ -196,8 +196,12 @@ data class KiteResourceInstallStep(
  */
 data class KiteResourceSourceVersion(
     val version: String,
-    val ref: String,
-    val commit: String,
+    val ref: String = "",
+    val commit: String = "",
+    val artifact: String = "",
+    val integrity: String = "",
+    val sha256: String = "",
+    val url: String = "",
 )
 
 data class KiteResourceInstallVerification(
@@ -980,6 +984,9 @@ class KiteResourceManifestLoader private constructor(
             latestJsonField = sourceJson.optString("latestJsonField").trim(),
             latestStripPrefix = sourceJson.optString("latestStripPrefix").trim(),
             registries = sourceJson.optJSONArray("registries").toStringList(),
+            latestVersionWindow = parseLatestVersionWindow(
+                sourceJson.optJSONArray("latestVersionWindow")
+            ),
             installArguments = sourceJson.optJSONArray("installArguments").toStringList(),
             versionArguments = sourceJson.optJSONArray("versionArguments").toStringList(),
             environment = sourceJson.optJSONObject("environment").toStringMap(),
@@ -1211,13 +1218,23 @@ class KiteResourceManifestLoader private constructor(
             for (index in 0 until windowJson.length()) {
                 val candidate = windowJson.optJSONObject(index)
                 if (candidate == null) {
-                    add(KiteResourceSourceVersion(version = "", ref = "", commit = ""))
+                    add(KiteResourceSourceVersion(version = ""))
                     continue
                 }
                 val version = candidate.optString("version").trim()
-                val ref = candidate.optString("ref").trim().ifBlank { version }
+                val ref = candidate.optString("ref").trim()
                 val commit = candidate.optString("commit").trim().lowercase()
-                add(KiteResourceSourceVersion(version = version, ref = ref, commit = commit))
+                add(
+                    KiteResourceSourceVersion(
+                        version = version,
+                        ref = ref,
+                        commit = commit,
+                        artifact = candidate.optString("artifact").trim(),
+                        integrity = candidate.optString("integrity").trim(),
+                        sha256 = candidate.optString("sha256").trim().lowercase(),
+                        url = candidate.optString("url").trim(),
+                    )
+                )
             }
         }
     }

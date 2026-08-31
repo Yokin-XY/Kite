@@ -148,6 +148,25 @@ assets/resources/<resource-id>/
 
 窗口最多三个版本，不能与固定 `ref` / `commit` 同时使用。安装器按用户的来源顺序向每个仓库查询最新 tag；只有最新 tag 命中窗口且实际检出的提交也一致才发布，并把选中的版本、ref 和提交写入资源目录的 `.kite-source-selection/`，供后续安装与验证步骤使用。`actions.updateStrategy: "reinstall"` 表示更新时复用同一套完整安装事务，而不是运行一套可能漏掉获取和核验的轻量脚本。
 
+NPM 资源把同类窗口写在 `source.latestVersionWindow`。单包可以省略 `artifact`；多包必须明确包名，每个包各保留最多三个版本：
+
+```json
+{
+  "source": {
+    "type": "npm",
+    "package": "@example/agent",
+    "companionPackages": ["@example/acp"],
+    "latestVersionWindow": [
+      {"artifact": "@example/agent", "version": "3.0.0", "integrity": "sha512-..."},
+      {"artifact": "@example/agent", "version": "2.9.0", "integrity": "sha512-..."},
+      {"artifact": "@example/acp", "version": "8.0.0", "integrity": "sha512-..."}
+    ]
+  }
+}
+```
+
+存在窗口时，`packages` 只能声明裸包名或 `@latest`，不能固定某个版本。运行时对用户排序后的每个注册源查询 `latest` 与 `dist.integrity`，全部包命中窗口后才按查询到的精确版本安装；选中身份写入 `.kite-source-selection/<step>.<package>.version|integrity`，主包同时写入无包名后缀的版本与摘要文件。
+
 ## 成功边界
 
 只有以下条件都满足，资源才能登记为已安装：

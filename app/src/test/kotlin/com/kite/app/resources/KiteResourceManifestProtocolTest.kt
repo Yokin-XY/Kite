@@ -17,6 +17,28 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class KiteResourceManifestProtocolTest {
+
+    @Test
+    fun everyNpmResourceRequestsLatestAndVerifiesTheSignedIntegrityWindow() {
+        val npmManifests = resourceRoot().listFiles().orEmpty()
+            .mapNotNull { directory ->
+                File(directory, "manifest.json").takeIf(File::isFile)
+            }
+            .map { file -> KiteResourceManifestLoader(context).parseManifestJson(file.readText()) }
+            .filter { manifest -> manifest.sourceType == "npm" }
+
+        assertEquals(14, npmManifests.size)
+        npmManifests.forEach { manifest ->
+            assertTrue("${manifest.id} has no signed source window", manifest.source.latestVersionWindow.isNotEmpty())
+            val plan = KiteResourceSourcePlanFactory.plan(manifest)
+            val script = plan.installActions.joinToString("\n") { action ->
+                KiteResourceInstallPlanCompiler.compile(action)
+            }
+            assertTrue("${manifest.id} does not request latest", script.contains("request=latest"))
+            assertTrue("${manifest.id} does not verify package integrity", script.contains("dist.integrity"))
+            assertTrue("${manifest.id} does not reject an out-of-window source", script.contains("source-unverified"))
+        }
+    }
     private val context by lazy { ApplicationProvider.getApplicationContext<Context>() }
 
     @Test
@@ -278,9 +300,10 @@ class KiteResourceManifestProtocolTest {
         assertEquals(listOf("kite.nodejs", "kite.git", "kite.codex.relay"), manifest.baseRequirements)
         assertEquals(KiteResourceInstallPlanCompiler.STEP_NPM, installStep.type)
         assertEquals(
-            listOf("@openai/codex@latest"),
+            listOf("@openai/codex"),
             installStep.packages
         )
+        assertEquals(3, installStep.latestVersionWindow.size)
         assertEquals(5, installStep.retryAttempts)
         assertEquals(3, installStep.retryDelaySeconds)
         assertEquals(listOf("codex"), installAction.managedCommands)
@@ -431,9 +454,10 @@ class KiteResourceManifestProtocolTest {
         assertEquals(listOf("kite.nodejs", "kite.git"), manifest.baseRequirements)
         assertEquals(KiteResourceInstallPlanCompiler.STEP_NPM, installStep.type)
         assertEquals(
-            listOf("@anthropic-ai/claude-code@latest", "@agentclientprotocol/claude-agent-acp@latest"),
+            listOf("@anthropic-ai/claude-code", "@agentclientprotocol/claude-agent-acp"),
             installStep.packages
         )
+        assertEquals(6, installStep.latestVersionWindow.size)
         assertEquals(listOf("--allow-scripts=@anthropic-ai/claude-code"), installStep.arguments)
         assertTrue(installStep.registries.isEmpty())
         assertTrue(
@@ -722,7 +746,8 @@ class KiteResourceManifestProtocolTest {
         assertTrue(manifest.installActions.isEmpty())
         assertTrue(manifest.uninstallActions.isEmpty())
         assertTrue(sourcePlan.generatedFromSource)
-        assertEquals(listOf("reasonix@latest"), installAction.installSteps.single().packages)
+        assertEquals(listOf("reasonix"), installAction.installSteps.single().packages)
+        assertEquals(3, installAction.installSteps.single().latestVersionWindow.size)
         assertEquals(listOf("reasonix"), installAction.managedCommands)
         assertEquals(
             listOf("installed-version", "command-reasonix"),
@@ -733,7 +758,7 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
-    fun deepSeekHarnessUsesOfficialRuntimeWithPinnedFullAcpBridge() {
+    fun deepSeekHarnessUsesLatestVerifiedOfficialRuntimeWithFullAcpBridge() {
         val manifestFile = File(resourceRoot(), "kite.deepseek.harness/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
         val profile = manifest.agentProfiles.single()
@@ -757,11 +782,12 @@ class KiteResourceManifestProtocolTest {
         )
         assertEquals(
             listOf(
-                "@deepseek-ai/dsh@0.1.1-rc.2",
-                "@openma/deepseek-harness-acp@0.4.26",
+                "@deepseek-ai/dsh",
+                "@openma/deepseek-harness-acp",
             ),
             packageStep.packages,
         )
+        assertEquals(5, manifest.source.latestVersionWindow.size)
         assertTrue(packageStep.registries.isEmpty())
         assertTrue(
             KiteResourceInstallPlanCompiler.compile(installAction)

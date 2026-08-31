@@ -74,6 +74,11 @@
   "source": {
     "type": "npm",
     "package": "@mimo-ai/cli",
+    "latestVersionWindow": [
+      { "version": "0.1.13", "integrity": "sha512-tEChkbCPP6Cuk88yFEV5suQ/3U0864S2G+PKsVKfpGY1FJ2EsnOa/q1ie8J9XsTg7Z42JCCWRmN6apRujNgT2Q==" },
+      { "version": "0.1.12", "integrity": "sha512-f1y5YsWXgDuKycTAMWI2RzgSwnipVawW8qxaVR3ksy0/3A5/rSDykrUF1zoIwnmZF481MqiJOFexV4ZasWGe9Q==" },
+      { "version": "0.1.11", "integrity": "sha512-3Sw3oUTni26EQil2PPESgam2XMxlPaFhF4KaasKXKIPFe46IxjA+rfvyrwC963Lv5NXjSJKjacLQjjDFfcMgBQ==" }
+    ],
     "repository": "https://github.com/XiaomiMiMo/MiMo-Code"
   },
   "paths": {

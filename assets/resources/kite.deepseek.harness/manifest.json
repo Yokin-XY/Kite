@@ -47,8 +47,15 @@
     "type": "npm",
     "package": "@deepseek-ai/dsh",
     "companionPackages": ["@openma/deepseek-harness-acp"],
+    "latestVersionWindow": [
+      { "artifact": "@deepseek-ai/dsh", "version": "0.1.1-rc.2", "integrity": "sha512-UP1UIh6q3Gme/yXRn/QL2P8IsVlv8Shpg22TRJIZPsCRWLm4CBiA1MUvXmJAfsOEETBMLAl+xWPtFw6ICsN3wg==" },
+      { "artifact": "@deepseek-ai/dsh", "version": "0.1.1-rc.1", "integrity": "sha512-HVauMT0F7MWUctkxzBcu5PMFc8j0lm0kX+4IbcUsA7Oh+/xv7xhigEDP0SaSOM/kR48U/BldHbZru116DcZz0w==" },
+      { "artifact": "@openma/deepseek-harness-acp", "version": "0.4.26", "integrity": "sha512-fke1vS505m5ydlVAxml+OIyIr6O+kwjm3JsOsQXMfXIP41m0fExEO74VJ0rnJ3K1R1tD7bgMaun/O7d1iZVu1A==" },
+      { "artifact": "@openma/deepseek-harness-acp", "version": "0.4.25", "integrity": "sha512-uqu5KJNbqpQ30N1L+Yd3deC4NvkcV6aHyQVOY7EpGEJ27aKjq9KNogeJqfC8wpKSE0YzaJ+0lPYsW5w40hdbwg==" },
+      { "artifact": "@openma/deepseek-harness-acp", "version": "0.4.24", "integrity": "sha512-IT27c1BVyO2cVOqGxXtdqBQUgwWHydR6Civ5E3fRYIJEbkGfFvWJFQs+gshC+rDbSeg9Uj5XTnEJ1uVMfCQz8A==" }
+    ],
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
-    "tag": "0.1.1-rc.2"
+    "tag": "latest"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.deepseek.harness",
@@ -95,8 +102,8 @@
             "id": "install-deepseek-harness-pair",
             "type": "npm",
             "packages": [
-              "@deepseek-ai/dsh@0.1.1-rc.2",
-              "@openma/deepseek-harness-acp@0.4.26"
+              "@deepseek-ai/dsh",
+              "@openma/deepseek-harness-acp"
             ],
             "args": [
               "--no-audit",

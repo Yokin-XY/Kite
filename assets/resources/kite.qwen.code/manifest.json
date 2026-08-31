@@ -68,6 +68,11 @@
   "source": {
     "type": "npm",
     "package": "@qwen-code/qwen-code",
+    "latestVersionWindow": [
+      { "version": "0.22.3", "integrity": "sha512-8Ngy/ZEn+idOyN3k52K9TNu/XSkNfS2hyzsikeSDe79kRd2/eMYbWLOZq6LHSGVYXVNpY6ktpfZLthxY5AHWeA==" },
+      { "version": "0.22.2", "integrity": "sha512-u1qzaUVDIn9GTEroUtOy5mVaGYo3eGh0P4A840Aac8PkZu9ob4wMnQFgTVVD7rtjj9BY6WLFuMqX3uP/zXw9Uw==" },
+      { "version": "0.22.1", "integrity": "sha512-sDki8GaxUA7eEbo1SQNd15TXiP22CMmOpUmfKeDvl+vmyw5sMwX5XJunQ8R4zReRV8z+HIaqqK5u28UX807lhw==" }
+    ],
     "repository": "https://github.com/QwenLM/qwen-code"
   },
   "paths": {

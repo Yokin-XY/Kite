@@ -72,6 +72,11 @@
   "source": {
     "type": "npm",
     "package": "@github/copilot",
+    "latestVersionWindow": [
+      { "version": "1.0.82", "integrity": "sha512-+mDIwBO3dCpL3k2rVLc4+1tFzqcVBTJNA/0co+okEpmCgcHjaz91Cqq7++pJKN5yJQuGC6bKangm7PSoheI1Xw==" },
+      { "version": "1.0.81", "integrity": "sha512-Yif+wnRY1rT6FMmxr+SMZCq60mBTTPvbAHGd42Jty9wf1ZmeTsJYAcaGDXC9oyNm3RYRc3wkL0MSscNiEZADAA==" },
+      { "version": "1.0.80", "integrity": "sha512-6tf93ZF56KOiTTAjK/UhLZkl1W543IzaTQly288kockJZFswpRTnQEI00Yvacpb39DTvTYu3/ha9SeKpo/pgZQ==" }
+    ],
     "repository": "https://github.com/github/copilot-cli",
     "installArguments": [
       "--no-update-notifier",
