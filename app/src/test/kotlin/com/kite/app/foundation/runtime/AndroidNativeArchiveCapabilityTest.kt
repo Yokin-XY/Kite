@@ -54,10 +54,32 @@ class AndroidNativeArchiveCapabilityTest {
         assertEquals(AndroidNativeArchiveFormat.TAR_GZIP, ready.plan.format)
         assertEquals(digest, ready.plan.expectedSha256)
         assertEquals("native_archive_tar_gz_ready", ready.reason)
+        val accepted = setOf("b".repeat(64), "c".repeat(64))
+        val acceptedReady = prepare(
+            fixture,
+            parameters(
+                format = "tar.gz",
+                extra = mapOf(
+                    AndroidNativeArchiveCapabilityProvider.PARAM_ACCEPTED_SHA256S to accepted.joinToString("\n"),
+                ),
+            ),
+        ) as RuntimeProviderDecision.Ready
+        assertEquals(accepted, acceptedReady.plan.acceptedSha256s)
         assertBlocked(
             fixture,
             parameters(format = "tar.gz", extra = mapOf("specialEntryPolicy" to "unknown")),
             "native_archive_special_entry_policy_invalid",
+        )
+        assertBlocked(
+            fixture,
+            parameters(
+                format = "tar.gz",
+                extra = mapOf(
+                    AndroidNativeArchiveCapabilityProvider.PARAM_EXPECTED_SHA256 to digest,
+                    AndroidNativeArchiveCapabilityProvider.PARAM_ACCEPTED_SHA256S to accepted.joinToString("\n"),
+                ),
+            ),
+            "native_archive_digest_contract_conflict",
         )
     }
 

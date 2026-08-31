@@ -27,6 +27,7 @@ internal data class AndroidNativeArchivePlan(
     val maximumExpansionRatio: Int,
     val format: AndroidNativeArchiveFormat = AndroidNativeArchiveFormat.ZIP,
     val expectedSha256: String? = null,
+    val acceptedSha256s: Set<String> = emptySet(),
     val specialEntryPolicy: RustTarSpecialEntryPolicy = RustTarSpecialEntryPolicy.REJECT,
     val reuseKey: String? = null,
 )
@@ -89,6 +90,18 @@ internal object AndroidNativeArchiveCapabilityProvider :
         if (expectedSha256 != null && !SHA256.matches(expectedSha256)) {
             return blocked("native_archive_digest_invalid")
         }
+        val acceptedSha256s = parameters[PARAM_ACCEPTED_SHA256S]
+            ?.lineSequence()
+            ?.map(String::trim)
+            ?.filter(String::isNotBlank)
+            ?.toSet()
+            .orEmpty()
+        if (acceptedSha256s.size !in 0..MAXIMUM_ACCEPTED_DIGESTS || acceptedSha256s.any { !SHA256.matches(it) }) {
+            return blocked("native_archive_accepted_digests_invalid")
+        }
+        if (expectedSha256 != null && acceptedSha256s.isNotEmpty()) {
+            return blocked("native_archive_digest_contract_conflict")
+        }
         val specialEntryPolicyValue = parameters[PARAM_SPECIAL_ENTRY_POLICY]?.takeIf(String::isNotBlank)
         val specialEntryPolicy = specialEntryPolicyValue?.let { value ->
             RustTarSpecialEntryPolicy.entries.firstOrNull { it.wireValue == value.lowercase() }
@@ -118,6 +131,7 @@ internal object AndroidNativeArchiveCapabilityProvider :
                 maximumExpansionRatio = maximumExpansionRatio,
                 format = format,
                 expectedSha256 = expectedSha256,
+                acceptedSha256s = acceptedSha256s,
                 specialEntryPolicy = specialEntryPolicy,
                 reuseKey = reuseKey,
             ),
@@ -145,6 +159,7 @@ internal object AndroidNativeArchiveCapabilityProvider :
     const val PARAM_MAX_DEPTH = "maxDepth"
     const val PARAM_MAX_EXPANSION_RATIO = "maxExpansionRatio"
     const val PARAM_EXPECTED_SHA256 = "expectedSha256"
+    const val PARAM_ACCEPTED_SHA256S = "acceptedSha256s"
     const val PARAM_SPECIAL_ENTRY_POLICY = "specialEntryPolicy"
     const val PARAM_REUSE_KEY = "reuseKey"
     const val FORMAT_ZIP = "zip"
@@ -160,6 +175,7 @@ internal object AndroidNativeArchiveCapabilityProvider :
         PARAM_MAX_DEPTH,
         PARAM_MAX_EXPANSION_RATIO,
         PARAM_EXPECTED_SHA256,
+        PARAM_ACCEPTED_SHA256S,
         PARAM_SPECIAL_ENTRY_POLICY,
         PARAM_REUSE_KEY,
     )
@@ -169,6 +185,7 @@ internal object AndroidNativeArchiveCapabilityProvider :
     private const val MAXIMUM_DEPTH = 64
     private const val MAXIMUM_EXPANSION_RATIO = 1_000
     private const val MAXIMUM_BYTES = 8L * 1024L * 1024L * 1024L
+    private const val MAXIMUM_ACCEPTED_DIGESTS = 3
 }
 
 internal fun interface NativeArchiveProgressListener {

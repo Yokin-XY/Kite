@@ -115,7 +115,7 @@ object KiteResourceSourcePlanFactory {
         actions: List<KiteResourceShellAction>,
     ): List<KiteResourceShellAction> {
         val window = manifest.source.latestVersionWindow
-        if (manifest.source.type !in setOf(SOURCE_NPM, SOURCE_PYPI) || window.isEmpty()) return actions
+        if (window.isEmpty()) return actions
         return actions.map { action ->
             if (action.type != KiteResourceInstallPlanCompiler.ACTION_MANAGED) return@map action
             action.copy(
@@ -123,13 +123,35 @@ object KiteResourceSourcePlanFactory {
                     val matchingStepType = when (manifest.source.type) {
                         SOURCE_NPM -> KiteResourceInstallPlanCompiler.STEP_NPM
                         SOURCE_PYPI -> KiteResourceInstallPlanCompiler.STEP_PYPI
-                        else -> ""
+                        else -> KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
                     }
                     if (
                         step.type == matchingStepType &&
                         step.latestVersionWindow.isEmpty()
                     ) {
-                        step.copy(latestVersionWindow = window)
+                        step.copy(
+                            latestVersionWindow = window,
+                            urls = if (
+                                matchingStepType == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD &&
+                                step.urls.isEmpty()
+                            ) {
+                                listOf(manifest.source.latestUrl).filter(String::isNotBlank)
+                            } else {
+                                step.urls
+                            },
+                            latestFormat = if (
+                                matchingStepType == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
+                            ) manifest.source.latestFormat else step.latestFormat,
+                            latestJsonField = if (
+                                matchingStepType == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
+                            ) manifest.source.latestJsonField else step.latestJsonField,
+                            latestRegex = if (
+                                matchingStepType == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
+                            ) manifest.source.latestRegex else step.latestRegex,
+                            latestStripPrefix = if (
+                                matchingStepType == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
+                            ) manifest.source.latestStripPrefix else step.latestStripPrefix,
+                        )
                     } else {
                         step
                     }

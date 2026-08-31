@@ -28,6 +28,14 @@ class KiteResourceSourcePolicyTest {
                 type = KiteResourceInstallPlanCompiler.STEP_PYPI,
                 packages = listOf("example-tool"),
             ),
+            KiteResourceInstallStep(
+                id = "latest-download",
+                type = KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD,
+                urls = listOf(
+                    "https://github.com/example/tool/releases/latest",
+                    "https://gitcode.com/example/tool/releases/latest",
+                ),
+            ),
         )
 
         val domestic = KiteResourceSourcePolicy.apply(
@@ -52,6 +60,8 @@ class KiteResourceSourcePolicyTest {
             domestic.installSteps[2].registries.first(),
         )
         assertEquals("https://pypi.org/simple", official.installSteps[2].registries.first())
+        assertEquals("https://gitcode.com/example/tool/releases/latest", domestic.installSteps[3].urls.first())
+        assertEquals("https://github.com/example/tool/releases/latest", official.installSteps[3].urls.first())
     }
 
     @Test

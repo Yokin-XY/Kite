@@ -175,6 +175,10 @@ data class KiteResourceInstallStep(
     val ref: String = "",
     val commit: String = "",
     val latestVersionWindow: List<KiteResourceSourceVersion> = emptyList(),
+    val latestFormat: String = "json",
+    val latestJsonField: String = "",
+    val latestRegex: String = "",
+    val latestStripPrefix: String = "",
     val depth: Int = 1,
     val retryAttempts: Int = 4,
     val retryDelaySeconds: Int = 2,
@@ -980,8 +984,9 @@ class KiteResourceManifestLoader private constructor(
             binaryPath = sourceJson.optString("binaryPath").trim(),
             architectures = sourceJson.optJSONObject("architectures").toStringMap(),
             latestUrl = sourceJson.optString("latestUrl").trim(),
-            latestFormat = sourceJson.optString("latestFormat").trim().ifBlank { "json" },
+            latestFormat = sourceJson.optString("latestFormat").trim().lowercase().ifBlank { "json" },
             latestJsonField = sourceJson.optString("latestJsonField").trim(),
+            latestRegex = sourceJson.optString("latestRegex").trim(),
             latestStripPrefix = sourceJson.optString("latestStripPrefix").trim(),
             registries = sourceJson.optJSONArray("registries").toStringList(),
             latestVersionWindow = parseLatestVersionWindow(
@@ -1195,6 +1200,10 @@ class KiteResourceManifestLoader private constructor(
                         latestVersionWindow = parseLatestVersionWindow(
                             step.optJSONArray("latestVersionWindow")
                         ),
+                        latestFormat = step.optString("latestFormat", "json").trim().lowercase(),
+                        latestJsonField = step.optString("latestJsonField").trim(),
+                        latestRegex = step.optString("latestRegex").trim(),
+                        latestStripPrefix = step.optString("latestStripPrefix").trim(),
                         depth = step.optInt("depth", 1).coerceIn(0, 1000),
                         retryAttempts = step.optInt("retryAttempts", 4).coerceIn(1, 10),
                         retryDelaySeconds = step.optInt("retryDelaySeconds", 2).coerceIn(0, 60),

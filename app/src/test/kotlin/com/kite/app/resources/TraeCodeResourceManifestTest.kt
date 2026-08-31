@@ -16,7 +16,7 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class TraeCodeResourceManifestTest {
     @Test
-    fun `TraeCode卡片固定官方ARM64制品并声明原生硬链接ACP`() {
+    fun `TraeCode卡片查询官方latest并声明原生硬链接ACP`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val resourceRoot = sequenceOf(File("../assets/resources"), File("assets/resources"))
             .first(File::isDirectory)
@@ -39,12 +39,13 @@ class TraeCodeResourceManifestTest {
         })
         assertTrue(AgentResourceRegistrationMapper.registrations(manifest).single().launch is AgentLaunchSpec.Managed)
 
-        val install = manifest.installActions.single()
-        assertEquals(
-            "e2ddc587cb813473c4f2635bb14c5a3da9a5eb944991600d4bdefe8267a4b1c5",
-            install.installSteps.first().sha256,
-        )
+        assertEquals(3, manifest.source.latestVersionWindow.size)
+        assertEquals("version", manifest.source.latestJsonField)
+        val install = KiteResourceSourcePlanFactory.plan(manifest).installActions.single()
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD, install.installSteps.first().type)
+        assertEquals(3, install.installSteps.first().latestVersionWindow.size)
         assertTrue(install.installSteps.last().cmd.contains("gzip -dc"))
+        assertTrue(install.installSteps.last().cmd.contains(".kite-source-selection/download-trae-linux-arm64.version"))
         assertFalse(install.verifications.any { it.cmd.contains("traecli --version") })
         assertFalse(raw.contains("PERSONAL_ACCESS_TOKEN"))
     }

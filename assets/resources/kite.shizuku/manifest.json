@@ -42,6 +42,30 @@
     "repository": "https://github.com/RikkaApps/Shizuku",
     "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk",
     "tag": "v13.6.0",
+    "latestUrl": "https://api.github.com/repos/RikkaApps/Shizuku/releases/latest",
+    "latestFormat": "json",
+    "latestJsonField": "tag_name",
+    "latestStripPrefix": "v",
+    "latestVersionWindow": [
+      {
+        "version": "13.6.0",
+        "artifact": "shizuku-v13.6.0.r1086.2650830c-release.apk",
+        "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk",
+        "sha256": "6e273ab0e991c4e79bc8b1bbb9b9dd739ccac1a8712a541a214078886b7b790f"
+      },
+      {
+        "version": "13.5.4",
+        "artifact": "shizuku-v13.5.4.r1049.0e53409-release.apk",
+        "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.5.4/shizuku-v13.5.4.r1049.0e53409-release.apk",
+        "sha256": "a05832ce3716afb1fcccf46f348006d2a296ca777e1ff3d223797dc74d06b31f"
+      },
+      {
+        "version": "13.5.3",
+        "artifact": "shizuku-v13.5.3.r1036.fff3f87-release.apk",
+        "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.5.3/shizuku-v13.5.3.r1036.fff3f87-release.apk",
+        "sha256": "69cec1f0f4185add835409881a670db8873bae084d57f4ea3c7e6aba054e3474"
+      }
+    ],
     "maxBytes": 5242880
   },
   "paths": {
@@ -55,10 +79,8 @@
         "steps": [
           {
             "id": "download-shizuku-apk",
-            "type": "download",
-            "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk",
+            "type": "latest_download",
             "destination": "$install_root/shizuku.apk",
-            "sha256": "6e273ab0e991c4e79bc8b1bbb9b9dd739ccac1a8712a541a214078886b7b790f",
             "retryAttempts": 4,
             "retryDelaySeconds": 2,
             "maxBytes": 5242880
@@ -81,10 +103,8 @@
         "steps": [
           {
             "id": "download-shizuku-apk",
-            "type": "download",
-            "url": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk",
+            "type": "latest_download",
             "destination": "$install_root/shizuku.apk",
-            "sha256": "6e273ab0e991c4e79bc8b1bbb9b9dd739ccac1a8712a541a214078886b7b790f",
             "retryAttempts": 4,
             "retryDelaySeconds": 2,
             "maxBytes": 5242880

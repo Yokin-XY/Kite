@@ -253,6 +253,80 @@ class KiteResourceInstallPlanCompilerTest {
     }
 
     @Test
+    fun latestDownloadQueriesMetadataThenSelectsOnlySignedArtifact() {
+        val action = managedAction(
+            steps = listOf(
+                KiteResourceInstallStep(
+                    id = "latest-binary",
+                    type = KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD,
+                    urls = listOf("https://api.example.test/releases/latest"),
+                    destination = "${'$'}install_root/tool.tar.gz",
+                    latestFormat = "json",
+                    latestJsonField = "tag_name",
+                    latestStripPrefix = "v",
+                    latestVersionWindow = listOf(
+                        KiteResourceSourceVersion(
+                            version = "3.0.0",
+                            artifact = "tool-3.0.0.tar.gz",
+                            sha256 = "a".repeat(64),
+                            url = "https://downloads.example.test/tool-3.0.0.tar.gz",
+                        ),
+                        KiteResourceSourceVersion(
+                            version = "2.9.0",
+                            artifact = "tool-2.9.0.tar.gz",
+                            sha256 = "b".repeat(64),
+                            url = "https://downloads.example.test/tool-2.9.0.tar.gz",
+                        ),
+                    ),
+                    maxBytes = 1048576,
+                )
+            )
+        )
+
+        val script = KiteResourceInstallPlanCompiler.compile(action)
+
+        assertTrue(script.contains("request=latest"))
+        assertTrue(script.contains("tag_name"))
+        assertTrue(script.contains("latest-version-outside-window"))
+        assertTrue(script.contains("downloads.example.test/tool-3.0.0.tar.gz"))
+        assertTrue(script.contains("no-verified-latest-source"))
+        assertTrue(script.contains(".kite-source-selection"))
+        assertTrue(script.contains("\nKITE_LATEST_METADATA\n"))
+    }
+
+    @Test
+    fun latestDownloadCanReadVersionFromBoundedMetadataRegex() {
+        val action = managedAction(
+            steps = listOf(
+                KiteResourceInstallStep(
+                    id = "latest-installer-binary",
+                    type = KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD,
+                    urls = listOf("https://vendor.example.test/install"),
+                    destination = "${'$'}install_root/tool.tar.gz",
+                    latestFormat = "regex",
+                    latestRegex = "releases/([0-9]+\\.[0-9]+\\.[0-9]+)/linux-arm64",
+                    latestVersionWindow = listOf(
+                        KiteResourceSourceVersion(
+                            version = "3.0.0",
+                            artifact = "tool-3.0.0.tar.gz",
+                            sha256 = "a".repeat(64),
+                            url = "https://downloads.example.test/tool-3.0.0.tar.gz",
+                        )
+                    ),
+                    maxBytes = 1048576,
+                )
+            )
+        )
+
+        val script = KiteResourceInstallPlanCompiler.compile(action)
+
+        assertTrue(script.contains("releases/([0-9]+\\.[0-9]+\\.[0-9]+)/linux-arm64"))
+        assertTrue(script.contains("latest-metadata-size-limit"))
+        assertTrue(script.contains("re.search(selector, raw)"))
+        assertTrue(script.contains("match.group(1)"))
+    }
+
+    @Test
     fun npmRegistryRejectsInsecureOrCredentialBearingUrls() {
         listOf(
             "http://registry.example.test",

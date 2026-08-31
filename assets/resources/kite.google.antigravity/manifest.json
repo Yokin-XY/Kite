@@ -4,7 +4,7 @@
   "base": {
     "name": "Antigravity CLI",
     "description": "Google Antigravity 的原生会话 Agent",
-    "version": "official",
+    "version": "1.1.22",
     "icon": {
       "type": "asset",
       "value": "resources/kite.google.antigravity/icon.png",
@@ -14,7 +14,12 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["agy"]
+    "managedCommands": ["agy"],
+    "versionProbe": {
+      "command": "agy --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
   },
   "display": {
     "sections": [
@@ -24,8 +29,8 @@
     "order": 100,
     "category": "AI",
     "accent": "blue",
-    "sizeLabel": "网络包",
-    "longDescription": "Antigravity CLI 是 Google 的编码 Agent。Kite 使用官方 stream-json 持续会话接入消息、工具步骤、模型、推理强度、权限模式和历史恢复；首次认证仍由 agy 官方交互流程完成。",
+    "sizeLabel": "下载约 53 MB",
+    "longDescription": "Antigravity CLI 是 Google 的编码 Agent。Kite 每次安装先查询官方平台清单，只接受签名最近三版窗口中的 Linux ARM64 制品并校验 SHA-256；使用官方 stream-json 持续会话接入消息、工具步骤、模型、推理强度、权限模式和历史恢复，首次认证仍由 agy 官方交互流程完成。",
     "recommendations": [
       {
         "resourceId": "kite.curl",
@@ -66,9 +71,36 @@
     "extensions": []
   },
   "source": {
-    "type": "official_script",
-    "url": "https://antigravity.google/cli/install.sh",
-    "repository": "https://antigravity.google"
+    "type": "official_release_archive",
+    "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.22-5711547746615296/linux-arm/cli_linux_arm64.tar.gz",
+    "repository": "https://antigravity.google",
+    "tag": "1.1.22",
+    "archiveType": "tar.gz",
+    "binaryPath": "antigravity",
+    "latestUrl": "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json",
+    "latestFormat": "json",
+    "latestJsonField": "version",
+    "latestVersionWindow": [
+      {
+        "version": "1.1.22",
+        "artifact": "cli_linux_arm64.tar.gz",
+        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.22-5711547746615296/linux-arm/cli_linux_arm64.tar.gz",
+        "sha256": "a68925bc7336eb0b90de1e1aefd44d535f5487b7cf606a76fdb982207aef9a2e"
+      },
+      {
+        "version": "1.1.21",
+        "artifact": "cli_linux_arm64.tar.gz",
+        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.21-6424454201475072/linux-arm/cli_linux_arm64.tar.gz",
+        "sha256": "8626b97aec1ef96abdabd234c0b8259a2fdf2a3f3918c927641f8c821342d5e4"
+      },
+      {
+        "version": "1.1.20",
+        "artifact": "cli_linux_arm64.tar.gz",
+        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.20-5830032204103680/linux-arm/cli_linux_arm64.tar.gz",
+        "sha256": "a2f5c205e9c1c89bfcf714f485a08c63b1a5d907f98226191e7b5a177e0368a9"
+      }
+    ],
+    "maxBytes": 67108864
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.google.antigravity",
@@ -101,17 +133,30 @@
         "type": "managed",
         "steps": [
           {
-            "id": "download-antigravity-installer",
-            "type": "download",
-            "url": "https://antigravity.google/cli/install.sh",
-            "destination": "$install_root/.kite-downloads/install.sh",
-            "maxBytes": 16777216
+            "id": "download-antigravity-linux-arm64",
+            "type": "latest_download",
+            "destination": "$install_root/.kite-downloads/antigravity-linux-arm64.tar.gz",
+            "retryAttempts": 4,
+            "retryDelaySeconds": 2,
+            "maxBytes": 67108864
           },
           {
-            "id": "run-antigravity-installer",
-            "type": "script",
-            "interpreter": "bash",
-            "path": "$install_root/.kite-downloads/install.sh"
+            "id": "extract-antigravity-linux-arm64",
+            "type": "archive",
+            "path": "$install_root/.kite-downloads/antigravity-linux-arm64.tar.gz",
+            "destination": "$install_root/runtime",
+            "format": "tar.gz",
+            "maxEntries": 32,
+            "maxOutputBytes": 134217728,
+            "maxFileBytes": 134217728,
+            "maxDepth": 4,
+            "maxExpansionRatio": 8,
+            "specialEntryPolicy": "reject"
+          },
+          {
+            "id": "link-antigravity-linux-arm64",
+            "type": "shell",
+            "cmd": "set -eu\nselected_version_file=\"$install_root/.kite-source-selection/download-antigravity-linux-arm64.version\"\ntest -s \"$selected_version_file\"\nmkdir -p \"$install_root/bin\" \"$install_root/user-home\"\nchmod 755 \"$install_root/runtime/antigravity\"\ncat > \"$install_root/bin/agy\" <<EOF\n#!/usr/bin/env bash\nset -eu\nexport HOME=\"$install_root/user-home\"\nexec \"$install_root/runtime/antigravity\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/agy\"\ncat \"$selected_version_file\" > \"$install_root/.kite-version\""
           }
         ],
         "managedCommands": [
@@ -121,7 +166,7 @@
         "verify": [
           {
             "id": "antigravity-command",
-            "cmd": "command -v agy >/dev/null 2>&1"
+            "cmd": "command -v agy >/dev/null 2>&1 && test -x \"$install_root/runtime/antigravity\" && test \"$(cat \"$install_root/.kite-version\")\" = \"$(cat \"$install_root/.kite-source-selection/download-antigravity-linux-arm64.version\")\""
           }
         ],
         "timeoutMs": 600000

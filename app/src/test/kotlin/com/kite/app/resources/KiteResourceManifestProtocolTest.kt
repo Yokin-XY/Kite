@@ -336,6 +336,15 @@ class KiteResourceManifestProtocolTest {
         assertEquals(60_000L, profile.initializeTimeoutMs)
         assertEquals("google-antigravity", profile.configAdapterId)
         assertFalse(profile.configurationRequired)
+        assertEquals("1.1.22", manifest.version)
+        assertEquals("version", manifest.source.latestJsonField)
+        assertEquals(3, manifest.source.latestVersionWindow.size)
+        val install = KiteResourceSourcePlanFactory.plan(manifest).installActions.single()
+        assertEquals(
+            KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD,
+            install.installSteps.first().type,
+        )
+        assertEquals("archive", install.installSteps[1].type)
 
         val registration = AgentResourceRegistrationMapper.registrations(manifest).single()
         assertEquals("antigravity", registration.definition.agentId)

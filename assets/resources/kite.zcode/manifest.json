@@ -49,6 +49,29 @@
     "tag": "3.10.1",
     "archiveType": "deb",
     "binaryPath": "opt/ZCode/resources/glm/zcode.cjs",
+    "latestUrl": "https://zcode.z.ai/en",
+    "latestFormat": "regex",
+    "latestRegex": "cdn-zcode\\.z\\.ai/zcode/electron/releases/([0-9]+\\.[0-9]+\\.[0-9]+)/linux-arm64/ZCode-",
+    "latestVersionWindow": [
+      {
+        "version": "3.10.1",
+        "artifact": "ZCode-3.10.1-linux-arm64.deb",
+        "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.10.1/linux-arm64/ZCode-3.10.1-linux-arm64.deb",
+        "sha256": "22b79babe3b00fb6fbfcf7dcc033b7564a734f53df4f28998c18556071286b2c"
+      },
+      {
+        "version": "3.9.2",
+        "artifact": "ZCode-3.9.2-linux-arm64.deb",
+        "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.9.2/linux-arm64/ZCode-3.9.2-linux-arm64.deb",
+        "sha256": "55bf892633961a8634d5396805126f423e3efb1bbf9530552519d752c374dba2"
+      },
+      {
+        "version": "3.9.1",
+        "artifact": "ZCode-3.9.1-linux-arm64.deb",
+        "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.9.1/linux-arm64/ZCode-3.9.1-linux-arm64.deb",
+        "sha256": "ebf0aaf6dffd6b2f547d18353f1ae54c5b5fd73c54073df7bb17cb10049c7542"
+      }
+    ],
     "maxBytes": 167772160
   },
   "paths": {
@@ -105,10 +128,8 @@
         "steps": [
           {
             "id": "download-zcode-linux-arm64",
-            "type": "download",
-            "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.10.1/linux-arm64/ZCode-3.10.1-linux-arm64.deb",
-            "destination": "$install_root/.kite-downloads/ZCode-3.10.1-linux-arm64.deb",
-            "sha256": "22b79babe3b00fb6fbfcf7dcc033b7564a734f53df4f28998c18556071286b2c",
+            "type": "latest_download",
+            "destination": "$install_root/.kite-downloads/zcode-linux-arm64.deb",
             "retryAttempts": 4,
             "retryDelaySeconds": 2,
             "maxBytes": 167772160
@@ -116,7 +137,7 @@
           {
             "id": "extract-zcode-native-runtime",
             "type": "shell",
-            "cmd": "set -eu\narchive=\"$install_root/.kite-downloads/ZCode-3.10.1-linux-arm64.deb\"\nextract_root=\"$install_root/.kite-zcode-extract\"\nruntime_root=\"$install_root/runtime\"\ncommand -v dpkg-deb >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=install step=extract-zcode-native-runtime reason=dpkg-deb-missing'; exit 127; }\nrm -rf \"$extract_root\"\nmkdir -p \"$extract_root\" \"$runtime_root\" \"$install_root/bin\" \"$install_root/user-home/.zcode/cli\" \"$install_root/user-home/.zcode/v2\"\ndpkg-deb --fsys-tarfile \"$archive\" | tar -xf - -C \"$extract_root\" ./opt/ZCode/resources/glm/zcode.cjs ./opt/ZCode/resources/glm/.node-bundle-meta.json\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/zcode.cjs\" \"$runtime_root/zcode.cjs\"\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/.node-bundle-meta.json\" \"$runtime_root/.node-bundle-meta.json\"\ncat > \"$install_root/bin/zcode\" <<EOF\n#!/usr/bin/env bash\nset -eu\nmanaged_home=\"$install_root/user-home\"\nlegacy_home=\"\\${HOME:-/root}\"\nmkdir -p \"\\$managed_home/.zcode/cli\" \"\\$managed_home/.zcode/v2\"\nif [ ! -e \"\\$managed_home/.zcode/cli/config.json\" ] && [ \"\\$legacy_home\" != \"\\$managed_home\" ] && [ -f \"\\$legacy_home/.zcode/cli/config.json\" ]; then\n  cp \"\\$legacy_home/.zcode/cli/config.json\" \"\\$managed_home/.zcode/cli/config.json\"\nfi\nexport HOME=\"\\$managed_home\"\nexport ZCODE_HOME=\"\\$managed_home/.zcode\"\nexport ZCODE_DATA_BASE_DIR=\"\\$managed_home\"\nexec node \"$install_root/runtime/zcode.cjs\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/zcode\"\nprintf '%s\\n' '3.10.1' > \"$install_root/.kite-version\"\nrm -rf \"$extract_root\"\nrm -f \"$archive\""
+            "cmd": "set -eu\narchive=\"$install_root/.kite-downloads/zcode-linux-arm64.deb\"\nselected_version_file=\"$install_root/.kite-source-selection/download-zcode-linux-arm64.version\"\ntest -s \"$selected_version_file\"\nselected_version=\"$(cat \"$selected_version_file\")\"\nextract_root=\"$install_root/.kite-zcode-extract\"\nruntime_root=\"$install_root/runtime\"\ncommand -v dpkg-deb >/dev/null 2>&1 || { echo 'KITE_RESOURCE_FAILURE stage=install step=extract-zcode-native-runtime reason=dpkg-deb-missing'; exit 127; }\nrm -rf \"$extract_root\"\nmkdir -p \"$extract_root\" \"$runtime_root\" \"$install_root/bin\" \"$install_root/user-home/.zcode/cli\" \"$install_root/user-home/.zcode/v2\"\ndpkg-deb --fsys-tarfile \"$archive\" | tar -xf - -C \"$extract_root\" ./opt/ZCode/resources/glm/zcode.cjs ./opt/ZCode/resources/glm/.node-bundle-meta.json\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/zcode.cjs\" \"$runtime_root/zcode.cjs\"\ninstall -m 0644 \"$extract_root/opt/ZCode/resources/glm/.node-bundle-meta.json\" \"$runtime_root/.node-bundle-meta.json\"\ncat > \"$install_root/bin/zcode\" <<EOF\n#!/usr/bin/env bash\nset -eu\nmanaged_home=\"$install_root/user-home\"\nlegacy_home=\"\\${HOME:-/root}\"\nmkdir -p \"\\$managed_home/.zcode/cli\" \"\\$managed_home/.zcode/v2\"\nif [ ! -e \"\\$managed_home/.zcode/cli/config.json\" ] && [ \"\\$legacy_home\" != \"\\$managed_home\" ] && [ -f \"\\$legacy_home/.zcode/cli/config.json\" ]; then\n  cp \"\\$legacy_home/.zcode/cli/config.json\" \"\\$managed_home/.zcode/cli/config.json\"\nfi\nexport HOME=\"\\$managed_home\"\nexport ZCODE_HOME=\"\\$managed_home/.zcode\"\nexport ZCODE_DATA_BASE_DIR=\"\\$managed_home\"\nexec node \"$install_root/runtime/zcode.cjs\" \"\\$@\"\nEOF\nchmod 755 \"$install_root/bin/zcode\"\nprintf '%s\\n' \"$selected_version\" > \"$install_root/.kite-version\"\nrm -rf \"$extract_root\"\nrm -f \"$archive\""
           }
         ],
         "managedCommands": ["zcode"],
@@ -128,7 +149,7 @@
           },
           {
             "id": "zcode-arm64-runtime",
-            "cmd": "test \"$(cat \"$install_root/.kite-version\")\" = '3.10.1' && grep -q '\"platform\": \"linux-arm64\"' \"$install_root/runtime/.node-bundle-meta.json\""
+            "cmd": "test \"$(cat \"$install_root/.kite-version\")\" = \"$(cat \"$install_root/.kite-source-selection/download-zcode-linux-arm64.version\")\" && grep -q '\"platform\": \"linux-arm64\"' \"$install_root/runtime/.node-bundle-meta.json\""
           },
           {
             "id": "zcode-doctor",

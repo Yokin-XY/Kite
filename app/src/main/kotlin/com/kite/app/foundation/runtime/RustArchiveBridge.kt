@@ -1,6 +1,8 @@
 package com.kite.app.foundation.runtime
 
 import java.io.File
+import java.io.FileInputStream
+import java.security.MessageDigest
 import org.json.JSONObject
 
 internal data class RustTarArchiveRequest(
@@ -50,9 +52,21 @@ internal object RustArchiveBridge {
     ): NativeArchiveExecutionResult {
         if (!isAvailable) return NativeArchiveExecutionResult.Failure("rust_archive_library_unavailable")
         if (cancellation.isCancelled()) return NativeArchiveExecutionResult.Cancelled(0, 0L)
-        validateSpace(plan.destination, plan.maximumTotalBytes)?.let { return it }
-        if (plan.format != AndroidNativeArchiveFormat.ZIP) {
-            val compression = when (plan.format) {
+        if (plan.acceptedSha256s.isNotEmpty() && (!plan.source.isFile || plan.source.length() > plan.maximumArchiveBytes)) {
+            return NativeArchiveExecutionResult.Failure("native_archive_source_invalid")
+        }
+        val verifiedPlan = runCatching { plan.verifiedAcceptedDigest(cancellation) }
+            .getOrElse { return NativeArchiveExecutionResult.Failure("native_archive_sha256_read_failed") }
+        if (verifiedPlan == null) {
+            return if (cancellation.isCancelled()) {
+                NativeArchiveExecutionResult.Cancelled(0, 0L)
+            } else {
+                NativeArchiveExecutionResult.Failure("native_archive_sha256_mismatch")
+            }
+        }
+        validateSpace(verifiedPlan.destination, verifiedPlan.maximumTotalBytes)?.let { return it }
+        if (verifiedPlan.format != AndroidNativeArchiveFormat.ZIP) {
+            val compression = when (verifiedPlan.format) {
                 AndroidNativeArchiveFormat.TAR -> RustTarCompression.NONE
                 AndroidNativeArchiveFormat.TAR_GZIP -> RustTarCompression.GZIP
                 AndroidNativeArchiveFormat.TAR_XZ -> RustTarCompression.XZ
@@ -60,36 +74,36 @@ internal object RustArchiveBridge {
             }
             return executeTar(
                 request = RustTarArchiveRequest(
-                    source = plan.source,
-                    destination = plan.destination,
-                    stagingDirectory = plan.stagingDirectory,
-                    maximumArchiveBytes = plan.maximumArchiveBytes,
-                    maximumEntries = plan.maximumEntries,
-                    maximumTotalBytes = plan.maximumTotalBytes,
-                    maximumFileBytes = plan.maximumFileBytes,
-                    maximumDepth = plan.maximumDepth,
-                    maximumExpansionRatio = plan.maximumExpansionRatio,
-                    expectedArchiveBytes = plan.source.length(),
-                    expectedSha256 = plan.expectedSha256,
+                    source = verifiedPlan.source,
+                    destination = verifiedPlan.destination,
+                    stagingDirectory = verifiedPlan.stagingDirectory,
+                    maximumArchiveBytes = verifiedPlan.maximumArchiveBytes,
+                    maximumEntries = verifiedPlan.maximumEntries,
+                    maximumTotalBytes = verifiedPlan.maximumTotalBytes,
+                    maximumFileBytes = verifiedPlan.maximumFileBytes,
+                    maximumDepth = verifiedPlan.maximumDepth,
+                    maximumExpansionRatio = verifiedPlan.maximumExpansionRatio,
+                    expectedArchiveBytes = verifiedPlan.source.length(),
+                    expectedSha256 = verifiedPlan.expectedSha256,
                     compression = compression,
-                    specialEntryPolicy = plan.specialEntryPolicy,
-                    reuseKey = plan.reuseKey,
+                    specialEntryPolicy = verifiedPlan.specialEntryPolicy,
+                    reuseKey = verifiedPlan.reuseKey,
                 ),
                 cancellation = cancellation,
                 progress = progress,
             )
         }
         val request = JSONObject()
-            .put("source", plan.source.absolutePath)
-            .put("destination", plan.destination.absolutePath)
-            .put("stagingDirectory", plan.stagingDirectory.absolutePath)
-            .put("maximumArchiveBytes", plan.maximumArchiveBytes)
-            .put("maximumEntries", plan.maximumEntries)
-            .put("maximumTotalBytes", plan.maximumTotalBytes)
-            .put("maximumFileBytes", plan.maximumFileBytes)
-            .put("maximumDepth", plan.maximumDepth)
-            .put("maximumExpansionRatio", plan.maximumExpansionRatio)
-            .apply { plan.reuseKey?.let { put("reuseKey", it) } }
+            .put("source", verifiedPlan.source.absolutePath)
+            .put("destination", verifiedPlan.destination.absolutePath)
+            .put("stagingDirectory", verifiedPlan.stagingDirectory.absolutePath)
+            .put("maximumArchiveBytes", verifiedPlan.maximumArchiveBytes)
+            .put("maximumEntries", verifiedPlan.maximumEntries)
+            .put("maximumTotalBytes", verifiedPlan.maximumTotalBytes)
+            .put("maximumFileBytes", verifiedPlan.maximumFileBytes)
+            .put("maximumDepth", verifiedPlan.maximumDepth)
+            .put("maximumExpansionRatio", verifiedPlan.maximumExpansionRatio)
+            .apply { verifiedPlan.reuseKey?.let { put("reuseKey", it) } }
         return parseResponse(
             runCatching {
                 extractZipNative(request.toString(), observer(cancellation, progress))
@@ -147,6 +161,24 @@ internal object RustArchiveBridge {
         } else {
             null
         }
+    }
+
+    private fun AndroidNativeArchivePlan.verifiedAcceptedDigest(
+        cancellation: NativeFileCancellation,
+    ): AndroidNativeArchivePlan? {
+        if (acceptedSha256s.isEmpty()) return this
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(source).use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                if (cancellation.isCancelled()) return null
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        val actual = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+        return takeIf { actual in acceptedSha256s }?.copy(expectedSha256 = actual)
     }
 
     private fun parseResponse(raw: String?): NativeArchiveExecutionResult {

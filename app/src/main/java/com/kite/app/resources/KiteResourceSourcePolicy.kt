@@ -150,7 +150,9 @@ object KiteResourceSourcePolicy {
         return action.copy(
             installSteps = action.installSteps.map { step ->
                 when (step.type) {
-                    KiteResourceInstallPlanCompiler.STEP_DOWNLOAD -> step.copy(
+                    KiteResourceInstallPlanCompiler.STEP_DOWNLOAD,
+                    KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD,
+                    -> step.copy(
                         urls = orderDeclaredEndpoints(step.urls, normalized),
                     )
                     KiteResourceInstallPlanCompiler.STEP_GIT -> {

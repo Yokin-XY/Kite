@@ -34,7 +34,7 @@ class AndroidResourceRecipeFactoryTest {
         assertNotNull(recipe)
         assertEquals(
             listOf(
-                KiteRecipe.STEP_NATIVE_CAPABILITY,
+                KiteRecipe.STEP_SHELL,
                 KiteRecipe.STEP_SHELL,
                 KiteRecipe.STEP_ANDROID_ACTION,
                 KiteRecipe.STEP_ANDROID_ACTION,
@@ -43,12 +43,38 @@ class AndroidResourceRecipeFactoryTest {
         )
         assertEquals(KiteRecipe.ANDROID_ACTION_INSTALL_APK, steps[2].action)
         assertEquals(KiteRecipe.ANDROID_ACTION_AWAIT_PACKAGE, steps[3].action)
+        assertTrue(steps[0].cmd.orEmpty().contains("request=latest"))
+        assertTrue(steps[0].cmd.orEmpty().contains("latest-version-outside-window"))
+        assertTrue(steps[1].cmd.orEmpty().contains("import-native-cache"))
         assertEquals("moe.shizuku.privileged.api", steps[3].params?.optString("packageName"))
         assertEquals(
             "android-package:moe.shizuku.privileged.api",
             factory.writeScopes("kite.shizuku", KiteResourceInstallRecipes.OP_INSTALL)
                 .single { it.startsWith("android-package:") },
         )
+    }
+
+    @Test
+    fun `动态最新归档先核验来源再交给Rust原生解压`() {
+        val recipe = factory.recipe("kite.devin.cli", KiteResourceInstallRecipes.OP_INSTALL)
+        val steps = recipe?.steps.orEmpty()
+
+        assertNotNull(recipe)
+        assertEquals(
+            listOf(KiteRecipe.STEP_SHELL, KiteRecipe.STEP_NATIVE_CAPABILITY, KiteRecipe.STEP_SHELL),
+            steps.map { it.type },
+        )
+        assertTrue(steps[0].cmd.orEmpty().contains("request=latest"))
+        assertEquals(AndroidNativeArchiveCapabilityProvider.CAPABILITY_ID, steps[1].action)
+        assertEquals(
+            3,
+            steps[1].params
+                ?.getString(AndroidNativeArchiveCapabilityProvider.PARAM_ACCEPTED_SHA256S)
+                .orEmpty()
+                .lineSequence()
+                .count(),
+        )
+        assertTrue(steps[2].cmd.orEmpty().contains("import-native-archive"))
     }
 
     @Test
@@ -132,12 +158,13 @@ class AndroidResourceRecipeFactoryTest {
     }
 
     @Test
-    fun `Codex 样板从 NPM 来源生成确定版本更新配方`() {
+    fun `Codex 更新仍请求来源最新版本并受签名窗口约束`() {
         val update = factory.recipe("kite.codex.cli", KiteResourceInstallRecipes.OP_UPDATE, "1.2.3")
         val script = update?.steps.orEmpty().joinToString("\n") { it.cmd.orEmpty() }
 
         assertNotNull(update)
-        assertTrue(script.contains("@openai/codex@1.2.3"))
+        assertTrue(script.contains("npm view \"${'$'}package_name@latest\""))
+        assertTrue(script.contains("latest-version-or-integrity-outside-window"))
         assertTrue(script.contains("/workspace/.kf/software/kite.codex.cli"))
         assertTrue(script.contains("KITE_RESOURCE_STEP manifest-install kite.codex.cli"))
         assertTrue(script.contains("codex --version"))
@@ -146,7 +173,7 @@ class AndroidResourceRecipeFactoryTest {
     }
 
     @Test
-    fun `OpenCode 样板从 NPM 来源生成隔离源和版本配方`() {
+    fun `OpenCode 更新使用隔离来源和最新版本窗口`() {
         val update = factory.recipe("kite.opencode", KiteResourceInstallRecipes.OP_UPDATE, "1.18.4")
         val steps = update?.steps.orEmpty()
         val script = steps.joinToString("\n") { it.cmd.orEmpty() }
@@ -154,21 +181,23 @@ class AndroidResourceRecipeFactoryTest {
         assertNotNull(update)
         assertTrue(steps.all { it.type == KiteRecipe.STEP_SHELL })
         assertFalse(script.contains("kite_resource_download"))
-        assertTrue(script.contains("opencode-ai@1.18.4"))
+        assertTrue(script.contains("npm view \"${'$'}package_name@latest\""))
+        assertTrue(script.contains("selected_specs+=(\"${'$'}package_name@${'$'}latest_version\")"))
         assertTrue(script.contains(".kite-source-attempt/npm/"))
         assertTrue(script.contains("repo.huaweicloud.com/repository/npm"))
         assertTrue(script.contains("transactional_clean=\"1\""))
     }
 
     @Test
-    fun `Kimi 样板从官方 NPM 包生成隔离源和确定版本配方`() {
+    fun `Kimi 更新使用隔离来源和最新版本窗口`() {
         val update = factory.recipe("kite.kimi.code", KiteResourceInstallRecipes.OP_UPDATE, "0.27.0")
         val steps = update?.steps.orEmpty()
         val script = steps.joinToString("\n") { it.cmd.orEmpty() }
 
         assertNotNull(update)
         assertTrue(steps.all { it.type == KiteRecipe.STEP_SHELL })
-        assertTrue(script.contains("@moonshot-ai/kimi-code@0.27.0"))
+        assertTrue(script.contains("npm view \"${'$'}package_name@latest\""))
+        assertTrue(script.contains("latest-version-or-integrity-outside-window"))
         assertTrue(script.contains(".kite-source-attempt/npm/"))
         assertTrue(script.contains("repo.huaweicloud.com/repository/npm"))
         assertTrue(script.contains("update_lock=\"${'$'}install_root.kite-update-lock\""))
@@ -224,26 +253,36 @@ class AndroidResourceRecipeFactoryTest {
     fun `声明式归档在资源事务外准备并在事务内导入候选安装根`() {
         val steps = factory.recipe("kite.cursor.cli", KiteResourceInstallRecipes.OP_INSTALL)
             ?.steps.orEmpty()
-        val nativeSteps = steps.filter { it.type == KiteRecipe.STEP_NATIVE_CAPABILITY }
-        val archive = nativeSteps.single {
+        val archive = steps.single {
             it.action == AndroidNativeArchiveCapabilityProvider.CAPABILITY_ID
         }
-        val script = steps.single { it.type == KiteRecipe.STEP_SHELL }.cmd.orEmpty()
+        val scripts = steps.filter { it.type == KiteRecipe.STEP_SHELL }.map { it.cmd.orEmpty() }
+        val prefetch = scripts.first()
+        val transaction = scripts.last()
 
-        assertEquals(2, nativeSteps.size)
+        assertEquals(
+            listOf(KiteRecipe.STEP_SHELL, KiteRecipe.STEP_NATIVE_CAPABILITY, KiteRecipe.STEP_SHELL),
+            steps.map { it.type },
+        )
         assertEquals("tar.gz", archive.params?.getString(AndroidNativeArchiveCapabilityProvider.PARAM_FORMAT))
         assertEquals(
-            "ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed",
-            archive.params?.getString(AndroidNativeArchiveCapabilityProvider.PARAM_EXPECTED_SHA256),
+            3,
+            archive.params
+                ?.getString(AndroidNativeArchiveCapabilityProvider.PARAM_ACCEPTED_SHA256S)
+                .orEmpty()
+                .lineSequence()
+                .count(),
         )
         assertTrue(
             archive.params?.getString(AndroidNativeArchiveCapabilityProvider.PARAM_DESTINATION)
-                .orEmpty().startsWith("/workspace/.kf/cache/resources/kite.cursor.cli/native-archives/")
+                .orEmpty().startsWith("/workspace/.kf/cache/resources/kite.cursor.cli/latest-downloads/")
         )
-        assertFalse(script.contains("tar -x"))
-        assertTrue(script.contains("test -f \"${'$'}native_archive_cache/.kite-archive-ready\""))
-        assertTrue(script.indexOf("recover-interrupted-install") < script.indexOf("cp -a \"${'$'}native_archive_cache/.\""))
-        assertTrue(script.contains("chmod 755 \"${'$'}install_root/dist-package/cursor-agent\""))
+        assertTrue(prefetch.contains("request=latest"))
+        assertTrue(prefetch.contains("cursor.com/install"))
+        assertFalse(transaction.contains("tar -x"))
+        assertTrue(transaction.contains("test -f \"${'$'}native_archive_cache/.kite-archive-ready\""))
+        assertTrue(transaction.indexOf("recover-interrupted-install") < transaction.indexOf("cp -a \"${'$'}native_archive_cache/.\""))
+        assertTrue(transaction.contains("chmod 755 \"${'$'}install_root/dist-package/cursor-agent\""))
     }
 
     @Test
@@ -366,7 +405,8 @@ class AndroidResourceRecipeFactoryTest {
         assertTrue(script.contains("transactional_clean=\"1\""))
         assertTrue(script.contains("rollback_install_transaction"))
         assertTrue(script.contains("restore-preserved-path"))
-        assertTrue(script.contains("@openai/codex@latest"))
+        assertTrue(script.contains("npm view \"${'$'}package_name@latest\""))
+        assertTrue(script.contains("latest-version-or-integrity-outside-window"))
     }
 
 }

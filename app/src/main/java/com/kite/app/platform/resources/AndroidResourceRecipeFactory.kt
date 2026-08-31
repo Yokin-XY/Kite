@@ -117,7 +117,7 @@ internal class AndroidResourceRecipeFactory(
         val surfaceMode = action.surfaceMode.ifBlank { KiteRecipe.SURFACE_MODE_PANEL }
         val workdir = action.workdir.ifBlank { "/workspace" }
         val timeoutMs = action.timeoutMs.takeIf { it > 0L } ?: 1_800_000L
-        val nativePlan = nativeDownloadPlan(manifest.id, action, stepId)
+        val nativePlan = nativeDownloadPlan(manifest.id, action, stepId, sourcePreferences)
         val shellAction = nativePlan?.rewrittenAction ?: action
         val shellStep = KiteRecipeStep(
             id = stepId,
@@ -162,23 +162,65 @@ internal class AndroidResourceRecipeFactory(
         resourceId: String,
         action: KiteResourceShellAction,
         recipeStepId: String,
+        sourcePreferences: KiteResourceSourcePreferences,
     ): NativeDownloadPlan? {
         if (action.type != KiteResourceInstallPlanCompiler.ACTION_MANAGED) return null
         val leadingDownloads = action.installSteps.takeWhile {
-            it.type == KiteResourceInstallPlanCompiler.STEP_DOWNLOAD
+            it.type in setOf(
+                KiteResourceInstallPlanCompiler.STEP_DOWNLOAD,
+                KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD,
+            )
         }
         if (leadingDownloads.isEmpty()) return null
         val compiled = leadingDownloads.mapIndexed { index, step ->
+            val dynamicLatest = step.type == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
             val urls = step.urls.takeIf { values ->
                 values.isNotEmpty() && values.all(::isStaticHttpsUrl)
             } ?: return null
-            if (urls.size > 1 && step.sha256.isBlank()) return null
+            if (!dynamicLatest && urls.size > 1 && step.sha256.isBlank()) return null
             val installRelativePath = installRelativePath(step.destination) ?: return null
             if (step.maxBytes <= 0L) return null
             val safeStepId = KiteResourceInstallRecipes.safeId(step.id)
-            val cacheDestination =
-                "${KiteResourceInstallRecipes.resourceCachePath(resourceId)}/native-downloads/" +
+            val selectionCacheRoot = if (dynamicLatest) {
+                "${KiteResourceInstallRecipes.resourceCachePath(resourceId)}/latest-downloads/" +
+                    "${recipeStepId}_${index + 1}_$safeStepId"
+            } else {
+                null
+            }
+            val cacheDestination = selectionCacheRoot?.let { "$it/payload" }
+                ?: "${KiteResourceInstallRecipes.resourceCachePath(resourceId)}/native-downloads/" +
                     "${recipeStepId}_${index + 1}_$safeStepId.payload"
+            if (dynamicLatest) {
+                val nativeStep = KiteRecipeStep(
+                    id = "${recipeStepId}_latest_${index + 1}_$safeStepId",
+                    type = KiteRecipe.STEP_SHELL,
+                    cmd = latestDownloadPrefetchCommand(
+                        step = step,
+                        cacheDestination = cacheDestination,
+                        cacheRoot = checkNotNull(selectionCacheRoot),
+                        sourcePreferences = sourcePreferences,
+                    ),
+                    surfaceMode = action.surfaceMode.ifBlank { KiteRecipe.SURFACE_MODE_PANEL },
+                    workdir = action.workdir.ifBlank { "/workspace" },
+                    timeoutMs = action.timeoutMs,
+                )
+                val importStep = step.copy(
+                    id = "import-$safeStepId",
+                    type = KiteResourceInstallPlanCompiler.STEP_SHELL,
+                    cmd = nativeImportCommand(
+                        cacheDestination = cacheDestination,
+                        installRelativePath = installRelativePath,
+                        selectionCacheRoot = selectionCacheRoot,
+                    ),
+                )
+                return@mapIndexed CompiledNativeDownload(
+                    original = step,
+                    cacheDestination = cacheDestination,
+                    nativeStep = nativeStep,
+                    importStep = importStep,
+                    selectionCacheRoot = selectionCacheRoot,
+                )
+            }
             val params = JSONObject()
                 .put(AndroidNativeDownloadCapabilityProvider.PARAM_DESTINATION, cacheDestination)
                 .put(AndroidNativeDownloadCapabilityProvider.PARAM_MAX_BYTES, step.maxBytes.toString())
@@ -222,16 +264,20 @@ internal class AndroidResourceRecipeFactory(
             val sourceDownload = artifactsByInstallPath[step.path.trim()] ?: return null
             val format = step.archiveFormat.takeIf { it in ARCHIVE_FORMATS } ?: return null
             val destinationRelative = installRelativeDirectory(step.destination) ?: return null
+            val acceptedDigests = sourceDownload.original.latestVersionWindow
+                .map { it.sha256.lowercase() }
+                .filter { it.matches(SHA256) }
+                .distinct()
             if (
-                sourceDownload.original.sha256.isBlank() ||
+                sourceDownload.original.sha256.isBlank() && acceptedDigests.isEmpty() ||
                 step.maximumEntries <= 0 || step.maximumTotalBytes <= 0L ||
                 step.maximumFileBytes <= 0L || step.maximumDepth <= 0 ||
                 step.maximumExpansionRatio <= 0
             ) return null
             val safeStepId = KiteResourceInstallRecipes.safeId(step.id)
             val digestKey = sourceDownload.original.sha256.lowercase()
-            val cacheDestination =
-                "${KiteResourceInstallRecipes.resourceCachePath(resourceId)}/native-archives/" +
+            val cacheDestination = sourceDownload.selectionCacheRoot?.let { "$it/archive" }
+                ?: "${KiteResourceInstallRecipes.resourceCachePath(resourceId)}/native-archives/" +
                     "${recipeStepId}_${index + 1}_${safeStepId}_${digestKey.take(16)}"
             val params = JSONObject()
                 .put(AndroidNativeArchiveCapabilityProvider.PARAM_SOURCE, sourceDownload.cacheDestination)
@@ -249,9 +295,16 @@ internal class AndroidResourceRecipeFactory(
                     AndroidNativeArchiveCapabilityProvider.PARAM_MAX_EXPANSION_RATIO,
                     step.maximumExpansionRatio.toString(),
                 )
-                .put(AndroidNativeArchiveCapabilityProvider.PARAM_EXPECTED_SHA256, digestKey)
                 .put(AndroidNativeArchiveCapabilityProvider.PARAM_SPECIAL_ENTRY_POLICY, step.specialEntryPolicy)
-                .put(AndroidNativeArchiveCapabilityProvider.PARAM_REUSE_KEY, "v1:$format:$digestKey")
+            if (digestKey.isNotBlank()) {
+                params.put(AndroidNativeArchiveCapabilityProvider.PARAM_EXPECTED_SHA256, digestKey)
+                params.put(AndroidNativeArchiveCapabilityProvider.PARAM_REUSE_KEY, "v1:$format:$digestKey")
+            } else {
+                params.put(
+                    AndroidNativeArchiveCapabilityProvider.PARAM_ACCEPTED_SHA256S,
+                    acceptedDigests.joinToString("\n"),
+                )
+            }
             val nativeStep = KiteRecipeStep(
                 id = "${recipeStepId}_native_archive_${index + 1}_$safeStepId",
                 type = KiteRecipe.STEP_NATIVE_CAPABILITY,
@@ -266,7 +319,11 @@ internal class AndroidResourceRecipeFactory(
                 nativeStep = nativeStep,
                 importStep = step.copy(
                     type = KiteResourceInstallPlanCompiler.STEP_SHELL,
-                    cmd = nativeArchiveImportCommand(cacheDestination, destinationRelative),
+                    cmd = nativeArchiveImportCommand(
+                        cacheDestination,
+                        destinationRelative,
+                        sourceDownload.selectionCacheRoot,
+                    ),
                 ),
             )
         }
@@ -378,17 +435,53 @@ internal class AndroidResourceRecipeFactory(
         return installRelativePath(clean)
     }
 
-    private fun nativeImportCommand(cacheDestination: String, installRelativePath: String): String =
+    private fun latestDownloadPrefetchCommand(
+        step: com.kite.app.resources.KiteResourceInstallStep,
+        cacheDestination: String,
+        cacheRoot: String,
+        sourcePreferences: KiteResourceSourcePreferences,
+    ): String {
+        val prefetchAction = KiteResourceShellAction(
+            type = KiteResourceInstallPlanCompiler.ACTION_MANAGED,
+            cmd = "",
+            surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+            workdir = "/workspace",
+            timeoutMs = 600_000L,
+            managedCommands = emptyList(),
+            cleanInstallRoot = false,
+            npmUninstallPackages = emptyList(),
+            installSteps = listOf(step.copy(destination = cacheDestination)),
+        )
+        val compiled = KiteResourceInstallPlanCompiler.compile(prefetchAction, sourcePreferences)
+        return """
+            set -e
+            install_root=${shellLiteral(cacheRoot)}
+            rm -rf "${'$'}install_root"
+            mkdir -p "${'$'}install_root"
+            $compiled
+        """.trimIndent()
+    }
+
+    private fun nativeImportCommand(
+        cacheDestination: String,
+        installRelativePath: String,
+        selectionCacheRoot: String? = null,
+    ): String =
         """
             native_cache=${shellLiteral(cacheDestination)}
             native_destination="${'$'}install_root/$installRelativePath"
             test -s "${'$'}native_cache" || { echo "KITE_RESOURCE_FAILURE stage=acquire step=import-native-cache reason=missing"; exit 66; }
             mkdir -p "${'$'}(dirname "${'$'}native_destination")"
             mv -f "${'$'}native_cache" "${'$'}native_destination"
+            ${selectionImportCommand(selectionCacheRoot)}
             echo "KITE_RESOURCE_STEP acquire-complete import-native-cache bytes=${'$'}(wc -c < "${'$'}native_destination")"
         """.trimIndent()
 
-    private fun nativeArchiveImportCommand(cacheDestination: String, installRelativePath: String): String {
+    private fun nativeArchiveImportCommand(
+        cacheDestination: String,
+        installRelativePath: String,
+        selectionCacheRoot: String? = null,
+    ): String {
         val destination = if (installRelativePath.isBlank()) {
             "${'$'}install_root"
         } else {
@@ -401,9 +494,20 @@ internal class AndroidResourceRecipeFactory(
             mkdir -p "${'$'}native_archive_destination"
             cp -a "${'$'}native_archive_cache/." "${'$'}native_archive_destination/"
             rm -f "${'$'}native_archive_destination/.kite-archive-ready"
+            ${selectionImportCommand(selectionCacheRoot)}
             echo "KITE_RESOURCE_STEP acquire-complete import-native-archive"
         """.trimIndent()
     }
+
+    private fun selectionImportCommand(selectionCacheRoot: String?): String = selectionCacheRoot?.let { cacheRoot ->
+        """
+            if [ -d ${shellLiteral("$cacheRoot/.kite-source-selection")} ]; then
+              mkdir -p "${'$'}install_root/.kite-source-selection"
+              cp -a ${shellLiteral("$cacheRoot/.kite-source-selection/.")} "${'$'}install_root/.kite-source-selection/"
+            fi
+            rm -rf ${shellLiteral(cacheRoot)}
+        """.trimIndent()
+    }.orEmpty()
 
     private fun shellLiteral(value: String): String =
         "'" + value.replace("'", "'\"'\"'") + "'"
@@ -418,6 +522,7 @@ internal class AndroidResourceRecipeFactory(
         val cacheDestination: String,
         val nativeStep: KiteRecipeStep,
         val importStep: com.kite.app.resources.KiteResourceInstallStep,
+        val selectionCacheRoot: String? = null,
     )
 
     private data class CompiledNativeArchive(
@@ -429,6 +534,7 @@ internal class AndroidResourceRecipeFactory(
     private companion object {
         val RESOURCE_RELATIVE_PATH = Regex("[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
         val ARCHIVE_FORMATS = setOf("zip", "tar", "tar.gz", "tar.xz")
+        val SHA256 = Regex("[a-f0-9]{64}")
         const val PARAM_APK_PATH = "path"
         const val PARAM_PACKAGE_NAME = "packageName"
         const val PARAM_WAIT_TIMEOUT_MS = "waitTimeoutMs"

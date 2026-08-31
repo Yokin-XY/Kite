@@ -5,6 +5,7 @@ object KiteResourceInstallPlanCompiler {
     const val STEP_APT = "apt"
     const val STEP_BUNDLED = "bundled"
     const val STEP_DOWNLOAD = "download"
+    const val STEP_LATEST_DOWNLOAD = "latest_download"
     const val STEP_ARCHIVE = "archive"
     const val STEP_GIT = "git"
     const val STEP_NPM = "npm"
@@ -27,7 +28,7 @@ object KiteResourceInstallPlanCompiler {
             if (routedAction.installSteps.any { it.type in setOf(STEP_APT, STEP_GIT, STEP_NPM, STEP_PYPI, STEP_SCRIPT) }) {
                 appendLine(stepRunnerHelper())
             }
-            if (routedAction.installSteps.any { it.type == STEP_DOWNLOAD }) {
+            if (routedAction.installSteps.any { it.type in setOf(STEP_DOWNLOAD, STEP_LATEST_DOWNLOAD) }) {
                 appendLine(downloadHelper())
             }
             if (routedAction.installSteps.any { it.type == STEP_GIT }) {
@@ -79,7 +80,7 @@ object KiteResourceInstallPlanCompiler {
         }
         val step = action.installSteps.firstOrNull() ?: return ""
         return when (step.type) {
-            STEP_DOWNLOAD -> step.urls.firstOrNull().orEmpty()
+            STEP_DOWNLOAD, STEP_LATEST_DOWNLOAD -> step.urls.firstOrNull().orEmpty()
             STEP_ARCHIVE -> listOf(step.archiveFormat, step.path, step.destination).joinToString(" ")
             STEP_GIT -> step.repository
             STEP_NPM, STEP_PYPI, STEP_APT -> step.packages.joinToString(" ")
@@ -93,6 +94,7 @@ object KiteResourceInstallPlanCompiler {
         npmAttemptVerifications: List<KiteResourceInstallVerification> = emptyList(),
     ): String = when (step.type) {
         STEP_DOWNLOAD -> compileDownload(step)
+        STEP_LATEST_DOWNLOAD -> compileLatestDownload(step)
         STEP_ARCHIVE -> error("Archive step ${step.id} must be compiled by the Android native archive planner")
         STEP_SCRIPT -> compileScript(step)
         STEP_NPM -> compileNpm(step, npmAttemptVerifications)
@@ -122,6 +124,175 @@ object KiteResourceInstallPlanCompiler {
             step.urls.forEach { add(shellExpression(it)) }
         }
         return "kite_resource_download ${args.joinToString(" ")}"
+    }
+
+    private fun compileLatestDownload(step: KiteResourceInstallStep): String {
+        require(step.urls.isNotEmpty()) { "Latest download step ${step.id} has no metadata URL" }
+        require(step.urls.all(::isSecureRegistryUrl)) {
+            "Latest download step ${step.id} has an invalid HTTPS metadata URL"
+        }
+        require(step.destination.isNotBlank()) { "Latest download step ${step.id} has no destination" }
+        require(step.maxBytes > 0L) { "Latest download step ${step.id} requires maxBytes" }
+        require(step.latestFormat in setOf("json", "text", "regex")) {
+            "Latest download step ${step.id} has an unsupported metadata format"
+        }
+        require(step.latestFormat != "json" || SAFE_JSON_FIELD.matches(step.latestJsonField)) {
+            "Latest download step ${step.id} requires a safe JSON field"
+        }
+        require(
+            step.latestFormat != "regex" || (
+                step.latestRegex.isNotBlank() &&
+                    step.latestRegex.length <= MAX_LATEST_REGEX_LENGTH &&
+                    step.latestRegex.none { it == '\n' || it == '\r' } &&
+                    runCatching { Regex(step.latestRegex) }.isSuccess
+                )
+        ) {
+            "Latest download step ${step.id} requires a valid bounded regex"
+        }
+        require(step.latestStripPrefix.none { it == '|' || it == '\n' || it == '\r' }) {
+            "Latest download step ${step.id} has an invalid version prefix"
+        }
+        val window = step.latestVersionWindow
+        require(window.size in 1..MAX_LATEST_VERSION_WINDOW) {
+            "Latest download step ${step.id} latest version window must contain 1 to $MAX_LATEST_VERSION_WINDOW entries"
+        }
+        require(window.map { it.version }.distinct().size == window.size) {
+            "Latest download step ${step.id} latest version window contains duplicate versions"
+        }
+        window.forEach { candidate ->
+            require(isSafeNpmVersion(candidate.version) && SHA256.matches(candidate.sha256)) {
+                "Latest download step ${step.id} window contains an invalid version or SHA-256"
+            }
+            require(isSecureRegistryUrl(candidate.url) && '|' !in candidate.url) {
+                "Latest download step ${step.id} window contains an invalid artifact URL"
+            }
+        }
+        val routes = step.urls.distinct().joinToString(" ") { metadataUrl ->
+            shellLiteral("${KiteResourceSourceCatalog.sourceIdFor(metadataUrl)}|$metadataUrl")
+        }
+        val versionWindow = window.joinToString(" ") { candidate ->
+            shellLiteral("${candidate.version}|${candidate.sha256}|${candidate.url}")
+        }
+        return """
+            command -v python3 >/dev/null 2>&1 || { echo "KITE_RESOURCE_FAILURE stage=prepare step=${safeId(step.id)} reason=python-missing"; exit 127; }
+            latest_download_status=1
+            latest_download_window=($versionWindow)
+            for latest_route in $routes; do
+              source_id="${'$'}{latest_route%%|*}"
+              metadata_url="${'$'}{latest_route#*|}"
+              attempt_root="${'$'}install_root/.kite-source-attempt/latest-download/${safeId(step.id)}/${'$'}source_id"
+              metadata_file="${'$'}attempt_root/metadata"
+              mkdir -p "${'$'}attempt_root"
+              echo "KITE_RESOURCE_ROUTE stage=acquire step=${safeId(step.id)} source=${'$'}source_id request=latest"
+              set +e
+              (set +e; kite_resource_download ${shellLiteral("${safeId(step.id)}-metadata")} "${'$'}metadata_file" '' ${step.retryAttempts} ${step.retryDelaySeconds} "${'$'}metadata_url")
+              metadata_status=${'$'}?
+              set -e
+              if [ "${'$'}metadata_status" -ne 0 ]; then
+                latest_download_status="${'$'}metadata_status"
+                echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}metadata_status reason=latest-query-failed"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              set +e
+              metadata_bytes="${'$'}(wc -c < "${'$'}metadata_file")"
+              if [ "${'$'}metadata_bytes" -gt $MAX_LATEST_METADATA_BYTES ]; then
+                latest_download_status=69
+                echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id reason=latest-metadata-size-limit bytes=${'$'}metadata_bytes"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              latest_version="${'$'}(python3 - ${shellLiteral(step.latestFormat)} ${shellLiteral(if (step.latestFormat == "regex") step.latestRegex else step.latestJsonField)} "${'$'}metadata_file" <<'KITE_LATEST_METADATA'
+            import json
+            import re
+            import sys
+
+            metadata_format, selector, path = sys.argv[1:]
+            raw = open(path, encoding='utf-8', errors='strict').read()
+            if metadata_format == 'text':
+                value = raw.strip().splitlines()[0]
+            elif metadata_format == 'regex':
+                match = re.search(selector, raw)
+                if match is None or match.lastindex is None or match.lastindex < 1:
+                    raise ValueError('latest version regex did not capture a value')
+                value = match.group(1)
+            else:
+                value = json.loads(raw)
+                for part in selector.split('.'):
+                    value = value[part]
+            if not isinstance(value, (str, int, float)):
+                raise TypeError('latest version is not scalar')
+            print(str(value).strip())
+            KITE_LATEST_METADATA
+              )"
+              metadata_parse_status=${'$'}?
+              set -e
+              if [ "${'$'}metadata_parse_status" -ne 0 ]; then
+                latest_download_status=69
+                echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id reason=latest-metadata-invalid"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              strip_prefix=${shellLiteral(step.latestStripPrefix)}
+              if [ -n "${'$'}strip_prefix" ]; then
+                case "${'$'}latest_version" in
+                  "${'$'}strip_prefix"*) latest_version="${'$'}{latest_version#"${'$'}strip_prefix"}" ;;
+                esac
+              fi
+              case "${'$'}latest_version" in
+                ''|*[!A-Za-z0-9._+-]*)
+                  latest_download_status=69
+                  echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id reason=latest-version-invalid"
+                  rm -rf "${'$'}attempt_root"
+                  continue
+                  ;;
+              esac
+              selected_sha256=
+              selected_url=
+              for window_entry in "${'$'}{latest_download_window[@]}"; do
+                window_version="${'$'}{window_entry%%|*}"
+                window_tail="${'$'}{window_entry#*|}"
+                if [ "${'$'}latest_version" = "${'$'}window_version" ]; then
+                  selected_sha256="${'$'}{window_tail%%|*}"
+                  selected_url="${'$'}{window_tail#*|}"
+                  break
+                fi
+              done
+              if [ -z "${'$'}selected_sha256" ] || [ -z "${'$'}selected_url" ]; then
+                latest_download_status=69
+                echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id reason=latest-version-outside-window version=${'$'}latest_version"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              set +e
+              (set +e; kite_resource_download ${shellLiteral(safeId(step.id))} ${shellExpression(step.destination)} "${'$'}selected_sha256" ${step.retryAttempts} ${step.retryDelaySeconds} "${'$'}selected_url")
+              latest_download_status=${'$'}?
+              set -e
+              if [ "${'$'}latest_download_status" -ne 0 ]; then
+                echo "KITE_RESOURCE_RETRY stage=acquire step=${safeId(step.id)} source=${'$'}source_id exit=${'$'}latest_download_status reason=verified-artifact-unavailable"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              actual_bytes="${'$'}(wc -c < ${shellExpression(step.destination)})"
+              if [ "${'$'}actual_bytes" -gt ${step.maxBytes} ]; then
+                rm -f ${shellExpression(step.destination)}
+                latest_download_status=65
+                echo "KITE_RESOURCE_SOURCE_REJECTED step=${safeId(step.id)} source=${'$'}source_id reason=artifact-size-limit bytes=${'$'}actual_bytes"
+                rm -rf "${'$'}attempt_root"
+                continue
+              fi
+              selection_root="${'$'}install_root/.kite-source-selection"
+              mkdir -p "${'$'}selection_root"
+              printf '%s\n' "${'$'}latest_version" > "${'$'}selection_root/${safeId(step.id)}.version"
+              printf '%s\n' "${'$'}selected_sha256" > "${'$'}selection_root/${safeId(step.id)}.sha256"
+              printf '%s\n' "${'$'}selected_url" > "${'$'}selection_root/${safeId(step.id)}.url"
+              latest_download_status=0
+              rm -rf "${'$'}attempt_root"
+              echo "KITE_RESOURCE_STEP acquire-complete ${safeId(step.id)} source=${'$'}source_id version=${'$'}latest_version"
+              break
+            done
+            [ "${'$'}latest_download_status" -eq 0 ] || { rm -rf "${'$'}install_root/.kite-source-attempt/latest-download/${safeId(step.id)}"; echo "KITE_RESOURCE_FAILURE stage=acquire step=${safeId(step.id)} exit=${'$'}latest_download_status reason=no-verified-latest-source"; exit "${'$'}latest_download_status"; }
+        """.trimIndent()
     }
 
     private val SHA256 = Regex("[a-f0-9]{64}")
@@ -1057,7 +1228,10 @@ object KiteResourceInstallPlanCompiler {
     private val SAFE_ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
     private val SAFE_NPM_PACKAGE = Regex("(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*")
     private val SAFE_PYPI_PACKAGE = Regex("[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
+    private val SAFE_JSON_FIELD = Regex("[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*")
     private val NPM_INTEGRITY = Regex("sha(?:1|256|384|512)-[A-Za-z0-9+/]+={0,2}")
     private val GIT_COMMIT = Regex("[a-f0-9]{40}")
     private const val MAX_LATEST_VERSION_WINDOW = 3
+    private const val MAX_LATEST_REGEX_LENGTH = 512
+    private const val MAX_LATEST_METADATA_BYTES = 4_194_304
 }

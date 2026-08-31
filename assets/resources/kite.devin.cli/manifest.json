@@ -47,6 +47,29 @@
     "url": "https://static.devin.ai/cli/3000.6.7/devin-3000.6.7-aarch64-unknown-linux.tar.gz",
     "repository": "https://github.com/CognitionAI/devin-cli",
     "tag": "3000.6.7",
+    "latestUrl": "https://api.github.com/repos/CognitionAI/devin-cli/releases/latest",
+    "latestFormat": "json",
+    "latestJsonField": "tag_name",
+    "latestVersionWindow": [
+      {
+        "version": "3000.6.7",
+        "artifact": "devin-3000.6.7-aarch64-unknown-linux.tar.gz",
+        "url": "https://static.devin.ai/cli/3000.6.7/devin-3000.6.7-aarch64-unknown-linux.tar.gz",
+        "sha256": "8de95ec3623d93e6f3cb0834fa659fd7d6698d4feff3fb7e752e977abc40a6e0"
+      },
+      {
+        "version": "3000.6.2",
+        "artifact": "devin-3000.6.2-aarch64-unknown-linux.tar.gz",
+        "url": "https://static.devin.ai/cli/3000.6.2/devin-3000.6.2-aarch64-unknown-linux.tar.gz",
+        "sha256": "726b01007cc7046fc165d32cc71d40c7398edab30457dd37bf48c0d2474a7ea1"
+      },
+      {
+        "version": "3000.5.20",
+        "artifact": "devin-3000.5.20-aarch64-unknown-linux.tar.gz",
+        "url": "https://static.devin.ai/cli/3000.5.20/devin-3000.5.20-aarch64-unknown-linux.tar.gz",
+        "sha256": "611c9d5f900dd22d49bb27fb7635215de08cfabe5086ccf393c75bdc40091000"
+      }
+    ],
     "archiveType": "tar.gz",
     "binaryPath": "bin/devin",
     "maxBytes": 104857600
@@ -104,10 +127,8 @@
         "steps": [
           {
             "id": "download-devin-arm64",
-            "type": "download",
-            "url": "https://static.devin.ai/cli/3000.6.7/devin-3000.6.7-aarch64-unknown-linux.tar.gz",
+            "type": "latest_download",
             "destination": "$install_root/.kite-downloads/devin-arm64.tar.gz",
-            "sha256": "8de95ec3623d93e6f3cb0834fa659fd7d6698d4feff3fb7e752e977abc40a6e0",
             "retryAttempts": 4,
             "retryDelaySeconds": 2,
             "maxBytes": 104857600

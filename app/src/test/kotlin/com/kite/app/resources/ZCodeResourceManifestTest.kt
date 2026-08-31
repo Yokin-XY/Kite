@@ -36,14 +36,15 @@ class ZCodeResourceManifestTest {
         assertTrue(AgentResourceRegistrationMapper.registrations(manifest).single().launch is AgentLaunchSpec.Managed)
         assertTrue(profile.officialAccounts.single().modelGroupIds.contains("builtin:zai-coding-plan"))
 
-        val action = manifest.installActions.single()
+        assertEquals("regex", manifest.source.latestFormat)
+        assertEquals(3, manifest.source.latestVersionWindow.size)
+        val action = KiteResourceSourcePlanFactory.plan(manifest).installActions.single()
         val download = action.installSteps.first()
-        assertEquals("download", download.type)
-        assertEquals(
-            "22b79babe3b00fb6fbfcf7dcc033b7564a734f53df4f28998c18556071286b2c",
-            download.sha256,
-        )
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD, download.type)
+        assertEquals(3, download.latestVersionWindow.size)
         val script = KiteResourceInstallPlanCompiler.compile(action)
+        assertTrue(script.contains("zcode.z.ai/en"))
+        assertTrue(script.contains("request=latest"))
         assertTrue(script.contains("dpkg-deb --fsys-tarfile"))
         assertTrue(script.contains("resources/glm/zcode.cjs"))
         assertFalse(script.contains("dpkg-deb -x"))

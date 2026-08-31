@@ -169,6 +169,8 @@ NPM 资源把同类窗口写在 `source.latestVersionWindow`。单包可以省�
 
 PyPI 资源使用同一来源级窗口，但摘要字段为目标 ARM64 Linux wheel 的 `sha256`。安装步骤声明 `type: "pypi"` 和一个裸包名；运行时先读取当前索引的 Simple API，确认该索引公开的最新版本命中窗口，并同时校验索引片段摘要和下载后文件摘要，再把 wheel 交给 `uv tool install`。找不到当前版本的 ARM64/通用 wheel、版本越窗或摘要不一致时只淘汰当前索引，不能退回窗口中的旧版本。
 
+厂商直链或 GitHub Release 可使用 `type: "latest_download"`。来源声明 `latestUrl`、`latestFormat`、可选的 `latestJsonField` / `latestRegex` / `latestStripPrefix`，窗口的每个候选声明 `version + url + sha256`。`json` 读取指定字段，`text` 读取首行，`regex` 只读取第一个捕获组。步骤本身只声明目标路径、重试策略和 `maxBytes`，不得再写死当前制品 URL。运行时先请求来源的最新元数据，只有返回版本命中窗口时才下载该候选 URL；下载摘要不符、版本越窗、元数据超限或制品超限都会淘汰当前来源。动态归档仍先在资源缓存完成这次核验，再交给 Rust 原生解压；Rust 接受的摘要集合只来自同一签名窗口。
+
 ## 成功边界
 
 只有以下条件都满足，资源才能登记为已安装：

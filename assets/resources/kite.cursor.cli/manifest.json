@@ -4,7 +4,7 @@
   "base": {
     "name": "Cursor CLI",
     "description": "Cursor 的终端编码 Agent",
-    "version": "2026.08.11",
+    "version": "2026.08.25",
     "icon": {
       "type": "asset",
       "value": "resources/kite.cursor.cli/icon.png",
@@ -28,7 +28,7 @@
     "category": "AI",
     "accent": "blue",
     "sizeLabel": "约 80 MB",
-    "longDescription": "Cursor CLI 是 Cursor 官方终端编码 Agent。Kite 固定下载 ACP Registry 公布的 Linux arm64 制品并校验 SHA-256，通过原生 ACP 提供会话加载、模型、Agent/计划/问答模式和工具审批；MCP 与 Skill 保持 Cursor 原生目录。",
+    "longDescription": "Cursor CLI 是 Cursor 官方终端编码 Agent。Kite 每次安装先查询官方安装器的最新版本，只接受签名最近三版窗口中的 Linux arm64 制品并校验 SHA-256；通过原生 ACP 提供会话加载、模型、Agent/计划/问答模式和工具审批，MCP 与 Skill 保持 Cursor 原生目录。",
     "recommendations": [
       {"resourceId": "kite.git", "label": "源码工具"},
       {"resourceId": "kite.codex.cli", "label": "同类 Agent"},
@@ -44,11 +44,34 @@
   },
   "source": {
     "type": "acp_registry_binary",
-    "url": "https://downloads.cursor.com/lab/2026.08.11-e8db854/linux/arm64/agent-cli-package.tar.gz",
+    "url": "https://downloads.cursor.com/lab/2026.08.25-3e8eec8/linux/arm64/agent-cli-package.tar.gz",
     "repository": "https://cursor.com/docs/cli/acp",
-    "tag": "2026.08.11",
+    "tag": "2026.08.25-3e8eec8",
     "archiveType": "tar.gz",
     "binaryPath": "dist-package/cursor-agent",
+    "latestUrl": "https://cursor.com/install",
+    "latestFormat": "regex",
+    "latestRegex": "downloads\\.cursor\\.com/lab/([^/]+)/\\$\\{OS\\}/\\$\\{ARCH\\}/agent-cli-package\\.tar\\.gz",
+    "latestVersionWindow": [
+      {
+        "version": "2026.08.25-3e8eec8",
+        "artifact": "agent-cli-package.tar.gz",
+        "url": "https://downloads.cursor.com/lab/2026.08.25-3e8eec8/linux/arm64/agent-cli-package.tar.gz",
+        "sha256": "f1c1c2330d89fa4ef5b6cc04fcffba15012ff50eacd07e0f3baec0716f25ac5d"
+      },
+      {
+        "version": "2026.08.11-e8db854",
+        "artifact": "agent-cli-package.tar.gz",
+        "url": "https://downloads.cursor.com/lab/2026.08.11-e8db854/linux/arm64/agent-cli-package.tar.gz",
+        "sha256": "ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed"
+      },
+      {
+        "version": "2026.08.04-aaa8809",
+        "artifact": "agent-cli-package.tar.gz",
+        "url": "https://downloads.cursor.com/lab/2026.08.04-aaa8809/linux/arm64/agent-cli-package.tar.gz",
+        "sha256": "d5196289292a660b59807ac508c9ac36ec1e1a1a7e4697af3ef6824fdea984ee"
+      }
+    ],
     "maxBytes": 134217728
   },
   "paths": {
@@ -104,10 +127,8 @@
         "steps": [
           {
             "id": "download-cursor-arm64",
-            "type": "download",
-            "url": "https://downloads.cursor.com/lab/2026.08.11-e8db854/linux/arm64/agent-cli-package.tar.gz",
+            "type": "latest_download",
             "destination": "$install_root/.kite-downloads/cursor-arm64.tar.gz",
-            "sha256": "ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed",
             "retryAttempts": 4,
             "retryDelaySeconds": 2,
             "maxBytes": 134217728
