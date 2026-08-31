@@ -339,8 +339,11 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
         assertEquals("zhipu-coding-plan", result.snapshot.activeProviderId)
         assertEquals("zhipu-coding-plan/glm-5.3-flash", result.snapshot.defaultModel)
         assertEquals(2, result.snapshot.providers.single().models.size)
-        assertTrue(config.readText().contains("\"main\""))
-        assertTrue(config.readText().contains("\"available\""))
+        val configText = config.readText()
+        assertTrue(configText.contains("\"provider\""))
+        assertTrue(configText.contains("\"options\""))
+        assertTrue(configText.contains("\"main\": \"zhipu-coding-plan/glm-5.3-flash\""))
+        assertFalse(configText.contains("\"available\""))
         assertTrue(config.readText().contains("\"locale\""))
         assertFalse(result.snapshot.toString().contains(SECRET))
 
@@ -379,6 +382,60 @@ class ZhipuCompatibleAgentConfigAdaptersTest {
         assertEquals(null, switched.snapshot.defaultModel)
         assertEquals(2, switched.snapshot.providers.single().models.size)
         assertEquals(null, adapter.runtimeModelCatalog()?.selectedRuntimeModel())
+    }
+
+    @Test
+    fun zcodeMigratesLegacyKiteModelObjectsBeforeChangingSelection() = runTest {
+        val config = nativeFile(
+            "workspace/.kf/software/kite.zcode/user-home/.zcode/cli/config.json",
+        )
+        config.writeText(
+            """
+            {
+              "model": {
+                "main": {
+                  "provider": "zhipu-coding-plan",
+                  "providerName": "智谱 Coding Plan",
+                  "model": "glm-5.3-flash",
+                  "kind": "openai-compatible",
+                  "baseURL": "https://open.bigmodel.cn/api/coding/paas/v4",
+                  "apiKey": "$SECRET"
+                },
+                "available": [
+                  {
+                    "provider": "zhipu-coding-plan",
+                    "providerName": "智谱 Coding Plan",
+                    "model": "glm-5.3",
+                    "kind": "openai-compatible",
+                    "baseURL": "https://open.bigmodel.cn/api/coding/paas/v4",
+                    "apiKey": "$SECRET"
+                  }
+                ]
+              }
+            }
+            """.trimIndent(),
+        )
+        nativeFile(
+            "workspace/.kf/software/kite.zcode/user-home/.zcode/v2/config.json",
+        ).writeText("{}")
+        val adapter = ZCodeAgentConfigAdapter(context, ::container)
+        val before = (adapter.readLive("zcode") as AgentConfigReadResult.Ready).snapshot
+
+        val applied = adapter.apply(
+            AgentConfigApplyRequest(
+                "zcode",
+                before.revision,
+                listOf(AgentPersistentConfigChange.SelectProvider("zhipu-coding-plan", "glm-5.3")),
+            ),
+        ) as AgentConfigApplyResult.Applied
+
+        assertEquals("zhipu-coding-plan/glm-5.3", applied.snapshot.defaultModel)
+        assertEquals(2, applied.snapshot.providers.single().models.size)
+        val migrated = config.readText()
+        assertTrue(migrated.contains("\"provider\""))
+        assertTrue(migrated.contains("\"models\""))
+        assertTrue(migrated.contains("\"main\": \"zhipu-coding-plan/glm-5.3\""))
+        assertFalse(migrated.contains("\"available\""))
     }
 
     private suspend fun configure(

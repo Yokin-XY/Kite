@@ -75,25 +75,22 @@ internal class ZCodeAgentConfigAdapter internal constructor(
     }
 
     override fun decode(files: Map<String, ByteArray>): NativeState {
-        val targets = modelTargets(parse(files.getValue(CONFIG_KEY)))
-        val userTargets = targets.filterNot { it.providerId.startsWith(BUILTIN_PROVIDER_PREFIX) }
-        val providers = userTargets.groupBy(ModelTarget::providerId).map { (providerId, entries) ->
-            val first = entries.first()
+        val root = parse(files.getValue(CONFIG_KEY))
+        val configured = configuredProviders(root)
+        val providers = configured.map { provider ->
             AgentProviderSummary(
-                id = providerId,
-                displayName = first.providerName ?: providerId,
-                baseUrl = first.baseUrl,
-                models = entries.distinctBy(ModelTarget::modelId).map { target ->
-                    AgentProviderModelSummary(target.modelId, target.modelId)
-                },
-                credentialPresence = if (entries.any { !it.apiKey.isNullOrBlank() }) {
+                id = provider.id,
+                displayName = provider.name,
+                baseUrl = provider.baseUrl,
+                models = provider.models,
+                credentialPresence = if (!provider.apiKey.isNullOrBlank()) {
                     AgentCredentialPresence.Present
                 } else {
                     AgentCredentialPresence.Missing
                 },
             )
         }.sortedBy(AgentProviderSummary::id)
-        val main = targets.firstOrNull { it.primary }
+        val main = selectedModelRef(root)
         val activeProvider = main?.providerId?.takeIf { id -> providers.any { it.id == id } }
         return NativeState(
             defaultModel = main?.let { providerModelRef(it.providerId, it.modelId) },
@@ -109,6 +106,7 @@ internal class ZCodeAgentConfigAdapter internal constructor(
         changes: List<AgentPersistentConfigChange>,
     ): Map<String, ByteArray> {
         val root = parse(files.getValue(CONFIG_KEY)).clone()
+        migrateLegacyConfig(root)
         changes.forEach { change ->
             when (change) {
                 is AgentPersistentConfigChange.SetDefaultModel -> {
@@ -119,16 +117,19 @@ internal class ZCodeAgentConfigAdapter internal constructor(
                     val ref = change.modelId ?: return@forEach clearMain(root)
                     val providerId = ref.substringBefore('/').takeIf { it != ref }
                     val modelId = ref.substringAfter('/', ref)
-                    val target = modelTargets(root).firstOrNull { candidate ->
-                        candidate.modelId == modelId && (providerId == null || candidate.providerId == providerId)
+                    val target = configuredProviders(root).firstNotNullOfOrNull { provider ->
+                        provider.models.firstOrNull { model ->
+                            model.id == modelId && (providerId == null || provider.id == providerId)
+                        }?.let { ModelRef(provider.id, it.id) }
                     }
-                    if (target != null) selectTarget(root, target.document)
+                    if (target != null) setMain(root, target)
                 }
                 is AgentPersistentConfigChange.SelectProvider -> {
-                    val target = modelTargets(root).firstOrNull { candidate ->
-                        candidate.providerId == change.providerId && candidate.modelId == change.modelId
-                    } ?: error("ZCode 原生配置中没有该供应商模型")
-                    selectTarget(root, target.document)
+                    val provider = configuredProviders(root).firstOrNull { it.id == change.providerId }
+                    if (provider?.models?.none { it.id == change.modelId } != false) {
+                        error("ZCode 原生配置中没有该供应商模型")
+                    }
+                    setMain(root, ModelRef(change.providerId, change.modelId))
                 }
                 is AgentPersistentConfigChange.ConfigureProvider ->
                     configureProvider(root, change.provider, change.credential)
@@ -145,23 +146,20 @@ internal class ZCodeAgentConfigAdapter internal constructor(
         val nativeTarget = projection.resolve(NATIVE_CONFIG_PATH) ?: return null
         val bytes = configFileStore.read(target.readFile).bytes
         val nativeBytes = configFileStore.read(nativeTarget.readFile).bytes
-        val targets = modelTargets(parse(bytes))
-            .filterNot { it.providerId.startsWith(BUILTIN_PROVIDER_PREFIX) }
-        val providers = targets.groupBy(ModelTarget::providerId).map { (providerId, entries) ->
-            val first = entries.first()
+        val root = parse(bytes)
+        val configured = configuredProviders(root)
+        val providers = configured.map { provider ->
             ZCodeRuntimeModelProvider(
-                providerId = providerId,
-                label = first.providerName ?: providerId,
-                kind = first.kind ?: inferProviderKind(first.baseUrl),
-                apiFormat = inferApiFormat(first.kind, first.baseUrl),
-                baseUrl = first.baseUrl,
-                apiKey = first.apiKey,
-                models = entries.distinctBy(ModelTarget::modelId).map { entry ->
-                    AgentProviderModelSummary(entry.modelId, entry.modelId)
-                },
+                providerId = provider.id,
+                label = provider.name,
+                kind = provider.kind,
+                apiFormat = inferApiFormat(provider.kind, provider.baseUrl),
+                baseUrl = provider.baseUrl,
+                apiKey = provider.apiKey,
+                models = provider.models,
             )
         }
-        val main = targets.firstOrNull(ModelTarget::primary)
+        val main = selectedModelRef(root)
         val officialModels = officialModels(parse(nativeBytes)).ifEmpty {
             ZCODE_3_10_1_OFFICIAL_MODELS
         }
@@ -210,101 +208,187 @@ internal class ZCodeAgentConfigAdapter internal constructor(
         provider: AgentProviderDraft,
         credential: AgentProviderCredentialChange,
     ) {
-        val before = modelTargets(root)
-        val owned = before.filter { it.providerId == provider.id }
-        val existingKey = owned.firstNotNullOfOrNull(ModelTarget::apiKey)
+        val providers = root.objectCopy(PROVIDERS_SECTION_KEY)
+        val existing = providers.getObject(provider.id)?.clone() ?: JsonObject()
+        val options = existing.objectCopy(OPTIONS_KEY)
+        val existingKey = options.string(API_KEY_KEY)
         val apiKey = when (credential) {
             AgentProviderCredentialChange.Keep -> existingKey
             is AgentProviderCredentialChange.Replace -> credential.secret
             AgentProviderCredentialChange.Remove -> null
         }
         val kind = inferProviderKind(provider.baseUrl)
-        val replacements = provider.models.map { model ->
-            modelTarget(
-                providerId = provider.id,
-                providerName = provider.displayName,
-                modelId = model.id,
-                kind = kind,
-                baseUrl = provider.baseUrl,
-                apiKey = apiKey,
-            )
+        putPreserving(existing, KIND_KEY, JsonPrimitive.of(kind))
+        provider.displayName?.trim()?.takeIf(String::isNotBlank)?.let { name ->
+            putPreserving(existing, NAME_KEY, JsonPrimitive.of(name))
         }
-        val currentMain = before.firstOrNull(ModelTarget::primary)
+        putPreserving(options, BASE_URL_KEY, JsonPrimitive.of(provider.baseUrl.trim()))
+        if (apiKey.isNullOrBlank()) options.remove(API_KEY_KEY)
+        else putPreserving(options, API_KEY_KEY, JsonPrimitive.of(apiKey))
+        putPreserving(existing, OPTIONS_KEY, options)
+
+        val previousModels = existing.getObject(MODELS_KEY)
+        val models = JsonObject()
+        provider.models.forEach { model ->
+            val nativeModel = previousModels?.getObject(model.id)?.clone() ?: JsonObject()
+            model.displayName.takeIf { it.isNotBlank() && it != model.id }?.let { displayName ->
+                putPreserving(nativeModel, NAME_KEY, JsonPrimitive.of(displayName))
+            }
+            putPreserving(models, model.id.trim(), nativeModel)
+        }
+        putPreserving(existing, MODELS_KEY, models)
+        putPreserving(providers, provider.id, existing)
+        putPreserving(root, PROVIDERS_SECTION_KEY, providers)
+
+        val currentMain = selectedModelRef(root)
         val selectedModelId = currentMain
             ?.takeIf { it.providerId == provider.id && provider.models.any { model -> model.id == it.modelId } }
             ?.modelId
             ?: provider.models.first().id
-        val selected = requireNotNull(replacements.firstOrNull { it.string(MODEL_ID_KEY) == selectedModelId })
-        val preserved = before.filterNot { it.providerId == provider.id }.map(ModelTarget::document)
-        writeTargets(root, selected, preserved + replacements.filterNot { it === selected })
+        if (currentMain == null || currentMain.providerId == provider.id) {
+            setMain(root, ModelRef(provider.id, selectedModelId))
+        }
     }
 
     private fun removeProvider(root: JsonObject, providerId: String) {
-        val remaining = modelTargets(root).filterNot { it.providerId == providerId }
-        val main = remaining.firstOrNull(ModelTarget::primary) ?: remaining.firstOrNull()
-        if (main == null) {
-            root.remove(MODEL_SECTION_KEY)
-        } else {
-            writeTargets(root, main.document, remaining.filterNot { it === main }.map(ModelTarget::document))
+        val selected = selectedModelRef(root)
+        val providers = root.objectCopy(PROVIDERS_SECTION_KEY)
+        providers.remove(providerId)
+        if (providers.isEmpty()) root.remove(PROVIDERS_SECTION_KEY)
+        else putPreserving(root, PROVIDERS_SECTION_KEY, providers)
+        if (selected?.providerId == providerId) {
+            val next = configuredProviders(root).firstNotNullOfOrNull { provider ->
+                provider.models.firstOrNull()?.let { model -> ModelRef(provider.id, model.id) }
+            }
+            if (next == null) clearMain(root) else setMain(root, next)
         }
     }
 
-    private fun selectTarget(root: JsonObject, selected: JsonObject) {
-        val targets = modelTargets(root)
-        val previousMain = targets.firstOrNull(ModelTarget::primary)?.document
-        val selectedRef = targetRef(selected)
-        val remaining = buildList {
-            targets.filterNot { targetRef(it.document) == selectedRef }.forEach { add(it.document) }
-            previousMain?.takeIf { targetRef(it) != selectedRef }?.let(::add)
-        }.distinctBy(::targetRef)
-        writeTargets(root, selected, remaining)
-    }
-
-    private fun clearMain(root: JsonObject) {
-        val model = root.objectCopy(MODEL_SECTION_KEY)
-        val previousMain = model.getObject(MAIN_KEY)?.clone()
-        model.remove(MAIN_KEY)
-        previousMain?.let { main ->
-            val available = buildList {
-                (model[AVAILABLE_KEY] as? JsonArray).orEmpty().forEach { value ->
-                    (value as? JsonObject)?.let(::add)
-                }
-                add(main)
-            }.distinctBy(::targetRef)
-            val array = JsonArray()
-            available.forEach { array.add(it.clone()) }
-            putPreserving(model, AVAILABLE_KEY, array)
-        }
-        if (model.isEmpty()) root.remove(MODEL_SECTION_KEY) else putPreserving(root, MODEL_SECTION_KEY, model)
-    }
-
-    private fun writeTargets(root: JsonObject, main: JsonObject, available: List<JsonObject>) {
-        val model = root.objectCopy(MODEL_SECTION_KEY)
-        putPreserving(model, MAIN_KEY, main.clone())
-        val array = JsonArray()
-        available.distinctBy(::targetRef).forEach { array.add(it.clone()) }
-        if (array.isEmpty()) model.remove(AVAILABLE_KEY) else putPreserving(model, AVAILABLE_KEY, array)
+    private fun setMain(root: JsonObject, selected: ModelRef) {
+        val current = root[MODEL_SECTION_KEY]
+        val model = (current as? JsonObject)?.clone() ?: JsonObject()
+        putPreserving(model, MAIN_KEY, JsonPrimitive.of(providerModelRef(selected.providerId, selected.modelId)))
+        model.remove(AVAILABLE_KEY)
+        if (model[LITE_KEY] !is JsonPrimitive) model.remove(LITE_KEY)
         putPreserving(root, MODEL_SECTION_KEY, model)
     }
 
-    private fun modelTargets(root: JsonObject): List<ModelTarget> {
+    private fun clearMain(root: JsonObject) {
+        val model = root[MODEL_SECTION_KEY] as? JsonObject
+        if (model == null) {
+            root.remove(MODEL_SECTION_KEY)
+            return
+        }
+        model.remove(MAIN_KEY)
+        model.remove(AVAILABLE_KEY)
+        if (model[LITE_KEY] !is JsonPrimitive) model.remove(LITE_KEY)
+        if (model.isEmpty()) root.remove(MODEL_SECTION_KEY) else putPreserving(root, MODEL_SECTION_KEY, model)
+    }
+
+    private fun configuredProviders(root: JsonObject): List<ConfiguredProvider> {
+        val native = root.getObject(PROVIDERS_SECTION_KEY)?.entries.orEmpty().mapNotNull { (id, value) ->
+            if (id.startsWith(BUILTIN_PROVIDER_PREFIX)) return@mapNotNull null
+            val document = value as? JsonObject ?: return@mapNotNull null
+            val options = document.getObject(OPTIONS_KEY) ?: JsonObject()
+            val baseUrl = options.string(BASE_URL_KEY) ?: document.string(BASE_URL_KEY)
+            val models = document.getObject(MODELS_KEY)?.entries.orEmpty().mapNotNull { (modelKey, modelValue) ->
+                val model = modelValue as? JsonObject ?: JsonObject()
+                val modelId = model.string(ID_KEY)?.takeIf(String::isNotBlank) ?: modelKey
+                AgentProviderModelSummary(
+                    id = modelId,
+                    displayName = model.string(NAME_KEY)?.takeIf(String::isNotBlank) ?: modelId,
+                )
+            }.distinctBy(AgentProviderModelSummary::id)
+            if (models.isEmpty()) return@mapNotNull null
+            ConfiguredProvider(
+                id = id,
+                name = document.string(NAME_KEY)?.takeIf(String::isNotBlank) ?: id,
+                kind = document.string(KIND_KEY) ?: inferProviderKind(baseUrl),
+                baseUrl = baseUrl,
+                apiKey = options.string(API_KEY_KEY),
+                models = models,
+            )
+        }
+        if (native.isNotEmpty()) return native.sortedBy(ConfiguredProvider::id)
+        return legacyTargets(root).groupBy(LegacyTarget::providerId).map { (providerId, targets) ->
+            val first = targets.first()
+            ConfiguredProvider(
+                id = providerId,
+                name = first.providerName ?: providerId,
+                kind = first.kind ?: inferProviderKind(first.baseUrl),
+                baseUrl = first.baseUrl,
+                apiKey = first.apiKey,
+                models = targets.distinctBy(LegacyTarget::modelId).map { target ->
+                    AgentProviderModelSummary(target.modelId, target.modelId)
+                },
+            )
+        }.sortedBy(ConfiguredProvider::id)
+    }
+
+    private fun selectedModelRef(root: JsonObject): ModelRef? {
+        val model = root[MODEL_SECTION_KEY]
+        val raw = when (model) {
+            is JsonPrimitive -> model.getValue() as? String
+            is JsonObject -> model.string(MAIN_KEY)
+            else -> null
+        }
+        parseModelRef(raw)?.let { return it }
+        return (model as? JsonObject)?.getObject(MAIN_KEY)?.let { legacy ->
+            val providerId = legacy.string(LEGACY_PROVIDER_ID_KEY) ?: return@let null
+            val modelId = legacy.string(LEGACY_MODEL_ID_KEY) ?: return@let null
+            ModelRef(providerId, modelId)
+        }
+    }
+
+    private fun parseModelRef(value: String?): ModelRef? {
+        val raw = value?.trim().orEmpty()
+        val separator = raw.indexOf('/')
+        if (separator <= 0 || separator == raw.lastIndex) return null
+        return ModelRef(raw.substring(0, separator), raw.substring(separator + 1))
+    }
+
+    private fun migrateLegacyConfig(root: JsonObject) {
+        val legacy = legacyTargets(root)
+        if (root.getObject(PROVIDERS_SECTION_KEY).isNullOrEmpty() && legacy.isNotEmpty()) {
+            val providers = JsonObject()
+            legacy.groupBy(LegacyTarget::providerId).forEach { (providerId, targets) ->
+                val first = targets.first()
+                val provider = JsonObject()
+                putPreserving(provider, KIND_KEY, JsonPrimitive.of(first.kind ?: inferProviderKind(first.baseUrl)))
+                first.providerName?.let { putPreserving(provider, NAME_KEY, JsonPrimitive.of(it)) }
+                val options = JsonObject()
+                first.baseUrl?.let { putPreserving(options, BASE_URL_KEY, JsonPrimitive.of(it)) }
+                first.apiKey?.let { putPreserving(options, API_KEY_KEY, JsonPrimitive.of(it)) }
+                putPreserving(provider, OPTIONS_KEY, options)
+                val models = JsonObject()
+                targets.distinctBy(LegacyTarget::modelId).forEach { target ->
+                    putPreserving(models, target.modelId, JsonObject())
+                }
+                putPreserving(provider, MODELS_KEY, models)
+                putPreserving(providers, providerId, provider)
+            }
+            putPreserving(root, PROVIDERS_SECTION_KEY, providers)
+        }
+        selectedModelRef(root)?.let { setMain(root, it) }
+    }
+
+    private fun legacyTargets(root: JsonObject): List<LegacyTarget> {
         val model = root.getObject(MODEL_SECTION_KEY) ?: return emptyList()
         return buildList {
-            model.getObject(MAIN_KEY)?.toModelTarget(primary = true)?.let(::add)
-            model.getObject(LITE_KEY)?.toModelTarget(primary = false)?.let(::add)
+            model.getObject(MAIN_KEY)?.toLegacyTarget(primary = true)?.let(::add)
+            model.getObject(LITE_KEY)?.toLegacyTarget(primary = false)?.let(::add)
             (model[AVAILABLE_KEY] as? JsonArray).orEmpty().forEach { value ->
-                (value as? JsonObject)?.toModelTarget(primary = false)?.let(::add)
+                (value as? JsonObject)?.toLegacyTarget(primary = false)?.let(::add)
             }
         }.distinctBy { "${it.providerId}/${it.modelId}" }
     }
 
-    private fun JsonObject.toModelTarget(primary: Boolean): ModelTarget? {
-        val providerId = string(PROVIDER_ID_KEY)?.takeIf(String::isNotBlank) ?: return null
-        val modelId = string(MODEL_ID_KEY)?.takeIf(String::isNotBlank) ?: return null
-        return ModelTarget(
-            document = this,
+    private fun JsonObject.toLegacyTarget(primary: Boolean): LegacyTarget? {
+        val providerId = string(LEGACY_PROVIDER_ID_KEY)?.takeIf(String::isNotBlank) ?: return null
+        val modelId = string(LEGACY_MODEL_ID_KEY)?.takeIf(String::isNotBlank) ?: return null
+        return LegacyTarget(
             providerId = providerId,
-            providerName = string(PROVIDER_NAME_KEY),
+            providerName = string(LEGACY_PROVIDER_NAME_KEY),
             modelId = modelId,
             kind = string(KIND_KEY),
             baseUrl = string(BASE_URL_KEY),
@@ -312,28 +396,6 @@ internal class ZCodeAgentConfigAdapter internal constructor(
             primary = primary,
         )
     }
-
-    private fun modelTarget(
-        providerId: String,
-        providerName: String?,
-        modelId: String,
-        kind: String,
-        baseUrl: String,
-        apiKey: String?,
-    ) = JsonObject().also { target ->
-        putPreserving(target, PROVIDER_ID_KEY, JsonPrimitive.of(providerId.trim()))
-        providerName?.trim()?.takeIf(String::isNotBlank)?.let {
-            putPreserving(target, PROVIDER_NAME_KEY, JsonPrimitive.of(it))
-        }
-        putPreserving(target, MODEL_ID_KEY, JsonPrimitive.of(modelId.trim()))
-        putPreserving(target, KIND_KEY, JsonPrimitive.of(kind))
-        putPreserving(target, BASE_URL_KEY, JsonPrimitive.of(baseUrl.trim()))
-        if (apiKey.isNullOrBlank()) target.remove(API_KEY_KEY)
-        else putPreserving(target, API_KEY_KEY, JsonPrimitive.of(apiKey))
-    }
-
-    private fun targetRef(target: JsonObject): String =
-        "${target.string(PROVIDER_ID_KEY).orEmpty()}/${target.string(MODEL_ID_KEY).orEmpty()}"
 
     private fun inferProviderKind(baseUrl: String?): String =
         if (baseUrl.orEmpty().contains("/anthropic", ignoreCase = true)) ANTHROPIC_KIND else OPENAI_COMPATIBLE_KIND
@@ -345,8 +407,18 @@ internal class ZCodeAgentConfigAdapter internal constructor(
             OPENAI_CHAT_FORMAT
         }
 
-    private data class ModelTarget(
-        val document: JsonObject,
+    private data class ConfiguredProvider(
+        val id: String,
+        val name: String,
+        val kind: String,
+        val baseUrl: String?,
+        val apiKey: String?,
+        val models: List<AgentProviderModelSummary>,
+    )
+
+    private data class ModelRef(val providerId: String, val modelId: String)
+
+    private data class LegacyTarget(
         val providerId: String,
         val providerName: String?,
         val modelId: String,
@@ -368,9 +440,14 @@ internal class ZCodeAgentConfigAdapter internal constructor(
         private const val MAIN_KEY = "main"
         private const val LITE_KEY = "lite"
         private const val AVAILABLE_KEY = "available"
-        private const val PROVIDER_ID_KEY = "provider"
-        private const val PROVIDER_NAME_KEY = "providerName"
-        private const val MODEL_ID_KEY = "model"
+        private const val PROVIDERS_SECTION_KEY = "provider"
+        private const val OPTIONS_KEY = "options"
+        private const val MODELS_KEY = "models"
+        private const val NAME_KEY = "name"
+        private const val ID_KEY = "id"
+        private const val LEGACY_PROVIDER_ID_KEY = "provider"
+        private const val LEGACY_PROVIDER_NAME_KEY = "providerName"
+        private const val LEGACY_MODEL_ID_KEY = "model"
         private const val KIND_KEY = "kind"
         private const val BASE_URL_KEY = "baseURL"
         private const val API_KEY_KEY = "apiKey"
