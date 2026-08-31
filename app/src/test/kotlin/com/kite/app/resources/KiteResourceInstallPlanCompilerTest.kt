@@ -252,6 +252,7 @@ class KiteResourceInstallPlanCompilerTest {
         assertTrue(script.contains("export BASH_ENV="))
         assertTrue(script.contains("KITE_RESOURCE_SOURCE_HELPER_EOF"))
         assertTrue(script.contains("missing an upload date|has no publish time"))
+        assertTrue(script.contains("lockfile[^[:cntrl:]]*needs to be updated"))
         assertTrue(script.indexOf("export BASH_ENV=") < script.lastIndexOf("'bash'"))
     }
 

@@ -409,7 +409,7 @@ object KiteResourceInstallPlanCompiler {
               source_status="${'$'}1"
               source_log="${'$'}2"
               [ "${'$'}source_status" -eq 124 ] && return 0
-              if grep -Eiq 'missing an upload date|has no publish time|metadata[^[:cntrl:]]*(missing|incomplete)' "${'$'}source_log"; then
+              if grep -Eiq 'missing an upload date|has no publish time|metadata[^[:cntrl:]]*(missing|incomplete)|lockfile[^[:cntrl:]]*needs to be updated[^[:cntrl:]]*--locked' "${'$'}source_log"; then
                 return 0
               fi
               if grep -Eiq 'sha256-mismatch|checksum mismatch|hash sum mismatch|signature[^[:cntrl:]]*(invalid|failed)|NO_PUBKEY|repository[^[:cntrl:]]*not signed|Unable to locate package|dependency conflict|ResolutionImpossible' "${'$'}source_log"; then
