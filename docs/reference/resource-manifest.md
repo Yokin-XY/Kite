@@ -127,6 +127,27 @@ assets/resources/<resource-id>/
 
 旧 `type: shell` 仍能加载，但新资源不应把下载、安装、验证和成功登记压成一条自由 Shell。
 
+需要兼顾官方 Git 仓库和镜像新鲜度的资源，可以在 `git` 步骤声明由签名商店维护的近期版本窗口：
+
+```json
+{
+  "id": "acquire-example-source",
+  "type": "git",
+  "repositories": [
+    "https://example.cn/example.git",
+    "https://github.com/example/example.git"
+  ],
+  "destination": "$install_root/example",
+  "latestVersionWindow": [
+    {"version": "v3.0.0", "ref": "v3.0.0", "commit": "<40 位提交>"},
+    {"version": "v2.9.0", "ref": "v2.9.0", "commit": "<40 位提交>"},
+    {"version": "v2.8.0", "ref": "v2.8.0", "commit": "<40 位提交>"}
+  ]
+}
+```
+
+窗口最多三个版本，不能与固定 `ref` / `commit` 同时使用。安装器按用户的来源顺序向每个仓库查询最新 tag；只有最新 tag 命中窗口且实际检出的提交也一致才发布，并把选中的版本、ref 和提交写入资源目录的 `.kite-source-selection/`，供后续安装与验证步骤使用。`actions.updateStrategy: "reinstall"` 表示更新时复用同一套完整安装事务，而不是运行一套可能漏掉获取和核验的轻量脚本。
+
 ## 成功边界
 
 只有以下条件都满足，资源才能登记为已安装：

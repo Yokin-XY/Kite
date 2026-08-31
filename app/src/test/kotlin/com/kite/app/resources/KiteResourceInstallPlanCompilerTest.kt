@@ -198,6 +198,64 @@ class KiteResourceInstallPlanCompilerTest {
     }
 
     @Test
+    fun gitSourcesRequestLatestThenRequireTheSignedThreeVersionWindow() {
+        val action = managedAction(
+            steps = listOf(
+                KiteResourceInstallStep(
+                    id = "source",
+                    type = KiteResourceInstallPlanCompiler.STEP_GIT,
+                    repositories = listOf(
+                        "https://github.com/example/project.git",
+                        "https://gitcode.com/example/project.git",
+                    ),
+                    destination = "${'$'}install_root/project",
+                    latestVersionWindow = listOf(
+                        KiteResourceSourceVersion("v3.0.0", "v3.0.0", "3".repeat(40)),
+                        KiteResourceSourceVersion("v2.0.0", "v2.0.0", "2".repeat(40)),
+                        KiteResourceSourceVersion("v1.0.0", "v1.0.0", "1".repeat(40)),
+                    ),
+                    retryAttempts = 1,
+                    retryDelaySeconds = 0,
+                )
+            )
+        )
+
+        val script = KiteResourceInstallPlanCompiler.compile(action)
+
+        assertTrue(script.contains("git ls-remote --tags --refs"))
+        assertTrue(script.contains("request=latest"))
+        assertTrue(script.contains("latest-version-outside-window"))
+        assertTrue(script.contains("KITE_RESOURCE_SOURCE_REJECTED"))
+        assertTrue(script.contains("reason=git-commit-mismatch"))
+        assertTrue(script.contains(".kite-source-selection"))
+        assertTrue(script.contains("${'$'}step_id.version"))
+        assertTrue(script.indexOf("gitcode.com/example") < script.indexOf("github.com/example"))
+        assertTrue(script.contains("if [ \"${'$'}source_rejected\" -eq 1 ]; then"))
+        assertTrue(script.substringAfter("if [ \"${'$'}source_rejected\" -eq 1 ]; then").contains("continue"))
+    }
+
+    @Test
+    fun childBashScriptsReceiveTheSharedSourceFailureClassifier() {
+        val action = managedAction(
+            steps = listOf(
+                KiteResourceInstallStep(
+                    id = "nested-installer",
+                    type = KiteResourceInstallPlanCompiler.STEP_SCRIPT,
+                    interpreter = "bash",
+                    path = "${'$'}install_root/install.sh",
+                )
+            )
+        )
+
+        val script = KiteResourceInstallPlanCompiler.compile(action)
+
+        assertTrue(script.contains("export BASH_ENV="))
+        assertTrue(script.contains("KITE_RESOURCE_SOURCE_HELPER_EOF"))
+        assertTrue(script.contains("missing an upload date|has no publish time"))
+        assertTrue(script.indexOf("export BASH_ENV=") < script.lastIndexOf("'bash'"))
+    }
+
+    @Test
     fun verificationEmitsFailureBeforeInstallCommit() {
         val action = managedAction(
             steps = listOf(

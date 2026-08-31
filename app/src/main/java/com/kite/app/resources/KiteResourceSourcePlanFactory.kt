@@ -65,7 +65,8 @@ object KiteResourceSourcePlanFactory {
         }
 
         val explicitInstall = manifest.installActions.isNotEmpty()
-        val explicitUpdate = manifest.updateActions.isNotEmpty()
+        val reinstallOnUpdate = manifest.updateStrategy == UPDATE_STRATEGY_REINSTALL
+        val explicitUpdate = manifest.updateActions.isNotEmpty() || reinstallOnUpdate
         val explicitUninstall = manifest.uninstallActions.isNotEmpty()
         val generatedInstall = if (explicitInstall || explicitUpdate && targetVersion != null) {
             emptyList()
@@ -74,6 +75,7 @@ object KiteResourceSourcePlanFactory {
         }
         val generatedUninstall = if (explicitUninstall) emptyList() else generatedUninstallActions(manifest)
         val installActions = when {
+            targetVersion != null && reinstallOnUpdate -> manifest.installActions
             targetVersion != null && explicitUpdate -> manifest.updateActions
             explicitInstall -> manifest.installActions
             else -> generatedInstall
@@ -81,6 +83,7 @@ object KiteResourceSourcePlanFactory {
         val uninstallActions = manifest.uninstallActions.ifEmpty { generatedUninstall }
         val versionCheck = versionCheckPlan(manifest)
         val supportsTargetVersion = when {
+            reinstallOnUpdate -> true
             explicitUpdate -> true
             explicitInstall -> false
             manifest.source.type in TARGET_VERSION_SOURCES -> true
@@ -103,6 +106,8 @@ object KiteResourceSourcePlanFactory {
             generatedFromSource = !explicitInstall && !explicitUpdate && generatedInstall.isNotEmpty()
         )
     }
+
+    private const val UPDATE_STRATEGY_REINSTALL = "reinstall"
 
     fun versionCheckPlan(
         manifest: KiteResourceManifest,

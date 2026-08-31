@@ -317,10 +317,33 @@ object KiteResourceInstallPlanCompiler {
         require(repositories.isNotEmpty()) { "git step ${step.id} has no repository" }
         require(step.destination.isNotBlank()) { "git step ${step.id} has no destination" }
         val expectedCommit = step.commit.trim().lowercase()
+        val latestVersionWindow = step.latestVersionWindow
+        if (latestVersionWindow.isNotEmpty()) {
+            require(latestVersionWindow.size <= MAX_LATEST_VERSION_WINDOW) {
+                "git step ${step.id} latest version window exceeds $MAX_LATEST_VERSION_WINDOW entries"
+            }
+            require(step.ref.isBlank() && expectedCommit.isBlank()) {
+                "git step ${step.id} cannot combine a fixed ref with a latest version window"
+            }
+            require(latestVersionWindow.map { it.version }.distinct().size == latestVersionWindow.size) {
+                "git step ${step.id} latest version window contains duplicate versions"
+            }
+            require(latestVersionWindow.map { it.ref }.distinct().size == latestVersionWindow.size) {
+                "git step ${step.id} latest version window contains duplicate refs"
+            }
+            latestVersionWindow.forEach { candidate ->
+                require(isSafeGitWindowValue(candidate.version) && isSafeGitWindowValue(candidate.ref)) {
+                    "git step ${step.id} latest version window contains an unsafe version or ref"
+                }
+                require(GIT_COMMIT.matches(candidate.commit)) {
+                    "git step ${step.id} latest version window contains an invalid commit"
+                }
+            }
+        }
         require(expectedCommit.isBlank() || GIT_COMMIT.matches(expectedCommit)) {
             "git step ${step.id} has an invalid pinned commit"
         }
-        require(repositories.size == 1 || expectedCommit.isNotBlank()) {
+        require(repositories.size == 1 || expectedCommit.isNotBlank() || latestVersionWindow.isNotEmpty()) {
             "git step ${step.id} requires a pinned commit when mirrors are declared"
         }
         return (listOf(
@@ -330,9 +353,15 @@ object KiteResourceInstallPlanCompiler {
             shellExpression(step.ref),
             shellLiteral(expectedCommit),
             step.retryAttempts.toString(),
-            step.retryDelaySeconds.toString()
-        ) + repositories.map(::shellExpression)).joinToString(" ", prefix = "kite_resource_git ")
+            step.retryDelaySeconds.toString(),
+            latestVersionWindow.size.toString(),
+        ) + latestVersionWindow.map { candidate ->
+            shellLiteral("${candidate.version}|${candidate.ref}|${candidate.commit}")
+        } + listOf("--") + repositories.map(::shellExpression)).joinToString(" ", prefix = "kite_resource_git ")
     }
+
+    private fun isSafeGitWindowValue(value: String): Boolean =
+        value.isNotBlank() && !value.startsWith('-') && value.none { it == '|' || it == '\n' || it == '\r' }
 
     private fun compileInlineShell(step: KiteResourceInstallStep): String {
         require(step.cmd.isNotBlank()) { "Shell step ${step.id} has no command" }
@@ -372,15 +401,25 @@ object KiteResourceInstallPlanCompiler {
             export KITE_RESOURCE_PYPI_INDEXES=${shellLiteral(pypiIndexes)}
             export KITE_RESOURCE_UBUNTU_PORTS_ROUTES=${shellLiteral(ubuntuRoutes)}
             export UV_DEFAULT_INDEX="${'$'}(printf '%s\n' ${'$'}KITE_RESOURCE_PYPI_INDEXES | head -n 1)"
+            KITE_RESOURCE_SOURCE_RUNTIME="${'$'}install_root/.kite-source-runtime"
+            KITE_RESOURCE_SOURCE_HELPER="${'$'}KITE_RESOURCE_SOURCE_RUNTIME/helpers.sh"
+            mkdir -p "${'$'}KITE_RESOURCE_SOURCE_RUNTIME"
+            cat > "${'$'}KITE_RESOURCE_SOURCE_HELPER" <<'KITE_RESOURCE_SOURCE_HELPER_EOF'
             kite_resource_is_source_failure() {
               source_status="${'$'}1"
               source_log="${'$'}2"
               [ "${'$'}source_status" -eq 124 ] && return 0
+              if grep -Eiq 'missing an upload date|has no publish time|metadata[^[:cntrl:]]*(missing|incomplete)' "${'$'}source_log"; then
+                return 0
+              fi
               if grep -Eiq 'sha256-mismatch|checksum mismatch|hash sum mismatch|signature[^[:cntrl:]]*(invalid|failed)|NO_PUBKEY|repository[^[:cntrl:]]*not signed|Unable to locate package|dependency conflict|ResolutionImpossible' "${'$'}source_log"; then
                 return 1
               fi
               grep -Eiq 'EAI_AGAIN|ENETUNREACH|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ERR_SOCKET_TIMEOUT|Temporary failure resolving|Could not resolve|Connection (failed|timed out|refused)|Network is unreachable|Failed to fetch|error sending request|dns error|Request failed after [0-9]+ retries|E(404|429|5[0-9][0-9])|status code (404|429|5[0-9][0-9])|HTTP[^[:cntrl:]]*(404|429|5[0-9][0-9])' "${'$'}source_log"
             }
+            KITE_RESOURCE_SOURCE_HELPER_EOF
+            export BASH_ENV="${'$'}KITE_RESOURCE_SOURCE_HELPER"
+            . "${'$'}KITE_RESOURCE_SOURCE_HELPER"
         """.trimIndent()
     }
 
@@ -447,21 +486,81 @@ object KiteResourceInstallPlanCompiler {
           expected_commit="${'$'}5"
           max_attempts="${'$'}6"
           retry_delay="${'$'}7"
-          shift 7
+          window_count="${'$'}8"
+          shift 8
+          version_window=()
+          window_index=0
+          while [ "${'$'}window_index" -lt "${'$'}window_count" ]; do
+            version_window+=("${'$'}1")
+            shift
+            window_index=$((window_index + 1))
+          done
+          [ "${'$'}{1:-}" = "--" ] || {
+            echo "KITE_RESOURCE_FAILURE stage=prepare step=${'$'}step_id reason=git-window-contract-invalid"
+            return 64
+          }
+          shift
           command -v git >/dev/null 2>&1 || {
             echo "KITE_RESOURCE_FAILURE stage=prepare step=${'$'}step_id reason=git-missing"
             return 127
           }
           candidate="${'$'}destination.kite-clone"
+          attempt_root="${'$'}install_root/.kite-source-attempt/git/${'$'}step_id"
+          refs_file="${'$'}attempt_root/remote-refs"
+          query_log="${'$'}attempt_root/latest-query.log"
           mkdir -p "${'$'}(dirname "${'$'}destination")"
           last_status=1
           for repository in "${'$'}@"; do
             attempt=1
+            source_rejected=0
             while [ "${'$'}attempt" -le "${'$'}max_attempts" ]; do
-              rm -rf "${'$'}candidate"
-              if [ -n "${'$'}ref" ]; then
+              rm -rf "${'$'}candidate" "${'$'}attempt_root"
+              mkdir -p "${'$'}attempt_root"
+              selected_version=
+              selected_ref="${'$'}ref"
+              selected_commit="${'$'}expected_commit"
+              if [ "${'$'}window_count" -gt 0 ]; then
+                echo "KITE_RESOURCE_ROUTE stage=acquire step=${'$'}step_id source=${'$'}repository request=latest"
                 set +e
-                kite_resource_run "${'$'}step_id" acquire git clone --depth "${'$'}depth" --branch "${'$'}ref" "${'$'}repository" "${'$'}candidate"
+                git ls-remote --tags --refs "${'$'}repository" >"${'$'}refs_file" 2>"${'$'}query_log"
+                last_status=${'$'}?
+                set -e
+                if [ "${'$'}last_status" -ne 0 ]; then
+                  cat "${'$'}query_log"
+                  echo "KITE_RESOURCE_RETRY stage=acquire step=${'$'}step_id source=${'$'}repository attempt=${'$'}attempt exit=${'$'}last_status reason=latest-query-failed"
+                  sleep "$((retry_delay * attempt))"
+                  attempt=$((attempt + 1))
+                  continue
+                fi
+                latest_ref="${'$'}(awk '{ sub(/^refs\/tags\//, "", ${'$'}2); print ${'$'}2 }' "${'$'}refs_file" | LC_ALL=C sort -V | tail -n 1)"
+                if [ -z "${'$'}latest_ref" ]; then
+                  last_status=69
+                  source_rejected=1
+                  echo "KITE_RESOURCE_SOURCE_REJECTED step=${'$'}step_id source=${'$'}repository reason=latest-version-missing"
+                  break
+                fi
+                for window_entry in "${'$'}{version_window[@]}"; do
+                  window_version="${'$'}{window_entry%%|*}"
+                  window_tail="${'$'}{window_entry#*|}"
+                  window_ref="${'$'}{window_tail%%|*}"
+                  window_commit="${'$'}{window_tail#*|}"
+                  if [ "${'$'}latest_ref" = "${'$'}window_ref" ]; then
+                    selected_version="${'$'}window_version"
+                    selected_ref="${'$'}window_ref"
+                    selected_commit="${'$'}window_commit"
+                    break
+                  fi
+                done
+                if [ -z "${'$'}selected_version" ]; then
+                  last_status=69
+                  source_rejected=1
+                  echo "KITE_RESOURCE_SOURCE_REJECTED step=${'$'}step_id source=${'$'}repository reason=latest-version-outside-window version=${'$'}latest_ref"
+                  break
+                fi
+              fi
+              if [ -n "${'$'}selected_ref" ]; then
+                set +e
+                kite_resource_run "${'$'}step_id" acquire git clone --depth "${'$'}depth" --branch "${'$'}selected_ref" "${'$'}repository" "${'$'}candidate"
                 last_status=${'$'}?
                 set -e
               else
@@ -471,27 +570,46 @@ object KiteResourceInstallPlanCompiler {
                 set -e
               fi
               if [ "${'$'}last_status" -eq 0 ]; then
-                if [ -n "${'$'}expected_commit" ]; then
+                if [ -n "${'$'}selected_commit" ]; then
                   actual_commit="${'$'}(git -C "${'$'}candidate" rev-parse HEAD 2>/dev/null || true)"
-                  if [ "${'$'}actual_commit" != "${'$'}expected_commit" ]; then
+                  if [ "${'$'}actual_commit" != "${'$'}selected_commit" ]; then
                     rm -rf "${'$'}candidate"
                     last_status=65
-                    echo "KITE_RESOURCE_FAILURE stage=verify-download step=${'$'}step_id source=${'$'}repository reason=git-commit-mismatch expected=${'$'}expected_commit actual=${'$'}actual_commit"
+                    if [ "${'$'}window_count" -gt 0 ]; then
+                      source_rejected=1
+                      echo "KITE_RESOURCE_SOURCE_REJECTED step=${'$'}step_id source=${'$'}repository reason=git-commit-mismatch version=${'$'}selected_version expected=${'$'}selected_commit actual=${'$'}actual_commit"
+                      break
+                    fi
+                    echo "KITE_RESOURCE_FAILURE stage=verify-download step=${'$'}step_id source=${'$'}repository reason=git-commit-mismatch expected=${'$'}selected_commit actual=${'$'}actual_commit"
                     return 65
                   fi
                 fi
                 rm -rf "${'$'}destination"
                 mv "${'$'}candidate" "${'$'}destination"
-                echo "KITE_RESOURCE_STEP acquire-complete ${'$'}step_id source=${'$'}repository commit=${'$'}expected_commit"
+                selection_root="${'$'}install_root/.kite-source-selection"
+                mkdir -p "${'$'}selection_root"
+                printf '%s\n' "${'$'}selected_version" > "${'$'}selection_root/${'$'}step_id.version"
+                printf '%s\n' "${'$'}selected_ref" > "${'$'}selection_root/${'$'}step_id.ref"
+                printf '%s\n' "${'$'}{actual_commit:-}" > "${'$'}selection_root/${'$'}step_id.commit"
+                rm -rf "${'$'}attempt_root"
+                echo "KITE_RESOURCE_STEP acquire-complete ${'$'}step_id source=${'$'}repository version=${'$'}selected_version commit=${'$'}{actual_commit:-}"
                 return 0
               fi
               echo "KITE_RESOURCE_RETRY stage=acquire step=${'$'}step_id source=${'$'}repository attempt=${'$'}attempt exit=${'$'}last_status"
               sleep "$((retry_delay * attempt))"
               attempt=$((attempt + 1))
             done
+            if [ "${'$'}source_rejected" -eq 1 ]; then
+              rm -rf "${'$'}candidate" "${'$'}attempt_root"
+              continue
+            fi
           done
-          rm -rf "${'$'}candidate"
-          echo "KITE_RESOURCE_FAILURE stage=acquire step=${'$'}step_id exit=${'$'}last_status"
+          rm -rf "${'$'}candidate" "${'$'}attempt_root"
+          if [ "${'$'}window_count" -gt 0 ]; then
+            echo "KITE_RESOURCE_FAILURE stage=acquire step=${'$'}step_id exit=${'$'}last_status reason=no-verified-latest-source"
+          else
+            echo "KITE_RESOURCE_FAILURE stage=acquire step=${'$'}step_id exit=${'$'}last_status"
+          fi
           return "${'$'}last_status"
         }
     """.trimIndent()
@@ -507,4 +625,5 @@ object KiteResourceInstallPlanCompiler {
 
     private val SAFE_ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
     private val GIT_COMMIT = Regex("[a-f0-9]{40}")
+    private const val MAX_LATEST_VERSION_WINDOW = 3
 }

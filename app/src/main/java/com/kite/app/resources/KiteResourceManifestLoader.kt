@@ -39,6 +39,7 @@ data class KiteResourceManifest(
     val installActions: List<KiteResourceShellAction>,
     val updateActions: List<KiteResourceShellAction>,
     val uninstallActions: List<KiteResourceShellAction>,
+    val updateStrategy: String = "",
     val agentProfiles: List<KiteResourceAgentProfile> = emptyList(),
     val openRecipe: JSONObject?,
     val homeCards: List<KiteResourceHomeCard>,
@@ -173,6 +174,7 @@ data class KiteResourceInstallStep(
     val repositories: List<String> = emptyList(),
     val ref: String = "",
     val commit: String = "",
+    val latestVersionWindow: List<KiteResourceSourceVersion> = emptyList(),
     val depth: Int = 1,
     val retryAttempts: Int = 4,
     val retryDelaySeconds: Int = 2,
@@ -184,6 +186,18 @@ data class KiteResourceInstallStep(
     val maximumDepth: Int = 0,
     val maximumExpansionRatio: Int = 0,
     val specialEntryPolicy: String = "reject",
+)
+
+/**
+ * 资源来源允许放行的近期版本身份。
+ *
+ * 安装器仍向每个来源请求其最新版本；只有来源返回的最新 ref 和实际检出的提交同时命中这里，
+ * 才能发布到正式安装目录。该窗口来自已签名的资源商店清单，不是运行时自行推断的版本锁。
+ */
+data class KiteResourceSourceVersion(
+    val version: String,
+    val ref: String,
+    val commit: String,
 )
 
 data class KiteResourceInstallVerification(
@@ -737,6 +751,7 @@ class KiteResourceManifestLoader private constructor(
             installActions = installActions,
             updateActions = updateActions,
             uninstallActions = uninstallActions,
+            updateStrategy = actions.optString("updateStrategy").trim().lowercase(),
             agentProfiles = agentProfiles,
             openRecipe = openRecipe,
             homeCards = parseHomeCards(json.optJSONArray("homeCards")),
@@ -1170,6 +1185,9 @@ class KiteResourceManifestLoader private constructor(
                         repositories = repositories,
                         ref = step.optString("ref").trim(),
                         commit = step.optString("commit").trim().lowercase(),
+                        latestVersionWindow = parseLatestVersionWindow(
+                            step.optJSONArray("latestVersionWindow")
+                        ),
                         depth = step.optInt("depth", 1).coerceIn(0, 1000),
                         retryAttempts = step.optInt("retryAttempts", 4).coerceIn(1, 10),
                         retryDelaySeconds = step.optInt("retryDelaySeconds", 2).coerceIn(0, 60),
@@ -1183,6 +1201,23 @@ class KiteResourceManifestLoader private constructor(
                         specialEntryPolicy = step.optString("specialEntryPolicy", "reject").trim().lowercase(),
                     )
                 )
+            }
+        }
+    }
+
+    private fun parseLatestVersionWindow(windowJson: JSONArray?): List<KiteResourceSourceVersion> {
+        if (windowJson == null) return emptyList()
+        return buildList {
+            for (index in 0 until windowJson.length()) {
+                val candidate = windowJson.optJSONObject(index)
+                if (candidate == null) {
+                    add(KiteResourceSourceVersion(version = "", ref = "", commit = ""))
+                    continue
+                }
+                val version = candidate.optString("version").trim()
+                val ref = candidate.optString("ref").trim().ifBlank { version }
+                val commit = candidate.optString("commit").trim().lowercase()
+                add(KiteResourceSourceVersion(version = version, ref = ref, commit = commit))
             }
         }
     }
