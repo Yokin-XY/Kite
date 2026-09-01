@@ -1,0 +1,38 @@
+title: "[Q&A] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这里用于安装、使用、配置和理解项目行为的问题。可复现的软件缺陷请使用 Bug Report；安全问题请通过仓库 Security 页面私密报告。
+
+        Use this category for installation, usage, configuration, and behavior questions. Use Bug Report for reproducible defects and the repository Security page for private vulnerability reports.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: 问题 / Question
+      description: 你想知道什么，最终希望完成什么？ / What do you want to know or accomplish?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景与已尝试内容 / Context and attempts
+      description: 请说明相关入口、操作步骤和已经尝试的方法。 / Describe the relevant entry point, steps, and what you already tried.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境 / Environment
+      description: 相关时请提供 Kite、Android、设备、Agent 或资源版本。 / When relevant, include Kite, Android, device, Agent, or resource versions.
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 安全确认 / Safety check
+      options:
+        - label: 我已移除 Token、API Key、账号、路径中的私人标识和其他敏感数据。 / I removed tokens, API keys, account details, private path identifiers, and other sensitive data.
+          required: true

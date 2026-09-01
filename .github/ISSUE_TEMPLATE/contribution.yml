@@ -1,0 +1,93 @@
+name: 代码贡献方向与认领 / Code contribution proposal and claim
+description: 准备亲自实现时，公开机制并认领工作 / Disclose the mechanism and claim work you plan to implement
+title: "[共建] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢参与 Kite 共建。这个表单面向准备亲自提交代码、文档、测试或设计的贡献者。普通想法请先发到 [Ideas](https://github.com/Yokin-XY/Kite/discussions/categories/ideas)，使用问题请进入 [Q&A](https://github.com/Yokin-XY/Kite/discussions/categories/q-a)。
+
+        这里用于在实现前公开消费场景、预期效果和实现机制，不是申请维护者批准。说明清楚后即可自行认领并从个人 Fork 开始实现；最终是否合并以 Pull Request 的代码、安全和验证审查为准。
+
+        This form is for contributors who plan to implement code, documentation, tests, or design. Share ordinary ideas in [Ideas](https://github.com/Yokin-XY/Kite/discussions/categories/ideas) and usage questions in [Q&A](https://github.com/Yokin-XY/Kite/discussions/categories/q-a).
+
+        Disclose the use case, expected outcome, and implementation mechanism before writing code. This is not a request for prior maintainer approval. Once the direction is clear, you may claim it and work in your fork. Merge decisions are made during Pull Request review.
+
+        提交前请阅读 [参与开发](https://github.com/Yokin-XY/Kite/blob/main/CONTRIBUTING.md) / [Contributing Guide](https://github.com/Yokin-XY/Kite/blob/main/CONTRIBUTING.en.md)。资源安装、Shell/PRoot、Agent 进程、认证凭据、Android 权限、构建和发布链会进行额外安全审查。
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 消费场景 / Use case
+      description: 谁会在什么情况下使用这项能力？当前具体问题是什么？ / Who uses it, when, and what concrete problem exists today?
+      placeholder: 请说明用户、触发入口、当前流程和实际痛点。 / Describe the user, entry point, current flow, and pain point.
+    validations:
+      required: true
+
+  - type: textarea
+    id: effect
+    attributes:
+      label: 预期效果 / Expected outcome
+      description: 完成后用户能够做什么，会看到什么可验证的变化？ / What can users do afterward, and what observable result should change?
+      placeholder: 请描述最终行为，不要只写“优化”“支持”或代码模块名称。 / Describe the final behavior, not only “optimize,” “support,” or a module name.
+    validations:
+      required: true
+
+  - type: textarea
+    id: mechanism
+    attributes:
+      label: 实现机制 / Implementation mechanism
+      description: 准备通过什么流程、状态拥有者、SDK、Adapter 或其他机制实现？数据从哪里来，由谁消费和保存？ / Which flow and owner implement this? Where does data come from, and who consumes and stores it?
+      placeholder: 请说明关键数据流、模块边界、持久化位置及失败回退；不要求先写出完整代码。 / Describe the data flow, boundaries, persistence, and fallback; complete code is not required yet.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 计划范围 / Scope
+      description: 列出计划修改的模块、行为边界和明确不包含的内容。 / List affected modules, behavior boundaries, and explicit exclusions.
+      placeholder: |
+        包含 / Included:
+        - ...
+
+        不包含 / Excluded:
+        - ...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: risk
+    attributes:
+      label: 风险范围 / Risk areas
+      description: 请勾选全部涉及的范围；勾选不会阻止贡献，只用于提前确定审查方式。 / Select every applicable area; this determines review depth and does not block a proposal.
+      options:
+        - label: 资源卡、资源清单、下载地址、依赖或第三方脚本 / Resources, manifests, downloads, dependencies, or third-party scripts
+        - label: Shell、终端、PRoot、Bridge 或 Agent 进程 / Shell, terminal, PRoot, bridge, or Agent processes
+        - label: 网络、认证、凭据、文件访问或 Android 权限 / Network, authentication, credentials, file access, or Android permissions
+        - label: GitHub Actions、构建、签名、发布或自动更新 / Actions, builds, signing, releases, or updates
+        - label: 不涉及以上高风险范围 / None of the high-risk areas above
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: 验证计划 / Verification plan
+      description: 计划补充哪些测试、构建、页面或真机证据？ / Which tests, builds, UI checks, or device evidence will be provided?
+      placeholder: 单元测试、静态检查、Debug 构建、真机步骤等。 / Unit tests, static checks, Debug builds, device steps, and so on.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: agreement
+    attributes:
+      label: 协作确认 / Collaboration confirmation
+      options:
+        - label: 我已在实现前公开说明消费场景、预期效果和实现机制；如机制发生实质变化，我会先更新本 Issue。 / I disclosed the use case, outcome, and mechanism before implementation and will update this Issue before material changes.
+          required: true
+        - label: 我会自行认领并通过个人 Fork 提交 Pull Request，同时保持一个 PR 只处理一个行为边界。 / I will claim the work, submit from my fork, and keep one behavior boundary per PR.
+          required: true
+        - label: 我会说明第三方代码、素材、模型、数据和生成内容的来源及许可。 / I will disclose the source and license of third-party or generated material.
+          required: true
