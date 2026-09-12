@@ -265,6 +265,21 @@ class UiKit private constructor(
         }
     }
 
+    /** 标准内容弹层：调用方提供自定义内容，但容器、动作与主题仍由 UiKit 统一管理。 */
+    fun showContentDialog(
+        context: Context,
+        title: String,
+        dismissLabel: String,
+        primaryAction: UiDialogAction? = null,
+        body: LinearLayout.() -> Unit,
+    ): Dialog = showDialogCard(
+        context = context,
+        title = title,
+        dismissLabel = dismissLabel,
+        primaryAction = primaryAction,
+        body = body,
+    )
+
     /** 标准确认弹层：说明文字与危险/主要动作均由主题语义控制。 */
     fun showConfirmDialog(
         context: Context,
