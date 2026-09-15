@@ -732,7 +732,6 @@ object KiteResourceInstallPlanCompiler {
               attempt_log="${'$'}attempt_root/uv-tool-install.log"
               index_file="${'$'}attempt_root/simple-index.html"
               candidates_file="${'$'}attempt_root/candidates.txt"
-              wheel_file="${'$'}attempt_root/candidate.whl"
               rm -rf "${'$'}attempt_root" "${'$'}UV_TOOL_DIR" "${'$'}UV_TOOL_BIN_DIR"
               mkdir -p "${'$'}attempt_root" "${'$'}attempt_cache" "${'$'}UV_TOOL_BIN_DIR"
               : > "${'$'}attempt_log"
@@ -779,7 +778,14 @@ object KiteResourceInstallPlanCompiler {
                     continue
                 if not (lowered.endswith('.whl') or lowered.endswith('.tar.gz') or lowered.endswith('.zip')):
                     continue
-                version = filename[len(normalized):].split('-', 1)[0]
+                remainder = filename[len(normalized):]
+                if lowered.endswith('.tar.gz'):
+                    remainder = remainder[:-len('.tar.gz')]
+                elif lowered.endswith('.zip'):
+                    remainder = remainder[:-len('.zip')]
+                version = remainder.split('-', 1)[0]
+                if not version or not version[0].isdigit():
+                    continue
                 sha256 = urllib.parse.parse_qs(parsed.fragment).get('sha256', [''])[0].lower()
                 if version and len(sha256) == 64:
                     compatible = int(
@@ -788,7 +794,7 @@ object KiteResourceInstallPlanCompiler {
                             lowered.endswith('-none-any.whl')
                         )
                     )
-                    print(f'{version}|{sha256}|{absolute}|{compatible}')
+                    print(f'{version}|{sha256}|{absolute}|{compatible}|{filename}')
             KITE_PYPI_INDEX
               metadata_status=${'$'}?
               set -e
@@ -823,6 +829,8 @@ object KiteResourceInstallPlanCompiler {
                 continue
               fi
               artifact_url="${'$'}(printf '%s\n' "${'$'}latest_record" | cut -d '|' -f 3)"
+              wheel_name="${'$'}(printf '%s\n' "${'$'}latest_record" | cut -d '|' -f 5)"
+              wheel_file="${'$'}attempt_root/${'$'}wheel_name"
               set +e
               curl -fL --compressed --connect-timeout 30 --speed-time $CURL_SPEED_TIME_SECONDS --speed-limit $CURL_SPEED_LIMIT_BYTES -o "${'$'}wheel_file" "${'$'}artifact_url" 2>>"${'$'}attempt_log"
               pypi_last_status=${'$'}?
