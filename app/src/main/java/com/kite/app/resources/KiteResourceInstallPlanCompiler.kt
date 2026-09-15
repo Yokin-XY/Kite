@@ -44,8 +44,18 @@ object KiteResourceInstallPlanCompiler {
             routedAction.installSteps.forEach { step ->
                 appendLine(compileStep(step, npmAttemptVerifications))
             }
-        }.trim()
+        }.trim().let(::dedentHeredocTerminators)
     }
+
+    /**
+     * here-document 结束标记必须顶格；trimIndent 对含插值的最终字符串不可靠
+     * （插值块自身顶格时公共缩进为 0，模板缩进不会被剥掉）。这里对已知标记统一去缩进。
+     */
+    private fun dedentHeredocTerminators(script: String): String =
+        script.replace(HEREDOC_TERMINATOR_LINE, "$1")
+
+    private val HEREDOC_TERMINATOR_LINE =
+        Regex("(?m)^[ \\t]+(KITE_NPM_VERSION|KITE_NPM_INTEGRITY|KITE_PYPI_INDEX|KITE_LATEST_METADATA|KITE_RESOURCE_SOURCE_HELPER_EOF)[ \\t]*$")
 
     fun compileVerification(action: KiteResourceShellAction): String =
         if (action.verifications.isEmpty()) {
