@@ -32,3 +32,6 @@ Thumbs.db
 /kite-*.png
 /card-run-*.png
 /terminal-*-check.png
+
+# 设备截屏与诊断输出。
+/.device-screens/
