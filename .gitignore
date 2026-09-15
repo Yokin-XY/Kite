@@ -35,3 +35,4 @@ Thumbs.db
 
 # 设备截屏与诊断输出。
 /.device-screens/
+.autotask/gitcode-api-key.txt
