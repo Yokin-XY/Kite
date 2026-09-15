@@ -876,6 +876,7 @@
     <string name="resource_wizard_queue_title">Queue</string>
     <string name="resource_wizard_row_description">%1$s, %2$s</string>
     <string name="resource_wizard_cleanup_and_retry">Clean up and retry</string>
+    <string name="resource_wizard_progress_completed">Completed %1$d/%2$d</string>
     <string name="resource_wizard_cleanup_confirm_title">Clean up failed installation?</string>
     <string name="resource_wizard_cleanup_confirm_summary">Incomplete files for this resource will be removed before installation continues.</string>
     <string name="resource_wizard_cleanup_confirm_action">Clean up</string>
