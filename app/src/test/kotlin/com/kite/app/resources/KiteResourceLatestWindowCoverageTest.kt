@@ -35,8 +35,13 @@ class KiteResourceLatestWindowCoverageTest {
         )
 
         val managedResources = manifests - systemComponents.toSet()
-        assertEquals(22, managedResources.size)
-        managedResources.forEach { manifest ->
+        // official_command 把新鲜度交给官方安装器（命令自取 @latest），
+        // 不在我们的网络获取层，也不受签名窗口约束。
+        val windowlessResources = managedResources.filter {
+            it.source.type == "official_command"
+        }
+        assertEquals(21, managedResources.size - windowlessResources.size)
+        (managedResources - windowlessResources.toSet()).forEach { manifest ->
             val networkSteps = KiteResourceSourcePlanFactory.plan(manifest)
                 .installActions
                 .flatMap { it.installSteps }

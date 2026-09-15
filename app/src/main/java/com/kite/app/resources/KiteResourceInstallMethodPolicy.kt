@@ -32,6 +32,7 @@ object KiteResourceCardAuthoringPolicy {
         rule("acp_registry_binary", KiteResourceCardInstallMethodTier.OFFICIAL_ARTIFACT, pinned = true),
         rule("android_apk", KiteResourceCardInstallMethodTier.OFFICIAL_ARTIFACT, pinned = true),
         rule("official_script", KiteResourceCardInstallMethodTier.OFFICIAL_INSTALLER),
+        rule("official_command", KiteResourceCardInstallMethodTier.OFFICIAL_INSTALLER),
         rule("git", KiteResourceCardInstallMethodTier.PINNED_SOURCE, pinned = true),
     ).associateBy(KiteResourceCardInstallMethodRule::sourceType)
 

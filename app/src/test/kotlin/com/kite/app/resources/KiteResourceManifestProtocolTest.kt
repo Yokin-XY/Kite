@@ -27,7 +27,7 @@ class KiteResourceManifestProtocolTest {
             .map { file -> KiteResourceManifestLoader(context).parseManifestJson(file.readText()) }
             .filter { manifest -> manifest.sourceType == "npm" }
 
-        assertEquals(14, npmManifests.size)
+        assertEquals(13, npmManifests.size)
         npmManifests.forEach { manifest ->
             assertTrue("${manifest.id} has no signed source window", manifest.source.latestVersionWindow.isNotEmpty())
             val plan = KiteResourceSourcePlanFactory.plan(manifest)
@@ -285,33 +285,32 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
-    fun codexUsesOfficialNpmPackageWithDeclaredDependencies() {
+    fun codexRunsOfficialCommandInstallWithVersionSignal() {
         val manifestFile = File(resourceRoot(), "kite.codex.cli/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
         val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest)
         val installAction = sourcePlan.installActions.single()
-        val installStep = installAction.installSteps.single()
         val uninstallAction = sourcePlan.uninstallActions.single()
 
-        assertEquals("npm", manifest.sourceType)
+        assertEquals("official_command", manifest.sourceType)
         assertTrue(manifest.installActions.isEmpty())
         assertTrue(sourcePlan.generatedFromSource)
         assertTrue(sourcePlan.capabilities.update)
         assertEquals(listOf("kite.nodejs", "kite.git", "kite.codex.relay"), manifest.baseRequirements)
-        assertEquals(KiteResourceInstallPlanCompiler.STEP_NPM, installStep.type)
-        assertEquals(
-            listOf("@openai/codex"),
-            installStep.packages
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_SHELL, installAction.type)
+        assertTrue(installAction.cmd.contains("npm install -g @openai/codex@latest"))
+        assertTrue(
+            "安装命令尾部必须输出 versionProbe 首行作为记账信号",
+            installAction.cmd.contains("KITE_RESOURCE_INSTALLED_VERSION") &&
+                installAction.cmd.contains("codex --version"),
         )
-        assertEquals(3, installStep.latestVersionWindow.size)
-        assertEquals(5, installStep.retryAttempts)
-        assertEquals(3, installStep.retryDelaySeconds)
-        assertEquals(listOf("codex"), installAction.managedCommands)
+        assertTrue(
+            "官方直装不得引用小房间 install_root",
+            installAction.cmd.contains("$" + "install_root").not(),
+        )
         assertTrue(installAction.verifications.any { it.cmd.contains("codex --version") })
-        assertEquals(
-            listOf("@openai/codex"),
-            uninstallAction.npmUninstallPackages
-        )
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_SHELL, uninstallAction.type)
+        assertTrue(uninstallAction.cmd.contains("npm uninstall -g @openai/codex"))
         val profile = manifest.agentProfiles.single()
         assertTrue(profile.runtimeDependencies.isEmpty())
         assertEquals("codex-app-server", profile.protocol)
@@ -995,6 +994,16 @@ class KiteResourceManifestProtocolTest {
                 assertTrue("No resolved uninstall action: $resourceId", sourcePlan.uninstallActions.isNotEmpty())
             }
             sourcePlan.installActions.forEach { action ->
+                if (loaded.source.type == "official_command") {
+                    // official_command：直跑官方命令，不经过 managed 编译器与网络获取层。
+                    assertEquals(
+                        "official_command must run as shell: $resourceId",
+                        KiteResourceInstallPlanCompiler.STEP_SHELL,
+                        action.type,
+                    )
+                    assertTrue("official_command has empty cmd: $resourceId", action.cmd.isNotBlank())
+                    return@forEach
+                }
                 assertEquals("Legacy install action remains: $resourceId", KiteResourceInstallPlanCompiler.ACTION_MANAGED, action.type)
                 assertTrue("Managed action has no steps: $resourceId", action.installSteps.isNotEmpty())
                 assertTrue(

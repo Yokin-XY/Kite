@@ -78,5 +78,9 @@ data class KiteResourceSourceSpec(
     val profile: String = "",
     val interpreter: String = "",
     val entry: String = "",
-    val maxBytes: Long = 0L
+    val maxBytes: Long = 0L,
+    /** official_command：官方安装命令（幂等，更新同用）。 */
+    val command: String = "",
+    /** official_command：官方卸载命令。 */
+    val uninstallCommand: String = ""
 )

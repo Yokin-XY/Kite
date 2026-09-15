@@ -91,6 +91,8 @@ object KiteResourceSourcePlanFactory {
             isManagedScriptProfile(manifest) -> true
             manifest.source.type == SOURCE_OFFICIAL_SCRIPT ->
                 manifest.source.versionArguments.any { "{version}" in it }
+            // 官方命令幂等（@latest），目标版本仅作记账提示，命令本身不引用。
+            manifest.source.type == SOURCE_OFFICIAL_COMMAND -> true
             else -> false
         }
 
@@ -101,7 +103,10 @@ object KiteResourceSourcePlanFactory {
             capabilities = KiteResourceSourceCapabilities(
                 install = installActions.isNotEmpty(),
                 checkUpdate = versionCheck.supported,
-                update = versionCheck.supported && supportsTargetVersion,
+                // official_command 的更新就是重跑官方命令：不需要事前探测 latest，
+                // 但更新入口必须可用。
+                update = (versionCheck.supported ||
+                    manifest.source.type == SOURCE_OFFICIAL_COMMAND) && supportsTargetVersion,
                 uninstall = uninstallActions.isNotEmpty()
             ),
             generatedFromSource = !explicitInstall && !explicitUpdate && generatedInstall.isNotEmpty()
@@ -204,12 +209,64 @@ object KiteResourceSourcePlanFactory {
         SOURCE_NPM -> npmInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
         SOURCE_GITHUB_RELEASE -> githubReleaseInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
         SOURCE_OFFICIAL_SCRIPT -> officialScriptInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
+        SOURCE_OFFICIAL_COMMAND -> officialCommandInstallAction(manifest)?.let(::listOf).orEmpty()
         SOURCE_BUNDLED -> managedScriptInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
         else -> emptyList()
     }
 
+    /**
+     * official_command：安装与更新都按官方命令原样执行，位置由官方安装器决定。
+     * 我们只做两件事：跑命令、把 versionProbe 的首行输出成 KITE_RESOURCE_INSTALLED_VERSION
+     * 信号交给现有记账链路（App 侧 ResourceVersionParser 继续按 probe pattern 解析）。
+     */
+    private fun officialCommandInstallAction(manifest: KiteResourceManifest): KiteResourceShellAction? {
+        val command = manifest.source.command.takeIf(String::isNotBlank) ?: return null
+        val probeCommand = manifest.management.versionProbe?.command
+            ?.takeIf { it.isNotBlank() && "'" !in it }
+            ?: return null
+        val marker = buildString {
+            append("kite_official_version=\"$(")
+            append(probeCommand)
+            append(" 2>/dev/null | head -n 1)\"")
+            append("\n")
+            append("if [ -n \"${'$'}kite_official_version\" ]; then")
+            append("\n")
+            append("  echo \"KITE_RESOURCE_INSTALLED_VERSION ${'$'}kite_official_version\"")
+            append("\n")
+            append("fi")
+        }
+        return KiteResourceShellAction(
+            type = KiteResourceInstallPlanCompiler.STEP_SHELL,
+            cmd = command.trim() + "\n" + marker,
+            surfaceMode = "panel",
+            workdir = "/workspace",
+            timeoutMs = 900_000L,
+            managedCommands = emptyList(),
+            cleanInstallRoot = false,
+            npmUninstallPackages = emptyList(),
+            verifications = verificationSteps(manifest)
+        )
+    }
+
+    private fun officialCommandUninstallAction(manifest: KiteResourceManifest): KiteResourceShellAction? {
+        val command = manifest.source.uninstallCommand.takeIf(String::isNotBlank) ?: return null
+        return KiteResourceShellAction(
+            type = KiteResourceInstallPlanCompiler.STEP_SHELL,
+            cmd = command.trim(),
+            surfaceMode = "panel",
+            workdir = "/workspace",
+            timeoutMs = 300_000L,
+            managedCommands = manifest.management.managedCommands,
+            cleanInstallRoot = false,
+            npmUninstallPackages = emptyList()
+        )
+    }
+
     private fun generatedUninstallActions(manifest: KiteResourceManifest): List<KiteResourceShellAction> {
         managedScriptUninstallAction(manifest)?.let { return listOf(it) }
+        if (manifest.source.type == SOURCE_OFFICIAL_COMMAND) {
+            return officialCommandUninstallAction(manifest)?.let(::listOf).orEmpty()
+        }
         if (manifest.management.managedCommands.isEmpty()) return emptyList()
         val npmPackages = if (manifest.source.type == SOURCE_NPM) {
             npmPackageNames(manifest.source) ?: return emptyList()
@@ -644,6 +701,7 @@ object KiteResourceSourcePlanFactory {
     private const val SOURCE_PYPI = "pypi"
     private const val SOURCE_GITHUB_RELEASE = "github_release"
     private const val SOURCE_OFFICIAL_SCRIPT = "official_script"
+    private const val SOURCE_OFFICIAL_COMMAND = "official_command"
     private const val SOURCE_BUNDLED = "bundled"
     private const val PROFILE_MANAGED_SCRIPT_V1 = "managed_script_v1"
     private const val MAXIMUM_PACKAGE_METADATA_BYTES = 256L * 1024L
