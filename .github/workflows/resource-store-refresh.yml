@@ -4,6 +4,7 @@ name: resource-store-refresh
 # 依赖 Secrets：
 #   KITE_STORE_PRIVATE_KEY  商店签名私钥（Base64，tools/resource-store/ResourceStoreSigner.java 格式）
 #   KITE_STORE_REPO_TOKEN   发布到商店仓库的写入 token（GitHub PAT 或相应平台 token）
+#   GITCODE_API_TOKEN       同步到 GitCode 镜像（gcw_bLi3Mmrf/Kite-Resource-Store）的 API 密钥
 on:
   schedule:
     - cron: "17 21 * * *" # 北京时间每日 05:17
@@ -87,3 +88,48 @@ jobs:
             git commit -m "publish revision from upstream refresh"
             git push
           fi
+
+      - name: Sync to GitCode mirror
+        if: ${{ secrets.GITCODE_API_TOKEN != '' }}
+        env:
+          GITCODE_API_TOKEN: ${{ secrets.GITCODE_API_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, sys, urllib.error, urllib.request
+
+          token = os.environ["GITCODE_API_TOKEN"]
+          repo = "gcw_bLi3Mmrf/Kite-Resource-Store"
+          api = "https://api.gitcode.com/api/v5"
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+          def call(method, path, payload=None):
+              req = urllib.request.Request(
+                  f"{api}{path}",
+                  data=json.dumps(payload).encode() if payload is not None else None,
+                  headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=60) as resp:
+                  body = resp.read()
+                  return json.loads(body) if body else {}
+
+          for name in ("stable.json", "stable.sig"):
+              path = f"/repos/{repo}/contents/store/v1/channels/{name}"
+              with open(f"store/store/v1/channels/{name}", "rb") as f:
+                  content = base64.b64encode(f.read()).decode()
+              try:
+                  current = call("GET", path + "?ref=main")
+                  sha = current.get("sha")
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      sha = None
+                  else:
+                      raise
+              payload = {
+                  "content": content,
+                  "branch": "main",
+                  "message": f"sync {name} from GitHub store refresh",
+              }
+              if sha:
+                  payload["sha"] = sha
+              result = call("PUT", path, payload)
+              print(f"synced {name}: commit={result.get('commit', {}).get('sha', 'n/a')}")
+          PY
