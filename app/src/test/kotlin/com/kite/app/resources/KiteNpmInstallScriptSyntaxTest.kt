@@ -24,7 +24,7 @@ class KiteNpmInstallScriptSyntaxTest {
             ?: error("找不到仓库根目录：${workingDirectory.absolutePath}")
         val loader = KiteResourceManifestLoader(isDebugBuild = true, definitionSources = emptyList())
 
-        listOf("kite.opencode", "kite.mimo.code", "kite.codex.cli").forEach { resourceId ->
+        listOf("kite.opencode", "kite.mimo.code", "kite.codex.cli", "kite.hermes.core").forEach { resourceId ->
             val raw = File(repoRoot, "assets/resources/$resourceId/manifest.json").readText()
             val manifest = loader.parseManifestJson(raw)
             val plan = KiteResourceSourcePlanFactory.plan(manifest)
