@@ -31,6 +31,51 @@ class KiteResourceInstallOutputTest {
     }
 
     @Test
+    fun `重试摘要暴露被淘汰的来源与原因`() {
+        assertEquals(
+            "来源 huawei 不可用或速度过慢，已切换下一来源（退出码 28）",
+            KiteResourceInstallOutput.summary(
+                "KITE_RESOURCE_RETRY stage=acquire step=download source=huawei exit=28 reason=source-unavailable"
+            )
+        )
+        assertEquals(
+            "来源 npmjs 身份校验未通过，已切换下一来源",
+            KiteResourceInstallOutput.summary(
+                "KITE_RESOURCE_RETRY stage=acquire step=install source=npmjs reason=source-unverified"
+            )
+        )
+        assertEquals(
+            "来源 gitcode 被淘汰（weird-reason），已切换下一来源",
+            KiteResourceInstallOutput.summary(
+                "KITE_RESOURCE_RETRY stage=acquire step=install source=gitcode reason=weird-reason"
+            )
+        )
+    }
+
+    @Test
+    fun `路由标记投影为当前来源`() {
+        assertEquals(
+            "正在从 repo.huaweicloud.com 获取资源（源 huawei）",
+            KiteResourceInstallOutput.summary(
+                "KITE_RESOURCE_ROUTE stage=acquire step=pypi source=huawei " +
+                    "index=https://repo.huaweicloud.com/repository/pypi/simple/example/ request=latest"
+            )
+        )
+        assertEquals(
+            "正在从 registry.npmjs.org 获取资源（源 npmjs）",
+            KiteResourceInstallOutput.summary(
+                "KITE_RESOURCE_ROUTE stage=acquire step=npm source=npmjs registry=https://registry.npmjs.org"
+            )
+        )
+        assertEquals(
+            "正在从来源 gitcode 获取资源",
+            KiteResourceInstallOutput.summary(
+                "KITE_RESOURCE_ROUTE stage=acquire step=git source=gitcode request=latest"
+            )
+        )
+    }
+
+    @Test
     fun `实时报告提取源码百分比和安装组件来源`() {
         assertEquals(
             "源码写入 76%",
