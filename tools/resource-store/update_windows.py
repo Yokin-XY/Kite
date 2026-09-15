@@ -94,6 +94,28 @@ def pypi_window(package: str, size: int) -> list[dict]:
     return window
 
 
+def npm_latest_version(package: str) -> str:
+    encoded = urllib.request.quote(package, safe="")
+    document = fetch_json(f"{NPM_REGISTRY}/{encoded}")
+    tag = (document.get("dist-tags") or {}).get("latest", "")
+    return str(tag).strip()
+
+
+def rewrite_latest_version(raw: str, latest: str) -> str:
+    """只重写 official_command 清单里的 latestVersion 单值字段。"""
+    pattern = re.compile(r'("latestVersion": ")([^"]*)(")')
+    if pattern.search(raw):
+        return pattern.sub(lambda m: m.group(1) + latest + m.group(3), raw, count=1)
+    # 字段尚不存在：插到 source 块的 type 行之后
+    newline = "\r\n" if "\r\n" in raw else "\n"
+    type_line = re.compile(r'(' + newline + r'([ \t]+)"type": "official_command"(.*)' + newline + r')')
+    match = type_line.search(raw)
+    if match is None:
+        raise ValueError("找不到 official_command source 块")
+    indent = match.group(2)
+    return raw[:match.end()] + f'{indent}"latestVersion": "{latest}",' + newline + raw[match.end():]
+
+
 def git_window(repositories: list[str], size: int) -> list[dict]:
     """从仓库 tag 列表构造 {version, ref, commit} 窗口。
 
@@ -255,6 +277,17 @@ def update_manifest(path: Path, size: int, dry_run: bool) -> str:
         entries = git_window(repositories, size)
         if not entries:
             return f"失败 {path.parent.name}: {'、'.join(repositories)} 没有可用稳定 tag，保持原窗口"
+    elif kind == "official_command" and package:
+        # 官方命令直装：只维护最新版本号事实（App 端零网络读取）。
+        original = source.get("latestVersion", "")
+        latest = npm_latest_version(package)
+        if not latest:
+            return f"失败 {path.parent.name}: {package} 无法从官方 registry 取得最新版本，保持原值"
+        if latest == original:
+            return f"不变 {path.parent.name}: {latest}"
+        if not dry_run:
+            path.write_bytes(rewrite_latest_version(raw, latest).encode("utf-8"))
+        return f"更新 {path.parent.name}: {original or '(空)'} -> {latest}"
     elif kind == "official_release_archive" and source.get("latestFormat") == "regex":
         original = source.get("latestVersionWindow", [])
         entries = archive_regex_window(source, size)

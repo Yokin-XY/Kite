@@ -40,7 +40,7 @@ class KiteResourceLatestWindowCoverageTest {
         val windowlessResources = managedResources.filter {
             it.source.type == "official_command"
         }
-        assertEquals(21, managedResources.size - windowlessResources.size)
+        assertEquals(8, managedResources.size - windowlessResources.size)
         (managedResources - windowlessResources.toSet()).forEach { manifest ->
             val networkSteps = KiteResourceSourcePlanFactory.plan(manifest)
                 .installActions

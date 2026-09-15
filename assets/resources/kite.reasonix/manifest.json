@@ -14,7 +14,9 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["reasonix"],
+    "managedCommands": [
+      "reasonix"
+    ],
     "versionProbe": {
       "command": "reasonix version",
       "pattern": "([0-9]+(?:\\.[0-9]+)+)"
@@ -24,7 +26,9 @@
     "sections": [
       "ai-community"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 30,
     "category": "AI",
     "accent": "teal",
@@ -69,14 +73,11 @@
     "extensions": []
   },
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "reasonix",
-    "latestVersionWindow": [
-      { "version": "1.38.8", "integrity": "sha512-wer7Y2ymwFYNGZJ6m2Nd8ta3qn5WTFHI5UlHr952LzvEZhBqOhzgVjMns+y4su45KlL4mD/XJtEDC47Uagjrlw==" },
-      { "version": "1.38.7", "integrity": "sha512-pkN5aouRqOlrbJFFntEeE9/8DgXjzeyeKOVTffRlJGj+U32K7TB9ULkmtXWFUKjAIE814vsVJmQ6ZPuxHPzOAA==" },
-      { "version": "1.38.6", "integrity": "sha512-KxcQsVFiiPFIAOyckpe3XtHrpTnJYun0wkO4I2f7uTxyk4lG0bf9nOwVzv2mMDmivd2yWEVxhO3bNwigULKL4A==" }
-    ],
-    "repository": "https://github.com/esengine/deepseek-reasonix"
+    "command": "npm install -g reasonix@latest",
+    "uninstallCommand": "npm uninstall -g reasonix",
+    "latestVersion": "1.38.8"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.reasonix",
@@ -97,7 +98,10 @@
         "providerId": "reasonix",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["reasonix", "acp"],
+        "argv": [
+          "reasonix",
+          "acp"
+        ],
         "title": "Reasonix"
       }
     }

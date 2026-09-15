@@ -14,13 +14,21 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["qwen"]
+    "managedCommands": [
+      "qwen"
+    ],
+    "versionProbe": {
+      "command": "qwen --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    }
   },
   "display": {
     "sections": [
       "ai-vendor"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 90,
     "category": "AI",
     "accent": "purple",
@@ -66,14 +74,11 @@
     "extensions": []
   },
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "@qwen-code/qwen-code",
-    "latestVersionWindow": [
-      { "version": "0.23.4", "integrity": "sha512-qrM7Lwp9S6LfIx8Mh9sAr4aBPyUa9W0k72uOQJPsJ6Z8ClAzoEQzkdLD1TrchioJicgSckM1PLyendibyXHElA==" },
-      { "version": "0.23.3", "integrity": "sha512-QaBNg5y/nfKJCMdVYjZmEx9n0StGTvg3NIYRExHIy9OWgBQ4wE7MQc7YrAMvy13pUmqJhYlpwOtvNsGDAgvYdA==" },
-      { "version": "0.23.2", "integrity": "sha512-OthkaYnzRauVopk9yhgbQUfbsQo/B45fB76yHo863gRiv2cp8NmDOs1+79KxPb0zoi/G3fC6OvUHVgqdCCcFJQ==" }
-    ],
-    "repository": "https://github.com/QwenLM/qwen-code"
+    "command": "npm install -g @qwen-code/qwen-code@latest",
+    "uninstallCommand": "npm uninstall -g @qwen-code/qwen-code",
+    "latestVersion": "0.23.4"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.qwen.code",
@@ -94,37 +99,15 @@
         "providerId": "qwen",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["qwen", "--acp"],
+        "argv": [
+          "qwen",
+          "--acp"
+        ],
         "title": "Qwen Code"
       }
     }
   ],
   "actions": {
-    "install": [
-      {
-        "type": "managed",
-        "steps": [
-          {
-            "id": "install-qwen-package",
-            "type": "npm",
-            "packages": [
-              "@qwen-code/qwen-code@latest"
-            ]
-          }
-        ],
-        "managedCommands": [
-          "qwen"
-        ],
-        "cleanInstallRoot": true,
-        "verify": [
-          {
-            "id": "qwen-command",
-            "cmd": "command -v qwen >/dev/null 2>&1"
-          }
-        ],
-        "timeoutMs": 900000
-      }
-    ],
     "open": {
       "runtime": "kite_recipe",
       "recipe": {

@@ -14,18 +14,24 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["opencode"],
+    "managedCommands": [
+      "opencode"
+    ],
     "versionProbe": {
       "command": "opencode --version",
       "pattern": "v?([0-9]+(?:\\.[0-9]+)+)"
     },
-    "preservePaths": ["user-home"]
+    "preservePaths": [
+      "user-home"
+    ]
   },
   "display": {
     "sections": [
       "ai-community"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 10,
     "category": "AI",
     "accent": "blue",
@@ -86,21 +92,20 @@
         "providerId": "opencode",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["opencode", "acp"],
+        "argv": [
+          "opencode",
+          "acp"
+        ],
         "title": "OpenCode"
       }
     }
   ],
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "opencode-ai",
-    "latestVersionWindow": [
-      { "version": "1.18.31", "integrity": "sha512-J95feefeWwtIaw3irx76WjzWcgQXxmuHmDVphvs5ep9X30fBJ6T6bFhw50i9Kx50MG/xPn5w2pafXIfNtdry9w==" },
-      { "version": "1.18.30", "integrity": "sha512-oLcOLQE4XzDKy6T5L5d1RdVJvXHXwVlD4hRF5V317JbUQorrl2EyDdGZk5kbgv675J9FXp8usg92MZbEWhh6gQ==" },
-      { "version": "1.18.29", "integrity": "sha512-syIDVwlrYTgTOXzZe9SkInJWethbq6l3SNC762UeXyO0a9V0wGfd+U4yACvppwNBnhIsl0j2QPYYCyLpNaSomg==" }
-    ],
-    "repository": "https://github.com/anomalyco/opencode",
-    "tag": "latest"
+    "command": "npm install -g opencode-ai@latest",
+    "uninstallCommand": "npm uninstall -g opencode-ai",
+    "latestVersion": "1.18.31"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.opencode",

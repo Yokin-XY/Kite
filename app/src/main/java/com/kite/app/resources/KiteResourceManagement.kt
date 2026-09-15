@@ -82,5 +82,7 @@ data class KiteResourceSourceSpec(
     /** official_command：官方安装命令（幂等，更新同用）。 */
     val command: String = "",
     /** official_command：官方卸载命令。 */
-    val uninstallCommand: String = ""
+    val uninstallCommand: String = "",
+    /** official_command：最新版本号（由资源商店清单维护，App 端零网络读取）。 */
+    val latestVersion: String = ""
 )

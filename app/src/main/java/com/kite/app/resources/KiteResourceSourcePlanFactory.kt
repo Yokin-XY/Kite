@@ -177,6 +177,14 @@ object KiteResourceSourcePlanFactory {
                 SOURCE_GITHUB_RELEASE -> githubVersionProbe(manifest.source)
                 SOURCE_OFFICIAL_SCRIPT -> officialScriptVersionProbe(manifest.source)
                 SOURCE_BUNDLED -> managedScriptProbe(manifest, "latest-version")
+                // official_command：最新版本号随商店清单分发（CI 每日维护），
+                // App 端零网络读取——用 echo 常量当探测器，复用整条检查更新机器。
+                SOURCE_OFFICIAL_COMMAND ->
+                    manifest.source.latestVersion.takeIf { it.isNotBlank() }?.let {
+                        KiteResourceCommandVersionProbe(
+                            KiteResourceVersionProbeSpec(command = "echo '$it'", group = 0)
+                        )
+                    }
                 else -> null
             }
         return KiteResourceVersionCheckPlan(

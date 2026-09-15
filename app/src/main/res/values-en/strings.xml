@@ -864,6 +864,7 @@
     <string name="resource_detail_step_open">Open resource</string>
     <string name="resource_wizard_description">Resource installation</string>
     <string name="resource_wizard_page_title">Resource installation</string>
+    <string name="resource_wizard_no_pending_plan">No pending resources, wizard closed</string>
     <string name="resource_wizard_header_state_syncing">Synchronizing install status</string>
     <string name="resource_wizard_header_state_running">Install plan is running</string>
     <string name="resource_wizard_header_state_failure">Install plan needs attention</string>

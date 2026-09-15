@@ -1000,7 +1000,8 @@ class KiteResourceManifestLoader private constructor(
             entry = sourceJson.optString("entry").trim(),
             maxBytes = sourceJson.optLong("maxBytes", 0L).coerceAtLeast(0L),
             command = sourceJson.optString("command").trim(),
-            uninstallCommand = sourceJson.optString("uninstallCommand").trim()
+            uninstallCommand = sourceJson.optString("uninstallCommand").trim(),
+            latestVersion = sourceJson.optString("latestVersion").trim()
         )
     }
 
