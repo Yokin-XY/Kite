@@ -95,9 +95,9 @@
     "type": "npm",
     "package": "opencode-ai",
     "latestVersionWindow": [
-      { "version": "1.18.25", "integrity": "sha512-pS4RKJ9eKwU7Dp5G5pdj1rhMnpG5APixXzfTKNoFqv9aFVI36Rnza2jESvKifxyPZlsA65MQB03WCArY0EK6mg==" },
-      { "version": "1.18.24", "integrity": "sha512-PIV4ud2cqFQw6Lm+onvxQrQo+wCFYnA+6TDryeDJ6PF38t2ujzeeKPzlxZ1vCmZ6p7AixtfgJu4iUovDVt4GZQ==" },
-      { "version": "1.18.23", "integrity": "sha512-3NkT0XINL7d0HYkTyGV1SPChHXhvRgKqNaTgKRTGb0TXUWszXA7MW/y3zMZw29y1AQuUDAzRvVYmQ9KGRQhroA==" }
+      { "version": "1.18.31", "integrity": "sha512-J95feefeWwtIaw3irx76WjzWcgQXxmuHmDVphvs5ep9X30fBJ6T6bFhw50i9Kx50MG/xPn5w2pafXIfNtdry9w==" },
+      { "version": "1.18.30", "integrity": "sha512-oLcOLQE4XzDKy6T5L5d1RdVJvXHXwVlD4hRF5V317JbUQorrl2EyDdGZk5kbgv675J9FXp8usg92MZbEWhh6gQ==" },
+      { "version": "1.18.29", "integrity": "sha512-syIDVwlrYTgTOXzZe9SkInJWethbq6l3SNC762UeXyO0a9V0wGfd+U4yACvppwNBnhIsl0j2QPYYCyLpNaSomg==" }
     ],
     "repository": "https://github.com/anomalyco/opencode",
     "tag": "latest"

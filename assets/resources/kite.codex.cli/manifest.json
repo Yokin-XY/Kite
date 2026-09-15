@@ -77,9 +77,9 @@
     "type": "npm",
     "package": "@openai/codex",
     "latestVersionWindow": [
-      { "version": "0.151.0", "integrity": "sha512-mhtWmOZRdmWD1jPbLDnQb59BsaVP/V+lXe/OFNR9ZcLZU0UCiBwn98Fcav1ss7sDIlHkuqj6nWd44IPeXoOhJA==" },
-      { "version": "0.150.1", "integrity": "sha512-knrbhpJH3mEULAVStcZW4F5WEt9MQhBj6KFOonBSIUGTLcHlu9CE7FRmr95E33y94+sWNZSeVBBV/kYvlfgxkQ==" },
-      { "version": "0.150.0", "integrity": "sha512-AWrJENpRsvowLZeCEicYEmt4xD7EvSIX34+1DmFn7ZUwuX0Ku0/DMgouPHu5YKxJJF7/ixC1cIAu3oLSd8/H2g==" }
+      { "version": "0.154.0", "integrity": "sha512-FV/x1OHXYv/ifjf3mXj9ThTTAWcUZN6cGIRQRhRxkKNOPuImu1WW0c8ev1vUkE9XGH90dEnYG1tBjIkxRikg0w==" },
+      { "version": "0.153.4", "integrity": "sha512-wbHDmit7S/YvBGVX1DQmk13xtWblZ2cApeJ/pB7xDZ10Cna+DZc5ij7f0F4OxdsXN4FW1oLT48OpogUI1+8Y2w==" },
+      { "version": "0.153.3", "integrity": "sha512-SwQns+YIXvaXV4a6RUd9twgTPJkkfZpuTNEkTtIkwBnfw6fpT61+d6gU1WHZxK6vWFNqJCBoJEP69FIAsoPduA==" }
     ],
     "repository": "https://github.com/openai/codex"
   },

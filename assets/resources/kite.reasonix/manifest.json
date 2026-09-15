@@ -72,9 +72,9 @@
     "type": "npm",
     "package": "reasonix",
     "latestVersionWindow": [
-      { "version": "1.34.0", "integrity": "sha512-Cin3xz1f5efE8IsmEF0N7ZpTg65B8XtTdxrnLvaQNxTkxIBWb+lE8ODUyaVmqxlFtMrrJpL22KOuxiqSn1w3Lg==" },
-      { "version": "1.33.0", "integrity": "sha512-giVMITa+puGeR0GAr3V/EY6KUeKZY8TRdmPDKXGVmo7HHWPDwZFPg0WM7LPXX8Wv+9lNRv7a733VOwQYyMoVQA==" },
-      { "version": "1.32.1", "integrity": "sha512-9KJsa/kaZVV4c81aLbDVEUUt6pAEolzz4eosmf+cShlXWNgZWiaTGVZqvkH/WNNUU8RhU8IUyGqUAQh/kIMiAg==" }
+      { "version": "1.38.8", "integrity": "sha512-wer7Y2ymwFYNGZJ6m2Nd8ta3qn5WTFHI5UlHr952LzvEZhBqOhzgVjMns+y4su45KlL4mD/XJtEDC47Uagjrlw==" },
+      { "version": "1.38.7", "integrity": "sha512-pkN5aouRqOlrbJFFntEeE9/8DgXjzeyeKOVTffRlJGj+U32K7TB9ULkmtXWFUKjAIE814vsVJmQ6ZPuxHPzOAA==" },
+      { "version": "1.38.6", "integrity": "sha512-KxcQsVFiiPFIAOyckpe3XtHrpTnJYun0wkO4I2f7uTxyk4lG0bf9nOwVzv2mMDmivd2yWEVxhO3bNwigULKL4A==" }
     ],
     "repository": "https://github.com/esengine/deepseek-reasonix"
   },
