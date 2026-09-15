@@ -587,7 +587,7 @@ class KiteResourceManifestProtocolTest {
         assertTrue(sourceAcquire.ref.isBlank())
         assertTrue(sourceAcquire.commit.isBlank())
         assertEquals(
-            listOf("v2026.8.27", "v2026.8.19", "v2026.8.18"),
+            listOf("v2026.9.14", "v2026.9.11", "v2026.9.7"),
             sourceAcquire.latestVersionWindow.map { it.version },
         )
         assertEquals(3, sourceAcquire.latestVersionWindow.map { it.commit }.distinct().size)
