@@ -253,6 +253,55 @@ class KiteResourceInstallPlanCompilerTest {
     }
 
     @Test
+    fun curlTransfersApplyTheSharedSourceSpeedFloor() {
+        val action = managedAction(
+            steps = listOf(
+                KiteResourceInstallStep(
+                    id = "pypi-tool",
+                    type = KiteResourceInstallPlanCompiler.STEP_PYPI,
+                    packages = listOf("example-tool"),
+                    registries = listOf("https://pypi.org/simple"),
+                    latestVersionWindow = listOf(
+                        KiteResourceSourceVersion(
+                            artifact = "example-tool",
+                            version = "3.0.0",
+                            sha256 = "a".repeat(64),
+                        ),
+                    ),
+                ),
+                KiteResourceInstallStep(
+                    id = "latest-binary",
+                    type = KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD,
+                    urls = listOf("https://api.example.test/releases/latest"),
+                    destination = "${'$'}install_root/tool.tar.gz",
+                    latestFormat = "json",
+                    latestJsonField = "tag_name",
+                    latestStripPrefix = "v",
+                    latestVersionWindow = listOf(
+                        KiteResourceSourceVersion(
+                            version = "3.0.0",
+                            artifact = "tool-3.0.0.tar.gz",
+                            sha256 = "a".repeat(64),
+                            url = "https://downloads.example.test/tool-3.0.0.tar.gz",
+                        ),
+                    ),
+                    maxBytes = 1048576,
+                ),
+            )
+        )
+
+        val script = KiteResourceInstallPlanCompiler.compile(action)
+        val expectedFloor = "--speed-time ${KiteResourceInstallPlanCompiler.CURL_SPEED_TIME_SECONDS} " +
+            "--speed-limit ${KiteResourceInstallPlanCompiler.CURL_SPEED_LIMIT_BYTES}"
+        val speedLimits = Regex("--speed-limit \\d+").findAll(script).map { it.value }.toList()
+
+        assertTrue(script.contains(expectedFloor))
+        assertTrue(speedLimits.isNotEmpty())
+        assertTrue(speedLimits.all { it == "--speed-limit ${KiteResourceInstallPlanCompiler.CURL_SPEED_LIMIT_BYTES}" })
+        assertFalse(script.contains("--speed-limit 1\n"))
+    }
+
+    @Test
     fun latestDownloadQueriesMetadataThenSelectsOnlySignedArtifact() {
         val action = managedAction(
             steps = listOf(

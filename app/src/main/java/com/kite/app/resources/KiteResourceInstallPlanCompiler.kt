@@ -13,6 +13,10 @@ object KiteResourceInstallPlanCompiler {
     const val STEP_SCRIPT = "script"
     const val STEP_SHELL = "shell"
 
+    /** 单源下载限速判死：持续低于该字节数/秒达 CURL_SPEED_TIME_SECONDS 秒即淘汰当前源并换下一源。 */
+    const val CURL_SPEED_LIMIT_BYTES = 32768L
+    const val CURL_SPEED_TIME_SECONDS = 60
+
     fun compile(
         action: KiteResourceShellAction,
         sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
@@ -724,7 +728,7 @@ object KiteResourceInstallPlanCompiler {
               : > "${'$'}attempt_log"
               echo "KITE_RESOURCE_ROUTE stage=acquire step=${safeId(step.id)} source=${'$'}source_id index=${'$'}pypi_index request=latest"
               set +e
-              curl -fL --compressed --connect-timeout 30 --speed-time 60 --speed-limit 1 -o "${'$'}index_file" "${'$'}project_url" 2>>"${'$'}attempt_log"
+              curl -fL --compressed --connect-timeout 30 --speed-time $CURL_SPEED_TIME_SECONDS --speed-limit $CURL_SPEED_LIMIT_BYTES -o "${'$'}index_file" "${'$'}project_url" 2>>"${'$'}attempt_log"
               pypi_last_status=${'$'}?
               set -e
               if [ "${'$'}pypi_last_status" -ne 0 ]; then
@@ -810,7 +814,7 @@ object KiteResourceInstallPlanCompiler {
               fi
               artifact_url="${'$'}(printf '%s\n' "${'$'}latest_record" | cut -d '|' -f 3)"
               set +e
-              curl -fL --compressed --connect-timeout 30 --speed-time 60 --speed-limit 1 -o "${'$'}wheel_file" "${'$'}artifact_url" 2>>"${'$'}attempt_log"
+              curl -fL --compressed --connect-timeout 30 --speed-time $CURL_SPEED_TIME_SECONDS --speed-limit $CURL_SPEED_LIMIT_BYTES -o "${'$'}wheel_file" "${'$'}artifact_url" 2>>"${'$'}attempt_log"
               pypi_last_status=${'$'}?
               set -e
               if [ "${'$'}pypi_last_status" -ne 0 ]; then
@@ -1046,9 +1050,9 @@ object KiteResourceInstallPlanCompiler {
               echo "KITE_RESOURCE_STEP acquire ${'$'}step_id attempt=${'$'}attempt url=${'$'}download_url"
               set +e
               if [ -s "${'$'}partial" ]; then
-                curl -fL --connect-timeout 30 --speed-time 60 --speed-limit 1 -C - -o "${'$'}partial" "${'$'}download_url"
+                curl -fL --connect-timeout 30 --speed-time $CURL_SPEED_TIME_SECONDS --speed-limit $CURL_SPEED_LIMIT_BYTES -C - -o "${'$'}partial" "${'$'}download_url"
               else
-                curl -fL --connect-timeout 30 --speed-time 60 --speed-limit 1 -o "${'$'}partial" "${'$'}download_url"
+                curl -fL --connect-timeout 30 --speed-time $CURL_SPEED_TIME_SECONDS --speed-limit $CURL_SPEED_LIMIT_BYTES -o "${'$'}partial" "${'$'}download_url"
               fi
               last_status=${'$'}?
               set -e
