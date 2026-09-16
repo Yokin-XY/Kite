@@ -42,11 +42,6 @@ internal class SettingsCategoryFragment : Fragment() {
             ?: error("Application 必须提供 RuntimeBootstrapGateway")
         owner.runtimeBootstrapGateway
     }
-    private val prootViewInspectionGateway by lazy(LazyThreadSafetyMode.NONE) {
-        val owner = requireContext().applicationContext as? com.kite.app.application.runtimemanagement.ProotViewInspectionDependenciesOwner
-            ?: error("Application 必须提供 ProotViewInspectionGateway")
-        owner.prootViewInspectionGateway
-    }
     private var screen: SettingsCategoryScreen? = null
 
     override fun onCreateView(
@@ -61,7 +56,6 @@ internal class SettingsCategoryFragment : Fragment() {
         initialState = controller.state.value,
         initialRuntimeSnapshot = runtimeGateway.currentSnapshot(),
         initialDeviceBridgeSnapshot = DeviceBridgeBackendStateOwner.current(),
-        initialProotViewSnapshot = prootViewInspectionGateway.currentSnapshot(),
         appInfo = readAppInfo(),
         initialTerminalFontSize = TerminalUiPreferences.loadFontSizeDp(requireContext()),
         initialTerminalTheme = TerminalUiPreferences.loadThemeMode(requireContext()),
@@ -111,31 +105,12 @@ internal class SettingsCategoryFragment : Fragment() {
         onOpenDropZone = { dispatch(SettingsFeatureAction.OpenDropZone) },
         onOpenAboutPage = { page -> send(SettingsFeatureRequest.OpenAboutPage(page)) },
         onOpenExternal = { url -> send(SettingsFeatureRequest.OpenExternalLink(url)) },
-        onRunViewAcceptance = {
-            if (destination == SettingsCategoryDestination.Engineering) {
-                prootViewInspectionGateway.runAcceptance()
-            }
-        },
-        onRunViewVerification = {
-            if (destination == SettingsCategoryDestination.Engineering) {
-                prootViewInspectionGateway.runVerification()
-            }
-        },
-        onCreateViewEnvironment = {
-            if (destination == SettingsCategoryDestination.Engineering) {
-                prootViewInspectionGateway.createEnvironment()
-            }
-        },
-        onSwitchViewEnvironment = { environmentId ->
-            if (destination == SettingsCategoryDestination.Engineering) {
-                prootViewInspectionGateway.switchEnvironment(environmentId)
-            }
-        },
-        onRunEnvironmentIsolationVerification = {
-            if (destination == SettingsCategoryDestination.Engineering) {
-                prootViewInspectionGateway.runEnvironmentIsolationVerification()
-            }
-        },
+        // View 验收台已退役：Engineering 页面相关回调全部置空。
+        onRunViewAcceptance = { },
+        onRunViewVerification = { },
+        onCreateViewEnvironment = { },
+        onSwitchViewEnvironment = { },
+        onRunEnvironmentIsolationVerification = { },
         ).also { screen = it }.root
     }
 
@@ -166,26 +141,7 @@ internal class SettingsCategoryFragment : Fragment() {
                 }
             }
         }
-        if (destination == SettingsCategoryDestination.Engineering) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    prootViewInspectionGateway.snapshots.collect { snapshot ->
-                        screen?.renderProotViewSnapshot(snapshot)
-                    }
-                }
-            }
-            viewLifecycleOwner.lifecycleScope.launch {
-                viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    runtimeGateway.snapshots
-                        .map { snapshot -> snapshot.defaultContainerReady }
-                        .distinctUntilChanged()
-                        .filter { ready -> ready }
-                        .collect {
-                            prootViewInspectionGateway.refresh()
-                        }
-                }
-            }
-        }
+        // View 验收台已退役：不再收集 ProotView 快照。
     }
 
     override fun onDestroyView() {
@@ -207,9 +163,7 @@ internal class SettingsCategoryFragment : Fragment() {
         if (destination == SettingsCategoryDestination.RuntimeEnvironment) {
             DeviceBridgeBackendStateOwner.refreshSelected()
         }
-        if (destination == SettingsCategoryDestination.Engineering) {
-            prootViewInspectionGateway.refresh()
-        }
+        // View 验收台已退役：不再刷新 ProotView 快照。
         lifecycleScope.launch { controller.dispatch(SettingsFeatureAction.Refresh) }
     }
 

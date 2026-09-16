@@ -61,7 +61,6 @@ import com.kite.app.feature.runsurface.RunSurfaceHost
 import com.kite.app.feature.runsurface.RunSurfaceUiState
 import com.kite.app.feature.runsurface.RunTerminalSurfaceBinding
 import com.kite.app.feature.runsurface.RunWebSurfaceBinding
-import com.kite.app.feature.runsurface.RunX11SurfaceBinding
 import com.kite.app.feature.runsurface.StaticRunSurfaceBinding
 import com.kite.app.foundation.bootstrap.StartupTraceStore
 import com.kite.app.platform.browser.AndroidBrowserAutomationRunUpdater
@@ -422,7 +421,7 @@ class CardRunActivity : AppCompatActivity() {
             onOpenExternal = ::openExternalBrowser,
             onManualUrl = ::openManualWebUrl
         )
-        is RunSurfaceContent.X11 -> RunX11SurfaceBinding(this, tokens)
+        is RunSurfaceContent.X11 -> StaticRunSurfaceBinding(placeholder("图形界面", "X11 支持已移除"))
         is RunSurfaceContent.Agent -> RunAgentSurfaceBinding(
             context = this,
             tokens = tokens,

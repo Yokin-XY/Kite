@@ -1,71 +1,45 @@
 package com.kite.app.application.runtimemanagement
 
 /**
- * PRoot View 工程检查快照。
- *
- * 这是 foundation/runtime 状态拥有者的只读投影，供工程页显示；不复制持久事实，不扫描文件树。
- * 字段缺失或不可用时取安全默认值，由投影层解释。
+ * View 层巡检快照——已退役，保留完整数据形状供设置页面编译。
+ * 所有嵌套结果类型默认 null / 空值，渲染"未运行"。
  */
+
 data class ProotViewInspectionSnapshot(
-    val available: Boolean = false,
+    val viewHead: String = "",
+    val baseHead: String = "",
     val enabled: Boolean = false,
+    val baseSealed: Boolean = false,
     val runtimeSupported: Boolean = false,
-    val containerReady: Boolean = false,
-    val currentViewId: String = "",
+    val available: Boolean = false,
     val environmentId: String = "",
     val spaceId: String = "",
     val workspacePath: String = "",
+    val currentViewId: String = "",
     val parentDepth: Int = 0,
-    val upperAllocatedBytes: Long? = null,
-    val upperLogicalBytes: Long = 0L,
-    val scopeRootPaths: List<String> = emptyList(),
-    val baseSealed: Boolean = false,
-    val environments: List<ProotEnvironmentInspection> = emptyList(),
-    val environmentOperation: ProotEnvironmentOperation = ProotEnvironmentOperation.Idle,
+    val environments: List<ProotEnvironmentSnapshot> = emptyList(),
+    val environmentOperation: ProotEnvironmentOperation = ProotEnvironmentOperation.None,
     val environmentOperationTarget: String = "",
     val environmentOperationError: String = "",
-    val lastAcceptance: ProotViewAcceptanceResult? = null,
-    val lastVerification: ProotViewVerificationResult? = null,
-    val lastIsolationVerification: ProotEnvironmentIsolationResult? = null,
+    val lastIsolationVerification: ProotIsolationVerificationResult? = null,
+    val lastAcceptance: ProotAcceptanceResult? = null,
+    val upperAllocatedBytes: Long? = null,
+    val upperLogicalBytes: Long = 0,
+    val scopeRootPaths: List<String> = emptyList(),
+    val lastVerification: ProotAcceptanceResult? = null,
 )
 
-/** 单个环境头的只读投影；环境身份和 View 身份仍以 ProotViewStore 为准。 */
-data class ProotEnvironmentInspection(
-    val environmentId: String,
-    val viewId: String,
-    val active: Boolean,
-    val parentDepth: Int,
-    val workspacePath: String,
-)
-
-enum class ProotEnvironmentOperation {
-    Idle,
-    Creating,
-    Switching,
-    VerifyingAcceptance,
-    VerifyingIsolation,
-}
-
-data class ProotViewAcceptanceResult(
-    val checks: List<ProotViewAcceptanceCheck> = emptyList(),
+data class ProotEnvironmentSnapshot(
     val environmentId: String = "",
+    val spaceId: String = "",
     val viewId: String = "",
-    val totalMs: Long = 0L,
-    val atUnixMs: Long = 0L,
-) {
-    val success: Boolean
-        get() = checks.isNotEmpty() && checks.all { it.passed }
-}
-
-data class ProotViewAcceptanceCheck(
-    val id: String,
-    val title: String,
-    val passed: Boolean,
-    val detail: String = "",
+    val workspacePath: String = "",
+    val enabled: Boolean = false,
+    val active: Boolean = false,
 )
 
-data class ProotEnvironmentIsolationResult(
-    val success: Boolean,
+data class ProotIsolationVerificationResult(
+    val success: Boolean = false,
     val firstEnvironmentId: String = "",
     val secondEnvironmentId: String = "",
     val rootIsolated: Boolean = false,
@@ -74,15 +48,36 @@ data class ProotEnvironmentIsolationResult(
     val baseUntouched: Boolean = false,
     val originalEnvironmentRestored: Boolean = false,
     val message: String = "",
-    val atUnixMs: Long = 0L,
 )
 
-data class ProotViewVerificationResult(
-    val success: Boolean,
-    val runCount: Long = 0L,
-    val viewId: String = "",
+data class ProotAcceptanceResult(
+    val success: Boolean = false,
+    val checks: List<ProotAcceptanceCheck> = emptyList(),
+    val totalMs: Long = 0,
     val environmentId: String = "",
+    val viewId: String = "",
     val fileSha256: String = "",
+    val runCount: Int = 0,
     val message: String = "",
-    val atUnixMs: Long = 0L,
 )
+
+data class ProotAcceptanceCheck(
+    val passed: Boolean = false,
+    val title: String = "",
+    val detail: String = "",
+)
+
+data class ProotEnvironmentIsolationResult(
+    val success: Boolean = false,
+    val atUnixMs: Long = 0,
+    val firstEnvironmentId: String = "",
+    val secondEnvironmentId: String = "",
+    val rootIsolated: Boolean = false,
+    val workspaceIsolated: Boolean = false,
+    val exchangeShared: Boolean = false,
+    val baseUntouched: Boolean = false,
+    val originalEnvironmentRestored: Boolean = false,
+    val message: String = "",
+)
+
+enum class ProotEnvironmentOperation { None, Creating, Switching, VerifyingAcceptance, VerifyingIsolation, Idle }

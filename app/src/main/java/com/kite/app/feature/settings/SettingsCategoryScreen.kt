@@ -445,6 +445,7 @@ internal class SettingsCategoryScreen(
         }
         return buildString {
             when (snapshot.environmentOperation) {
+                ProotEnvironmentOperation.None -> Unit
                 ProotEnvironmentOperation.Creating -> append(
                     context.getString(R.string.settings_engineering_environment_creating),
                 )
