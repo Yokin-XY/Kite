@@ -13,6 +13,10 @@ object KiteResourceInstallPlanCompiler {
     const val STEP_SCRIPT = "script"
     const val STEP_SHELL = "shell"
 
+    /** 单源下载限速判死：持续低于该字节数/秒达 CURL_SPEED_TIME_SECONDS 秒即淘汰当前源并换下一源。 */
+    const val CURL_SPEED_LIMIT_BYTES = 32768L
+    const val CURL_SPEED_TIME_SECONDS = 60
+
     fun compile(
         action: KiteResourceShellAction,
         sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
@@ -40,8 +44,18 @@ object KiteResourceInstallPlanCompiler {
             routedAction.installSteps.forEach { step ->
                 appendLine(compileStep(step, npmAttemptVerifications))
             }
-        }.trim()
+        }.trim().let(::dedentHeredocTerminators)
     }
+
+    /**
+     * here-document 结束标记必须顶格；trimIndent 对含插值的最终字符串不可靠
+     * （插值块自身顶格时公共缩进为 0，模板缩进不会被剥掉）。这里对已知标记统一去缩进。
+     */
+    private fun dedentHeredocTerminators(script: String): String =
+        script.replace(HEREDOC_TERMINATOR_LINE, "$1")
+
+    private val HEREDOC_TERMINATOR_LINE =
+        Regex("(?m)^[ \\t]+(KITE_NPM_VERSION|KITE_NPM_INTEGRITY|KITE_PYPI_INDEX|KITE_LATEST_METADATA|KITE_RESOURCE_SOURCE_HELPER_EOF)[ \\t]*$")
 
     fun compileVerification(action: KiteResourceShellAction): String =
         if (action.verifications.isEmpty()) {
@@ -718,13 +732,12 @@ object KiteResourceInstallPlanCompiler {
               attempt_log="${'$'}attempt_root/uv-tool-install.log"
               index_file="${'$'}attempt_root/simple-index.html"
               candidates_file="${'$'}attempt_root/candidates.txt"
-              wheel_file="${'$'}attempt_root/candidate.whl"
               rm -rf "${'$'}attempt_root" "${'$'}UV_TOOL_DIR" "${'$'}UV_TOOL_BIN_DIR"
               mkdir -p "${'$'}attempt_root" "${'$'}attempt_cache" "${'$'}UV_TOOL_BIN_DIR"
               : > "${'$'}attempt_log"
               echo "KITE_RESOURCE_ROUTE stage=acquire step=${safeId(step.id)} source=${'$'}source_id index=${'$'}pypi_index request=latest"
               set +e
-              curl -fL --compressed --connect-timeout 30 --speed-time 60 --speed-limit 1 -o "${'$'}index_file" "${'$'}project_url" 2>>"${'$'}attempt_log"
+              curl -fL --compressed --connect-timeout 30 --speed-time $CURL_SPEED_TIME_SECONDS --speed-limit $CURL_SPEED_LIMIT_BYTES -o "${'$'}index_file" "${'$'}project_url" 2>>"${'$'}attempt_log"
               pypi_last_status=${'$'}?
               set -e
               if [ "${'$'}pypi_last_status" -ne 0 ]; then
@@ -765,7 +778,14 @@ object KiteResourceInstallPlanCompiler {
                     continue
                 if not (lowered.endswith('.whl') or lowered.endswith('.tar.gz') or lowered.endswith('.zip')):
                     continue
-                version = filename[len(normalized):].split('-', 1)[0]
+                remainder = filename[len(normalized):]
+                if lowered.endswith('.tar.gz'):
+                    remainder = remainder[:-len('.tar.gz')]
+                elif lowered.endswith('.zip'):
+                    remainder = remainder[:-len('.zip')]
+                version = remainder.split('-', 1)[0]
+                if not version or not version[0].isdigit():
+                    continue
                 sha256 = urllib.parse.parse_qs(parsed.fragment).get('sha256', [''])[0].lower()
                 if version and len(sha256) == 64:
                     compatible = int(
@@ -774,7 +794,7 @@ object KiteResourceInstallPlanCompiler {
                             lowered.endswith('-none-any.whl')
                         )
                     )
-                    print(f'{version}|{sha256}|{absolute}|{compatible}')
+                    print(f'{version}|{sha256}|{absolute}|{compatible}|{filename}')
             KITE_PYPI_INDEX
               metadata_status=${'$'}?
               set -e
@@ -809,8 +829,10 @@ object KiteResourceInstallPlanCompiler {
                 continue
               fi
               artifact_url="${'$'}(printf '%s\n' "${'$'}latest_record" | cut -d '|' -f 3)"
+              wheel_name="${'$'}(printf '%s\n' "${'$'}latest_record" | cut -d '|' -f 5)"
+              wheel_file="${'$'}attempt_root/${'$'}wheel_name"
               set +e
-              curl -fL --compressed --connect-timeout 30 --speed-time 60 --speed-limit 1 -o "${'$'}wheel_file" "${'$'}artifact_url" 2>>"${'$'}attempt_log"
+              curl -fL --compressed --connect-timeout 30 --speed-time $CURL_SPEED_TIME_SECONDS --speed-limit $CURL_SPEED_LIMIT_BYTES -o "${'$'}wheel_file" "${'$'}artifact_url" 2>>"${'$'}attempt_log"
               pypi_last_status=${'$'}?
               set -e
               if [ "${'$'}pypi_last_status" -ne 0 ]; then
@@ -1046,9 +1068,9 @@ object KiteResourceInstallPlanCompiler {
               echo "KITE_RESOURCE_STEP acquire ${'$'}step_id attempt=${'$'}attempt url=${'$'}download_url"
               set +e
               if [ -s "${'$'}partial" ]; then
-                curl -fL --connect-timeout 30 --speed-time 60 --speed-limit 1 -C - -o "${'$'}partial" "${'$'}download_url"
+                curl -fL --connect-timeout 30 --speed-time $CURL_SPEED_TIME_SECONDS --speed-limit $CURL_SPEED_LIMIT_BYTES -C - -o "${'$'}partial" "${'$'}download_url"
               else
-                curl -fL --connect-timeout 30 --speed-time 60 --speed-limit 1 -o "${'$'}partial" "${'$'}download_url"
+                curl -fL --connect-timeout 30 --speed-time $CURL_SPEED_TIME_SECONDS --speed-limit $CURL_SPEED_LIMIT_BYTES -o "${'$'}partial" "${'$'}download_url"
               fi
               last_status=${'$'}?
               set -e

@@ -890,6 +890,7 @@
     <string name="resource_detail_step_open">打开资源</string>
     <string name="resource_wizard_description">资源获取向导</string>
     <string name="resource_wizard_page_title">资源获取</string>
+    <string name="resource_wizard_no_pending_plan">当前没有待获取的资源，已退出向导</string>
     <string name="resource_wizard_header_state_syncing">正在校准获取状态</string>
     <string name="resource_wizard_header_state_running">正在执行获取计划</string>
     <string name="resource_wizard_header_state_failure">获取计划需要处理</string>

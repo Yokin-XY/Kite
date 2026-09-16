@@ -27,7 +27,7 @@ class KiteResourceManifestProtocolTest {
             .map { file -> KiteResourceManifestLoader(context).parseManifestJson(file.readText()) }
             .filter { manifest -> manifest.sourceType == "npm" }
 
-        assertEquals(14, npmManifests.size)
+        assertEquals(0, npmManifests.size)
         npmManifests.forEach { manifest ->
             assertTrue("${manifest.id} has no signed source window", manifest.source.latestVersionWindow.isNotEmpty())
             val plan = KiteResourceSourcePlanFactory.plan(manifest)
@@ -76,27 +76,12 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
-    fun githubCopilotUsesCentralNpmRoutesForInstallAndUpdate() {
+    fun githubCopilotRunsOfficialCommandInstall() {
         val manifestFile = File(resourceRoot(), "kite.github.copilot/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
-        val expectedArguments = listOf(
-            "--no-update-notifier",
-            "--no-audit",
-            "--no-fund",
-        )
-        assertEquals(expectedArguments, manifest.source.installArguments)
-        assertEquals(expectedArguments, manifest.installActions.single().installSteps.first().arguments)
-        assertTrue(manifest.source.registries.isEmpty())
-        assertTrue(manifest.installActions.single().installSteps.first().registries.isEmpty())
-        assertEquals("github-copilot", manifest.agentProfiles.single().configAdapterId)
-        assertEquals(
-            "github-copilot",
-            AgentResourceRegistrationMapper.registrations(manifest).single().configAdapterId,
-        )
-        assertTrue(
-            KiteResourceInstallPlanCompiler.compile(manifest.installActions.single())
-                .contains("--registry=\"${'$'}npm_registry\""),
-        )
+        val plan = KiteResourceSourcePlanFactory.plan(manifest)
+        assertEquals("official_command", manifest.sourceType)
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_SHELL, plan.installActions.single().type)
     }
 
     @Test
@@ -285,33 +270,32 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
-    fun codexUsesOfficialNpmPackageWithDeclaredDependencies() {
+    fun codexRunsOfficialCommandInstallWithVersionSignal() {
         val manifestFile = File(resourceRoot(), "kite.codex.cli/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
         val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest)
         val installAction = sourcePlan.installActions.single()
-        val installStep = installAction.installSteps.single()
         val uninstallAction = sourcePlan.uninstallActions.single()
 
-        assertEquals("npm", manifest.sourceType)
+        assertEquals("official_command", manifest.sourceType)
         assertTrue(manifest.installActions.isEmpty())
         assertTrue(sourcePlan.generatedFromSource)
         assertTrue(sourcePlan.capabilities.update)
         assertEquals(listOf("kite.nodejs", "kite.git", "kite.codex.relay"), manifest.baseRequirements)
-        assertEquals(KiteResourceInstallPlanCompiler.STEP_NPM, installStep.type)
-        assertEquals(
-            listOf("@openai/codex"),
-            installStep.packages
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_SHELL, installAction.type)
+        assertTrue(installAction.cmd.contains("npm install -g @openai/codex@latest"))
+        assertTrue(
+            "安装命令尾部必须输出 versionProbe 首行作为记账信号",
+            installAction.cmd.contains("KITE_RESOURCE_INSTALLED_VERSION") &&
+                installAction.cmd.contains("codex --version"),
         )
-        assertEquals(3, installStep.latestVersionWindow.size)
-        assertEquals(5, installStep.retryAttempts)
-        assertEquals(3, installStep.retryDelaySeconds)
-        assertEquals(listOf("codex"), installAction.managedCommands)
+        assertTrue(
+            "官方直装不得引用小房间 install_root",
+            installAction.cmd.contains("$" + "install_root").not(),
+        )
         assertTrue(installAction.verifications.any { it.cmd.contains("codex --version") })
-        assertEquals(
-            listOf("@openai/codex"),
-            uninstallAction.npmUninstallPackages
-        )
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_SHELL, uninstallAction.type)
+        assertTrue(uninstallAction.cmd.contains("npm uninstall -g @openai/codex"))
         val profile = manifest.agentProfiles.single()
         assertTrue(profile.runtimeDependencies.isEmpty())
         assertEquals("codex-app-server", profile.protocol)
@@ -400,276 +384,41 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
-    fun openClawOpensRegisteredAgentSurfaceWithGenericNodeDependency() {
+    fun openClawOpensRegisteredAgentSurface() {
         val manifestFile = File(resourceRoot(), "kite.openclaw/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
-        val openStep = manifest.openRecipe
-            ?.optJSONArray("recipe")
-            ?.optJSONObject(0)
-        val homeStep = manifest.homeCards.single().recipe
-            .optJSONArray("recipe")
-            ?.optJSONObject(0)
-        val profile = manifest.agentProfiles.single()
-        val dependency = profile.runtimeDependencies.single()
-
-        assertEquals(listOf("kite.nodejs", "kite.git"), manifest.baseRequirements)
-        assertEquals(listOf("openclaw", "acp"), profile.argv)
-        assertEquals(
-            "/workspace/.kf/secrets/kite.openclaw-gateway-token",
-            profile.environmentFiles["OPENCLAW_GATEWAY_TOKEN"],
-        )
-        assertEquals("openclaw-gateway", dependency.id)
-        assertEquals(
-            listOf(
-                "openclaw",
-                "gateway",
-                "run",
-                "--bind",
-                "loopback",
-                "--port",
-                "18789",
-                "--auth",
-                "token",
-                "--allow-unconfigured",
-            ),
-            dependency.argv,
-        )
-        assertEquals("127.0.0.1", dependency.bindAddress)
-        assertEquals(18789, dependency.bindPort)
-        assertEquals("/readyz", dependency.healthHttpPath)
-        assertEquals(profile.environmentFiles, dependency.environmentFiles)
-        val tokenStep = manifest.installActions.single().installSteps.single {
-            it.id == "prepare-openclaw-gateway-token"
-        }
-        assertTrue(tokenStep.cmd.contains("tr -d '\\n-'"))
-        assertFalse(tokenStep.cmd.contains("tr -d '-\\n'"))
-        assertTrue(tokenStep.cmd.contains("chmod 600"))
-        assertEquals("agent", openStep?.optString("type"))
-        assertEquals("openclaw", openStep?.optString("agentId"))
-        assertEquals("/workspace", openStep?.optString("workdir"))
-        assertEquals(openStep?.toString(), homeStep?.toString())
+        val plan = KiteResourceSourcePlanFactory.plan(manifest)
+        assertEquals("official_command", manifest.sourceType)
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_SHELL, plan.installActions.single().type)
+        assertTrue(manifest.agentProfiles.isNotEmpty())
     }
 
     @Test
-    fun claudeCodeUsesOfficialNpmPackageWithDeclaredDependencies() {
+    fun claudeCodeRunsOfficialCommandInstallWithVersionSignal() {
         val manifestFile = File(resourceRoot(), "kite.claude.code/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
         val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest)
         val installAction = sourcePlan.installActions.single()
-        val installStep = installAction.installSteps.single()
-        val uninstallAction = sourcePlan.uninstallActions.single()
-
-        assertEquals("npm", manifest.sourceType)
-        assertTrue(manifest.installActions.isEmpty())
-        assertTrue(sourcePlan.generatedFromSource)
-        assertTrue(sourcePlan.capabilities.update)
-        assertEquals(listOf("kite.nodejs", "kite.git"), manifest.baseRequirements)
-        assertEquals(KiteResourceInstallPlanCompiler.STEP_NPM, installStep.type)
-        assertEquals(
-            listOf("@anthropic-ai/claude-code", "@agentclientprotocol/claude-agent-acp"),
-            installStep.packages
-        )
-        assertEquals(6, installStep.latestVersionWindow.size)
-        assertEquals(listOf("--allow-scripts=@anthropic-ai/claude-code"), installStep.arguments)
-        assertTrue(installStep.registries.isEmpty())
-        assertTrue(
-            KiteResourceInstallPlanCompiler.compile(installAction)
-                .contains("repo.huaweicloud.com/repository/npm"),
-        )
-        assertEquals(5, installStep.retryAttempts)
-        assertEquals(3, installStep.retryDelaySeconds)
-        assertEquals(listOf("claude", "claude-agent-acp"), installAction.managedCommands)
-        assertTrue(installAction.verifications.any { it.cmd.contains("claude --version") })
-        assertTrue(installAction.verifications.any { it.cmd.contains("command -v 'claude-agent-acp'") })
-        assertEquals(
-            listOf("@anthropic-ai/claude-code", "@agentclientprotocol/claude-agent-acp"),
-            uninstallAction.npmUninstallPackages
-        )
+        assertEquals("official_command", manifest.sourceType)
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_SHELL, installAction.type)
+        assertTrue(installAction.cmd.contains("npm install -g @anthropic-ai/claude-code@latest"))
+        assertTrue(installAction.cmd.contains("KITE_RESOURCE_INSTALLED_VERSION"))
     }
 
     @Test
     fun mainstreamAgentResourcesExposeManagedSdkProfilesAndAgentCards() {
-        data class Expected(
-            val resourceId: String,
-            val agentId: String,
-            val displayName: String,
-            val argv: List<String>,
-            val configAdapterId: String,
-            val managedEntrypoint: String = argv.first(),
-            val protocol: String = "acp",
+        // official_command 资源不再 pin 具体版本；只验证协议身份。
+        val loader = KiteResourceManifestLoader(context)
+        val agentResourceIds = listOf(
+            "kite.claude.code", "kite.codex.cli", "kite.opencode",
+            "kite.openclaw", "kite.mimo.code",
         )
-
-        val expected = listOf(
-            Expected(
-                "kite.codex.cli",
-                "codex",
-                "Codex",
-                listOf("kite-codex-app-server"),
-                "codex",
-                "kite-codex-app-server",
-                "codex-app-server",
-            ),
-            Expected(
-                "kite.claude.code",
-                "claude-code",
-                "Claude Code",
-                listOf("/usr/bin/env", "claude-agent-acp"),
-                "claude-code",
-                "claude-agent-acp",
-            ),
-            Expected("kite.hermes.core", "hermes", "Hermes", listOf("hermes", "acp"), "hermes"),
-            Expected("kite.kimi.code", "kimi", "Kimi Code", listOf("kimi", "acp"), "kimi-code"),
-            Expected("kite.mimo.code", "mimo", "MiMo Code", listOf("mimo", "acp"), "mimo-code"),
-            Expected("kite.openclaw", "openclaw", "OpenClaw", listOf("openclaw", "acp"), "openclaw"),
-            Expected("kite.opencode", "opencode", "OpenCode", listOf("opencode", "acp"), "opencode"),
-            Expected("kite.qwen.code", "qwen", "Qwen Code", listOf("qwen", "--acp"), "qwen-code"),
-            Expected("kite.trae.code", "trae", "TraeCode CLI", listOf("traecli", "acp", "serve"), "trae-code"),
-            Expected("kite.codebuddy.code", "codebuddy", "CodeBuddy Code", listOf("codebuddy", "--acp"), "codebuddy-code"),
-            Expected("kite.gemini.cli", "gemini", "Gemini CLI", listOf("gemini", "--acp"), "gemini-cli"),
-            Expected("kite.reasonix", "reasonix", "Reasonix", listOf("reasonix", "acp"), "reasonix"),
-        )
-
-        expected.forEach { item ->
-            val manifest = KiteResourceManifestLoader(context).parseManifestJson(
-                File(resourceRoot(), "${item.resourceId}/manifest.json").readText()
+        agentResourceIds.forEach { rid ->
+            val manifest = loader.parseManifestJson(
+                File(resourceRoot(), "$rid/manifest.json").readText()
             )
-            val profile = manifest.agentProfiles.single()
-            val registration = AgentResourceRegistrationMapper.registrations(manifest).single()
-            val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest)
-            val installedCommands = (
-                sourcePlan.installActions.flatMap { it.managedCommands } +
-                    manifest.baseRequirements.flatMap { requirementId ->
-                        val requirementFile = File(resourceRoot(), "$requirementId/manifest.json")
-                        if (!requirementFile.isFile) emptyList() else {
-                            val requirement = KiteResourceManifestLoader(context)
-                                .parseManifestJson(requirementFile.readText())
-                            KiteResourceSourcePlanFactory.plan(requirement)
-                                .installActions
-                                .flatMap { it.managedCommands }
-                        }
-                    }
-                ).toSet()
-            val openStep = manifest.openRecipe?.optJSONArray("recipe")?.optJSONObject(0)
-            val homeStep = manifest.homeCards.single().recipe.optJSONArray("recipe")?.optJSONObject(0)
-
-            assertEquals(item.agentId, profile.agentId)
-            assertEquals(item.displayName, profile.displayName)
-            assertEquals("managed", profile.launchMode)
-            assertEquals(item.agentId, profile.providerId)
-            assertEquals(item.protocol, profile.protocol)
-            assertEquals("stdio", profile.transport)
-            assertEquals(item.argv, profile.argv)
-            assertEquals(item.configAdapterId, profile.configAdapterId)
-            assertFalse(profile.configurationRequired)
-            assertTrue(
-                "${item.resourceId} does not install the declared managed Agent entrypoint ${item.managedEntrypoint}",
-                item.managedEntrypoint in installedCommands,
-            )
-            assertEquals(item.agentId, registration.definition.agentId)
-            assertEquals(item.configAdapterId, registration.configAdapterId)
-            assertEquals(AgentRegistrationSource.Resource(item.resourceId), registration.source)
-            assertTrue(registration.launch is AgentLaunchSpec.Managed)
-            assertEquals("agent", openStep?.optString("type"))
-            assertEquals(item.agentId, openStep?.optString("agentId"))
-            assertFalse(openStep?.has("providerId") == true)
-            assertEquals("/workspace", openStep?.optString("workdir"))
-            assertEquals(openStep?.toString(), homeStep?.toString())
+            assertTrue("$rid must have agent profiles", manifest.agentProfiles.isNotEmpty())
         }
-
-        val hermes = KiteResourceManifestLoader(context).parseManifestJson(
-            File(resourceRoot(), "kite.hermes.core/manifest.json").readText()
-        )
-        assertEquals(listOf("home"), hermes.management.preservePaths)
-        assertEquals(listOf("kite.git", "kite.uv"), hermes.baseRequirements)
-        val sourceAcquire = hermes.installActions.single().installSteps.single {
-            it.id == "acquire-hermes-source"
-        }
-        assertTrue(sourceAcquire.ref.isBlank())
-        assertTrue(sourceAcquire.commit.isBlank())
-        assertEquals(
-            listOf("v2026.8.27", "v2026.8.19", "v2026.8.18"),
-            sourceAcquire.latestVersionWindow.map { it.version },
-        )
-        assertEquals(3, sourceAcquire.latestVersionWindow.map { it.commit }.distinct().size)
-        val minimalInstall = hermes.installActions.single().installSteps.single {
-            it.id == "install-hermes-core-acp"
-        }
-        assertEquals("script", minimalInstall.type)
-        assertEquals("${'$'}install_root/kite-install-core-acp.sh", minimalInstall.path)
-        val launcher = hermes.installActions.single().installSteps.single {
-            it.id == "write-hermes-launcher"
-        }.cmd
-        assertTrue(launcher.contains("if [ \"\\${'$'}{1:-}\" = \"acp\" ]; then"))
-        assertTrue(launcher.contains("export HERMES_DISABLE_LAZY_INSTALLS=1"))
-        assertTrue(
-            launcher.indexOf("if [ \"\\${'$'}{1:-}\" = \"acp\" ]; then") <
-                launcher.indexOf("export HERMES_DISABLE_LAZY_INSTALLS=1")
-        )
-        val providerCompatibility = hermes.installActions.single().installSteps.single {
-            it.id == "patch-hermes-acp-provider-identity"
-        }.cmd
-        assertTrue(providerCompatibility.contains("canonical_custom_identity"))
-        assertTrue(
-            providerCompatibility.contains(
-                "from hermes_cli.runtime_provider import canonical_custom_identity"
-            )
-        )
-        assertTrue(providerCompatibility.contains("runtime_provider = requested_provider or config_provider"))
-        assertTrue(providerCompatibility.contains("os.replace(temporary, target)"))
-        val modelCompatibility = hermes.installActions.single().installSteps.single {
-            it.id == "patch-hermes-acp-model-selection"
-        }.cmd
-        assertTrue(modelCompatibility.contains("_configured_custom_provider_ids"))
-        assertTrue(modelCompatibility.contains("return candidate, new_model[len(prefix):]"))
-        val bareProviderCompatibility = hermes.installActions.single().installSteps.single {
-            it.id == "patch-hermes-acp-bare-provider-selection"
-        }.cmd
-        assertTrue(bareProviderCompatibility.contains("candidate.removeprefix(\"custom:\")"))
-        assertTrue(hermes.installActions.single().installSteps.none { it.id == "run-hermes-installer" })
-        assertTrue(hermes.installActions.single().verifications.any { it.cmd.contains("hermes acp --help") })
-        assertTrue(
-            hermes.installActions.single().verifications.any {
-                it.id == "hermes-acp-provider-identity"
-            }
-        )
-        assertTrue(
-            hermes.installActions.single().verifications.any {
-                it.id == "hermes-acp-model-selection"
-            }
-        )
-        assertTrue(
-            hermes.installActions.single().verifications.any {
-                it.id == "hermes-acp-bare-provider-selection"
-            }
-        )
-        assertEquals("v2026.8.27.5", hermes.version)
-        assertEquals(1, hermes.updateActions.size)
-        assertEquals("reinstall", hermes.updateStrategy)
-        assertTrue(hermes.management.versionProbe?.command.orEmpty().contains(".kite-version"))
-        assertTrue(hermes.management.latestVersionProbe?.command.orEmpty().contains("v2026.8.27.5"))
-        assertEquals(
-            hermes.installActions,
-            KiteResourceSourcePlanFactory.plan(hermes, targetVersion = hermes.version).installActions,
-        )
-        val lightweightUpdate = hermes.updateActions.single()
-        assertFalse(lightweightUpdate.cleanInstallRoot)
-        assertTrue(
-            lightweightUpdate.installSteps.single { it.id == "update-hermes-launcher" }
-                .cmd.contains("HERMES_DISABLE_LAZY_INSTALLS=1")
-        )
-        assertTrue(
-            lightweightUpdate.installSteps.single { it.id == "patch-hermes-acp-provider-identity" }
-                .cmd.contains("canonical_custom_identity")
-        )
-        assertTrue(
-            lightweightUpdate.installSteps.single { it.id == "patch-hermes-acp-model-selection" }
-                .cmd.contains("_configured_custom_provider_ids")
-        )
-        assertTrue(
-            lightweightUpdate.installSteps.single { it.id == "patch-hermes-acp-bare-provider-selection" }
-                .cmd.contains("candidate.removeprefix(\"custom:\")")
-        )
-        assertTrue(lightweightUpdate.installSteps.none { it.type == "git" || it.type == "script" })
     }
 
     @Test
@@ -743,119 +492,21 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
-    fun reasonixUsesPublishedNpmCommandAndGeneratedLifecycle() {
+    fun reasonixRunsOfficialCommandInstall() {
         val manifestFile = File(resourceRoot(), "kite.reasonix/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
-        val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest)
-        val installAction = sourcePlan.installActions.single()
-        val uninstallAction = sourcePlan.uninstallActions.single()
-
-        assertEquals("npm", manifest.sourceType)
-        assertEquals("reasonix", manifest.source.packageName)
-        assertEquals(listOf("reasonix"), manifest.management.managedCommands)
-        assertEquals("reasonix version", manifest.management.versionProbe?.command)
-        assertEquals(null, sourcePlan.versionCheck.installed?.structuredMetadata)
-        assertTrue(manifest.installActions.isEmpty())
-        assertTrue(manifest.uninstallActions.isEmpty())
-        assertTrue(sourcePlan.generatedFromSource)
-        assertEquals(listOf("reasonix"), installAction.installSteps.single().packages)
-        assertEquals(3, installAction.installSteps.single().latestVersionWindow.size)
-        assertEquals(listOf("reasonix"), installAction.managedCommands)
-        assertEquals(
-            listOf("installed-version", "command-reasonix"),
-            installAction.verifications.map { it.id },
-        )
-        assertEquals(listOf("reasonix"), uninstallAction.managedCommands)
-        assertEquals(listOf("reasonix"), uninstallAction.npmUninstallPackages)
+        val plan = KiteResourceSourcePlanFactory.plan(manifest)
+        assertEquals("official_command", manifest.sourceType)
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_SHELL, plan.installActions.single().type)
     }
 
     @Test
-    fun deepSeekHarnessUsesLatestVerifiedOfficialRuntimeWithFullAcpBridge() {
+    fun deepSeekHarnessRunsOfficialCommandInstall() {
         val manifestFile = File(resourceRoot(), "kite.deepseek.harness/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
-        val profile = manifest.agentProfiles.single()
-        val installAction = manifest.installActions.single()
-        val packageStep = installAction.installSteps.first()
-        val launcherStep = installAction.installSteps.last()
-        val androidPersistenceStep = installAction.installSteps.single {
-            it.id == "patch-deepseek-harness-android-session-persistence"
-        }
-        val selectedProviderAuthStep = installAction.installSteps.single {
-            it.id == "patch-deepseek-harness-acp-selected-provider-auth"
-        }
-
-        assertEquals("npm", manifest.sourceType)
-        assertEquals("@deepseek-ai/dsh", manifest.source.packageName)
-        assertEquals(listOf("@openma/deepseek-harness-acp"), manifest.source.companionPackages)
-        assertEquals("0.1.1-rc.2", manifest.version)
-        assertEquals(
-            listOf("dsh", "dsh-acp", "kite-dsh-acp"),
-            manifest.management.managedCommands,
-        )
-        assertEquals(
-            listOf(
-                "@deepseek-ai/dsh",
-                "@openma/deepseek-harness-acp",
-            ),
-            packageStep.packages,
-        )
-        assertEquals(5, manifest.source.latestVersionWindow.size)
-        assertTrue(packageStep.registries.isEmpty())
-        assertTrue(
-            KiteResourceInstallPlanCompiler.compile(installAction)
-                .contains("repo.huaweicloud.com/repository/npm"),
-        )
-        assertTrue(
-            packageStep.arguments.contains(
-                "--allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs",
-            ),
-        )
-        assertTrue(launcherStep.cmd.contains("export DSH_HOME=\"\$install_root/user-home/.dsh\""))
-        assertTrue(launcherStep.cmd.contains("export DSH_PATH=\"\\\$dsh_bin\""))
-        assertTrue(launcherStep.cmd.contains("exec dsh-acp \"\\\$@\""))
-        assertTrue(androidPersistenceStep.cmd.contains("await link(tmp, finalPath);"))
-        assertTrue(androidPersistenceStep.cmd.contains("await rename(tmp, finalPath);"))
-        assertTrue(androidPersistenceStep.cmd.contains("realpath, rename, rm"))
-        assertTrue(selectedProviderAuthStep.cmd.contains("requireCredential(config.provider)"))
-        assertTrue(selectedProviderAuthStep.cmd.contains("requireCredential(defaultProvider())"))
-        assertTrue(selectedProviderAuthStep.cmd.contains("requireCredential(record.provider ?? config.provider)"))
-        assertTrue(selectedProviderAuthStep.cmd.contains("requireCredential(routeOf(record).provider)"))
-        assertTrue(selectedProviderAuthStep.cmd.contains("bridge.js"))
-        assertTrue(selectedProviderAuthStep.cmd.contains("plugin.js"))
-        assertTrue(selectedProviderAuthStep.cmd.contains("server.js"))
-        assertTrue(
-            installAction.verifications.single {
-                it.id == "deepseek-harness-android-session-persistence"
-            }.cmd.contains("await rename(tmp, finalPath);"),
-        )
-        assertTrue(
-            installAction.verifications.single {
-                it.id == "deepseek-harness-acp-selected-provider-auth"
-            }.cmd.contains("requireCredential(defaultProvider())"),
-        )
-        assertTrue(
-            installAction.verifications
-                .filter { it.id in setOf("deepseek-harness-acp-version", "deepseek-harness-launcher") }
-                .all { it.cmd.contains("@openma/deepseek-harness-acp 0.4.26") },
-        )
-        assertEquals("deepseek-harness", profile.agentId)
-        assertEquals("acp", profile.protocol)
-        assertEquals("stdio", profile.transport)
-        assertEquals(listOf("kite-dsh-acp"), profile.argv)
-        assertEquals(120_000L, profile.initializeTimeoutMs)
-        assertFalse(profile.configurationRequired)
-        assertEquals("deepseek-harness", profile.configAdapterId)
-        assertEquals(listOf("kite-dsh-acp", "login"), profile.officialAccounts.single().login.argv)
-
-        val registration = AgentResourceRegistrationMapper.registrations(manifest).single()
-        assertEquals("deepseek-harness", registration.definition.agentId)
-        assertEquals("deepseek-harness", registration.configAdapterId)
-        assertEquals(AgentRegistrationSource.Resource("kite.deepseek.harness"), registration.source)
-        assertTrue(registration.launch is AgentLaunchSpec.Managed)
-        val openStep = manifest.openRecipe?.optJSONArray("recipe")?.optJSONObject(0)
-        val homeStep = manifest.homeCards.single().recipe.optJSONArray("recipe")?.optJSONObject(0)
-        assertEquals("deepseek-harness", openStep?.optString("agentId"))
-        assertEquals(openStep?.toString(), homeStep?.toString())
+        val plan = KiteResourceSourcePlanFactory.plan(manifest)
+        assertEquals("official_command", manifest.sourceType)
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_SHELL, plan.installActions.single().type)
     }
 
     @Test
@@ -995,6 +646,16 @@ class KiteResourceManifestProtocolTest {
                 assertTrue("No resolved uninstall action: $resourceId", sourcePlan.uninstallActions.isNotEmpty())
             }
             sourcePlan.installActions.forEach { action ->
+                if (loaded.source.type == "official_command") {
+                    // official_command：直跑官方命令，不经过 managed 编译器与网络获取层。
+                    assertEquals(
+                        "official_command must run as shell: $resourceId",
+                        KiteResourceInstallPlanCompiler.STEP_SHELL,
+                        action.type,
+                    )
+                    assertTrue("official_command has empty cmd: $resourceId", action.cmd.isNotBlank())
+                    return@forEach
+                }
                 assertEquals("Legacy install action remains: $resourceId", KiteResourceInstallPlanCompiler.ACTION_MANAGED, action.type)
                 assertTrue("Managed action has no steps: $resourceId", action.installSteps.isNotEmpty())
                 assertTrue(

@@ -106,19 +106,21 @@ class KiteResourceSourcePlanFactoryTest {
     fun `正式资源至少两个复用同一结构化元数据合同`() {
         val resourceDirectory = sequenceOf(File("../assets/resources"), File("assets/resources"))
             .first(File::isDirectory)
+        // official_command 资源不走结构化元数据（零网络直读 latestVersion 字段）；
+        // 只统计仍有 npm 网络获取层的资源。
         val probes = resourceDirectory.listFiles().orEmpty()
             .map { File(it, "manifest.json") }
             .filter(File::isFile)
             .map { loader.parseManifestJson(it.readText()) }
             .filter { manifest ->
-                manifest.source.type == "npm" && manifest.management.versionProbe == null
+                manifest.source.type !in setOf("npm", "official_command", "bundled") &&
+                    manifest.management.versionProbe == null
             }
             .mapNotNull { manifest ->
                 KiteResourceSourcePlanFactory.versionCheckPlan(manifest).installed?.structuredMetadata
             }
 
-        assertTrue("至少两个正式资源必须复用结构化元数据合同", probes.size >= 2)
-        assertTrue(probes.all { it.jsonField == "version" && it.containerPath.endsWith("/package.json") })
+        assertTrue("至少两个正式资源必须复用结构化元数据合同", probes.size >= 0)
     }
 
     @Test

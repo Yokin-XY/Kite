@@ -14,16 +14,24 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["gemini"],
+    "managedCommands": [
+      "gemini"
+    ],
     "versionProbe": {
       "command": "gemini --version",
       "pattern": "([0-9]+(?:\\.[0-9]+)+)"
     },
-    "preservePaths": ["user-home"]
+    "preservePaths": [
+      "user-home"
+    ]
   },
   "display": {
-    "sections": ["ai-vendor"],
-    "tabs": ["angel-cli"],
+    "sections": [
+      "ai-vendor"
+    ],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 85,
     "category": "AI",
     "accent": "purple",
@@ -69,14 +77,11 @@
     "extensions": []
   },
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "@google/gemini-cli",
-    "latestVersionWindow": [
-      { "version": "0.57.0", "integrity": "sha512-I0V03d3k0J0ZN2m9u54XhN3VcMG+VjyPzoy7E9QV8lhzd39C6UgaZGLZNsOgODOtDhK8YMijHJWJn+Qxop2umw==" },
-      { "version": "0.56.0", "integrity": "sha512-q4oBfb/Oh/HNLMYBOJMp88/QQ8hLffnB0ykoVThi6A5isbGHJ/ylWLMosMGqukKY0Q1Jv/XRDpb46Q1BV+zQqw==" },
-      { "version": "0.55.1", "integrity": "sha512-leEv91V7J3YWhZdXqYIj4nTl0hXl8oNos5aVR0whPCFqVbRvoFPTzaQOHdI2UIT1wGgp+XdCi4qUrFDnUFN7RQ==" }
-    ],
-    "repository": "https://github.com/google-gemini/gemini-cli"
+    "command": "npm install -g @google/gemini-cli@latest",
+    "uninstallCommand": "npm uninstall -g @google/gemini-cli",
+    "latestVersion": "0.59.0"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.gemini.cli",
@@ -97,7 +102,10 @@
         "providerId": "gemini",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["gemini", "--acp"],
+        "argv": [
+          "gemini",
+          "--acp"
+        ],
         "title": "Gemini CLI"
       }
     }

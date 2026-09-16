@@ -14,13 +14,21 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["mimo"]
+    "managedCommands": [
+      "mimo"
+    ],
+    "versionProbe": {
+      "command": "mimo --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    }
   },
   "display": {
     "sections": [
       "ai-vendor"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 120,
     "category": "AI",
     "accent": "orange",
@@ -72,14 +80,11 @@
     "extensions": []
   },
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "@mimo-ai/cli",
-    "latestVersionWindow": [
-      { "version": "0.1.13", "integrity": "sha512-tEChkbCPP6Cuk88yFEV5suQ/3U0864S2G+PKsVKfpGY1FJ2EsnOa/q1ie8J9XsTg7Z42JCCWRmN6apRujNgT2Q==" },
-      { "version": "0.1.12", "integrity": "sha512-f1y5YsWXgDuKycTAMWI2RzgSwnipVawW8qxaVR3ksy0/3A5/rSDykrUF1zoIwnmZF481MqiJOFexV4ZasWGe9Q==" },
-      { "version": "0.1.11", "integrity": "sha512-3Sw3oUTni26EQil2PPESgam2XMxlPaFhF4KaasKXKIPFe46IxjA+rfvyrwC963Lv5NXjSJKjacLQjjDFfcMgBQ==" }
-    ],
-    "repository": "https://github.com/XiaomiMiMo/MiMo-Code"
+    "command": "npm install -g @mimo-ai/cli@latest",
+    "uninstallCommand": "npm uninstall -g @mimo-ai/cli",
+    "latestVersion": "0.1.14"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.mimo.code",
@@ -100,37 +105,15 @@
         "providerId": "mimo",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["mimo", "acp"],
+        "argv": [
+          "mimo",
+          "acp"
+        ],
         "title": "MiMo Code"
       }
     }
   ],
   "actions": {
-    "install": [
-      {
-        "type": "managed",
-        "steps": [
-          {
-            "id": "install-mimo-package",
-            "type": "npm",
-            "packages": [
-              "@mimo-ai/cli"
-            ]
-          }
-        ],
-        "managedCommands": [
-          "mimo"
-        ],
-        "cleanInstallRoot": true,
-        "verify": [
-          {
-            "id": "mimo-command",
-            "cmd": "command -v mimo >/dev/null 2>&1"
-          }
-        ],
-        "timeoutMs": 900000
-      }
-    ],
     "open": {
       "runtime": "kite_recipe",
       "recipe": {

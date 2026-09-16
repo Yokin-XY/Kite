@@ -150,11 +150,6 @@
                 android:value="Linux container runtime" />
         </service>
 
-        <service
-            android:name="com.kite.app.run.KiteX11ServerService"
-            android:exported="false"
-            android:process=":x11" />
-
         <receiver
             android:name="com.kite.app.foundation.runtime.RuntimeControlledLeaseProbeRegistrationReceiver"
             android:exported="true">

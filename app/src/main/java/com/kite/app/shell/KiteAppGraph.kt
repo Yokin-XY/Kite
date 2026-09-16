@@ -248,6 +248,7 @@ internal class KiteAppGraph private constructor(context: Context) {
                             TAG,
                             "Resource definitions published: revision=${result.revision} endpoint=${result.endpointId}",
                         )
+                        silentUpdateCheck()
                     }
                     is KiteResourceStoreRefreshResult.Unchanged -> Log.i(
                         TAG,
@@ -258,6 +259,27 @@ internal class KiteAppGraph private constructor(context: Context) {
                 }
             }.also { resourceDefinitionRefreshJob = it }
         }
+
+    /**
+     * 启动时对已安装资源静默检查一次更新（零网络：official_command 读商店 latestVersion，
+     * 旧源走既有探测）。结果只写注册表（卡片亮可更新），不产生 UI 副作用。
+     */
+    private fun silentUpdateCheck() {
+        processScope.launch {
+            runCatching {
+                val environmentId = resourceInstallStore.currentEnvironmentId()
+                val installedIds = resourceInstallStore.registrySnapshot(environmentId = environmentId)
+                    .filterValues { it.installed }
+                    .keys
+                    .toList()
+                if (installedIds.isEmpty()) return@runCatching
+                resourceActionWorkflowCoordinator.checkUpdates(installedIds)
+                Log.i(TAG, "Silent update check completed for ${installedIds.size} resources")
+            }.onFailure { error ->
+                Log.w(TAG, "Silent update check failed", error)
+            }
+        }
+    }
 
     fun resourceDefinitionStoreStatusFile(): java.io.File = resourceDefinitionStore.statusFile()
     val agentOfficialAccountManager: AgentOfficialAccountManager by lazy {

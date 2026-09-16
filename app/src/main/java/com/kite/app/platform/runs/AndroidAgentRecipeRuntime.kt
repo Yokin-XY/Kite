@@ -6,21 +6,11 @@ import com.kite.app.agent.acp.AcpProcessAgentProvider
 import com.kite.app.agent.acp.AcpProcessChannelLauncher
 import com.kite.app.agent.acp.AcpProcessProviderDescriptor
 import com.kite.app.agent.acp.AcpSessionPathMapper
-import com.kite.app.agent.antigravity.AntigravityProcessLauncher
-import com.kite.app.agent.antigravity.AntigravityProviderDescriptor
-import com.kite.app.agent.antigravity.AntigravitySessionFileResolver
-import com.kite.app.agent.antigravity.AntigravitySessionPathMapper
-import com.kite.app.agent.antigravity.AntigravityStreamJsonAgentProvider
 import com.kite.app.agent.codex.CodexAppServerAgentProvider
 import com.kite.app.agent.codex.CodexAppServerProcessLauncher
 import com.kite.app.agent.codex.CodexAppServerProviderDescriptor
 import com.kite.app.agent.codex.CodexOfficialModelCatalogSink
 import com.kite.app.agent.codex.CodexSessionConfigurationOverride
-import com.kite.app.agent.pi.PiRpcAgentProvider
-import com.kite.app.agent.pi.PiRpcProcessLauncher
-import com.kite.app.agent.pi.PiRpcProviderDescriptor
-import com.kite.app.agent.pi.PiRpcSessionFileResolver
-import com.kite.app.agent.pi.PiRpcSessionPathMapper
 import com.kite.app.agent.zcode.ZCodeAppServerAgentProvider
 import com.kite.app.agent.zcode.ZCodeAppServerProcessLauncher
 import com.kite.app.agent.zcode.ZCodeAppServerProviderDescriptor
@@ -596,27 +586,7 @@ internal class AndroidAgentRecipeRuntime(
                         )
                     },
                 )
-                PROTOCOL_PI_RPC -> PiRpcAgentProvider(
-                    descriptor = PiRpcProviderDescriptor(
-                        id = providerId,
-                        name = resolved.displayName,
-                        title = resolved.title,
-                        version = resolved.version,
-                    ),
-                    launcher = PiRpcProcessLauncher {
-                        processFactory.start(processLaunch.process)
-                    },
-                    initializeTimeoutMs = resolved.initializeTimeoutMs,
-                    diagnosticSink = { line ->
-                        Log.w(TAG, "Agent ${resolved.providerId}: $line")
-                    },
-                    sessionFileResolver = PiRpcSessionFileResolver { path ->
-                        agentConfigProjection.resolve(path)?.readFile
-                    },
-                    sessionPathMapper = PiRpcSessionPathMapper(
-                        processLaunch.sessionPathMapping::fromAgent,
-                    ),
-                )
+                PROTOCOL_PI_RPC -> error("Pi RPC 协议已冻结")
                 PROTOCOL_ZCODE_APP_SERVER -> ZCodeAppServerAgentProvider(
                     descriptor = ZCodeAppServerProviderDescriptor(
                         id = providerId,
@@ -636,35 +606,7 @@ internal class AndroidAgentRecipeRuntime(
                             ?.runtimeModelCatalog()
                     },
                 )
-                PROTOCOL_ANTIGRAVITY_STREAM_JSON -> AntigravityStreamJsonAgentProvider(
-                    descriptor = AntigravityProviderDescriptor(
-                        id = providerId,
-                        name = resolved.displayName,
-                        title = resolved.title,
-                        version = resolved.version,
-                    ),
-                    launcher = AntigravityProcessLauncher { arguments ->
-                        val launch = managedProcessLaunchPlanner.plan(
-                            argv = resolved.argv + arguments,
-                            workingDirectory = cwd,
-                            environment = environment + resolveEnvironmentFiles(resolved.environmentFiles),
-                            runtimeGuarantees = resolved.runtimeGuarantees,
-                            runtimeGuaranteeEvidence = resolved.runtimeGuaranteeEvidence,
-                            hardLinkMode = resolved.hardLinkMode,
-                        )
-                        processFactory.start(launch.process)
-                    },
-                    initializeTimeoutMs = resolved.initializeTimeoutMs,
-                    diagnosticSink = { line ->
-                        Log.w(TAG, "Agent ${resolved.providerId}: $line")
-                    },
-                    sessionFileResolver = AntigravitySessionFileResolver { path ->
-                        agentConfigProjection.resolve(path)?.readFile
-                    },
-                    sessionPathMapper = AntigravitySessionPathMapper(
-                        processLaunch.sessionPathMapping::toAgent,
-                    ),
-                )
+                PROTOCOL_ANTIGRAVITY_STREAM_JSON -> error("Antigravity 协议已冻结")
                 else -> error("已由 managed protocol 校验限制协议")
             }
             startConnection(

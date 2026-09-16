@@ -15,6 +15,11 @@
       "id": "kite-store-2026-01",
       "algorithm": "SHA256withECDSA",
       "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBoVvpRtlLJC/JYYs7r65YG+6/VAoqqk0NSRS5qqfuBcloVTecXdSX09Z1a3p3LmYmWRfykuIum5NRbN+SgjZfw=="
+    },
+    {
+      "id": "kite-store-2026-02",
+      "algorithm": "SHA256withECDSA",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbZlRahs/zQ/rbzE/LLXNchGT5X/OPNpMRVaJjAIj7exjEM6MVVdUvg18yrKDY1HiVPcC1SnaIm+T490uCfrByw=="
     }
   ]
 }

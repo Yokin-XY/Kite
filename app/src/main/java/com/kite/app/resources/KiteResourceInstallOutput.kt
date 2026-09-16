@@ -4,6 +4,7 @@ object KiteResourceInstallOutput {
     private const val FAILURE = "KITE_RESOURCE_FAILURE "
     private const val HEARTBEAT = "KITE_RESOURCE_HEARTBEAT "
     private const val RETRY = "KITE_RESOURCE_RETRY "
+    private const val ROUTE = "KITE_RESOURCE_ROUTE "
     private const val STEP = "KITE_RESOURCE_STEP "
 
     fun isFailure(line: String): Boolean = line.startsWith(FAILURE)
@@ -15,6 +16,7 @@ object KiteResourceInstallOutput {
     fun summary(line: String): String? = when {
         line.startsWith(FAILURE) -> failureSummary(line)
         line.startsWith(RETRY) -> retrySummary(line)
+        line.startsWith(ROUTE) -> routeSummary(line)
         line.startsWith(HEARTBEAT) -> null
         line.startsWith(STEP) -> stepSummary(line.removePrefix(STEP))
         else -> null
@@ -101,15 +103,41 @@ object KiteResourceInstallOutput {
     private fun retrySummary(line: String): String {
         val attempt = value(line, "attempt")
         val exit = value(line, "exit")
-        return buildString {
-            append("网络出现波动，正在重试")
-            attempt?.let { append("（第 ").append(it).append(" 次") }
-            exit?.let {
-                if (attempt == null) append('（') else append("，")
-                append("退出码 ").append(it)
-            }
-            if (attempt != null || exit != null) append('）')
+        val source = value(line, "source")
+        val reason = value(line, "reason")?.let(::retryReasonText)
+        val headline = when {
+            source != null && reason != null -> "来源 $source $reason，已切换下一来源"
+            source != null -> "来源 $source 网络出现波动，正在重试"
+            else -> "网络出现波动，正在重试"
         }
+        val detail = listOfNotNull(
+            attempt?.let { "第 $it 次" },
+            exit?.let { "退出码 $it" },
+        ).joinToString("，")
+        return if (detail.isBlank()) headline else "$headline（$detail）"
+    }
+
+    /** 路由标记投影为"当前正在用哪个源"，让换源过程对用户可见。 */
+    private fun routeSummary(line: String): String {
+        val source = value(line, "source")
+            ?: return "正在获取资源"
+        val endpoint = value(line, "index")
+            ?: value(line, "registry")
+            ?: value(line, "url")
+        val host = endpoint?.let { sourceHost(it) }
+        return when {
+            host != null -> "正在从 $host 获取资源（源 $source）"
+            else -> "正在从来源 $source 获取资源"
+        }
+    }
+
+    private fun retryReasonText(reason: String): String = when (reason) {
+        "source-unavailable" -> "不可用或速度过慢"
+        "latest-query-failed" -> "版本查询失败"
+        "source-incomplete" -> "内容不完整"
+        "source-unverified" -> "身份校验未通过"
+        "verified-artifact-unavailable" -> "缺少可信制品"
+        else -> "被淘汰（$reason）"
     }
 
     private fun stepSummary(payload: String): String? {

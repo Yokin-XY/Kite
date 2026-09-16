@@ -13,18 +13,24 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["codex"],
+    "managedCommands": [
+      "codex"
+    ],
     "versionProbe": {
       "command": "codex --version",
       "pattern": "([0-9]+(?:\\.[0-9]+)+)"
     },
-    "preservePaths": ["user-home"]
+    "preservePaths": [
+      "user-home"
+    ]
   },
   "display": {
     "sections": [
       "ai-vendor"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 50,
     "category": "AI",
     "accent": "teal",
@@ -74,13 +80,11 @@
     "extensions": []
   },
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "@openai/codex",
-    "latestVersionWindow": [
-      { "version": "0.151.0", "integrity": "sha512-mhtWmOZRdmWD1jPbLDnQb59BsaVP/V+lXe/OFNR9ZcLZU0UCiBwn98Fcav1ss7sDIlHkuqj6nWd44IPeXoOhJA==" },
-      { "version": "0.150.1", "integrity": "sha512-knrbhpJH3mEULAVStcZW4F5WEt9MQhBj6KFOonBSIUGTLcHlu9CE7FRmr95E33y94+sWNZSeVBBV/kYvlfgxkQ==" },
-      { "version": "0.150.0", "integrity": "sha512-AWrJENpRsvowLZeCEicYEmt4xD7EvSIX34+1DmFn7ZUwuX0Ku0/DMgouPHu5YKxJJF7/ixC1cIAu3oLSd8/H2g==" }
-    ],
+    "command": "npm install -g @openai/codex@latest",
+    "uninstallCommand": "npm uninstall -g @openai/codex",
+    "latestVersion": "0.154.0",
     "repository": "https://github.com/openai/codex"
   },
   "paths": {
@@ -101,19 +105,36 @@
         {
           "id": "chatgpt",
           "name": "ChatGPT 官方",
-          "modelGroupIds": ["codex", "openai"],
+          "modelGroupIds": [
+            "codex",
+            "openai"
+          ],
           "status": {
-            "argv": ["codex", "login", "status"],
-            "loggedInPatterns": ["logged in"],
-            "loggedOutPatterns": ["not logged in"],
+            "argv": [
+              "codex",
+              "login",
+              "status"
+            ],
+            "loggedInPatterns": [
+              "logged in"
+            ],
+            "loggedOutPatterns": [
+              "not logged in"
+            ],
             "timeoutMs": 15000
           },
           "login": {
-            "argv": ["codex", "login"],
+            "argv": [
+              "codex",
+              "login"
+            ],
             "timeoutMs": 300000
           },
           "logout": {
-            "argv": ["codex", "logout"],
+            "argv": [
+              "codex",
+              "logout"
+            ],
             "timeoutMs": 30000
           }
         }
@@ -123,7 +144,9 @@
         "providerId": "codex",
         "protocol": "codex-app-server",
         "transport": "stdio",
-        "argv": ["kite-codex-app-server"],
+        "argv": [
+          "kite-codex-app-server"
+        ],
         "title": "Codex"
       }
     }

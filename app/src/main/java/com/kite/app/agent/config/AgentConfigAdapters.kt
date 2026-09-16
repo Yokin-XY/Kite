@@ -1,7 +1,6 @@
 package com.kite.app.agent.config
 
 import android.content.Context
-import com.kite.app.agent.config.native.AntigravityAgentConfigAdapter
 import com.kite.app.agent.config.native.ClaudeCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.CodeBuddyCodeAgentConfigAdapter
 import com.kite.app.agent.config.native.CopilotAgentConfigAdapter
@@ -39,7 +38,6 @@ internal fun defaultAgentConfigAdapters(
     KimiCodeAgentConfigAdapter(context.applicationContext),
     HermesAgentConfigAdapter(context.applicationContext),
     GeminiCliAgentConfigAdapter(context.applicationContext),
-    AntigravityAgentConfigAdapter(context.applicationContext),
     PiCodingAgentConfigAdapter(context.applicationContext),
     OpenClawAgentConfigAdapter(context.applicationContext),
     MiMoCodeAgentConfigAdapter(context.applicationContext),

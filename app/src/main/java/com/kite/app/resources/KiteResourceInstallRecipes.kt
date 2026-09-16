@@ -465,6 +465,10 @@ SH
             }
             kite_clean_install_root() {
               clean_target="${'$'}1"
+              case "${'$'}clean_target" in
+                *.kite-uninstall-staging-*) ;;
+                *) rm -rf -- "${'$'}clean_target".kite-uninstall-staging-* 2>/dev/null || true ;;
+              esac
               if [ "${'$'}candidate_install" = "1" ] && [ "${'$'}clean_target" = "${'$'}install_root" ]; then
                 find "${'$'}install_root" -mindepth 1 -maxdepth 1 \
                   ! -name '.kite-candidate-input' -exec rm -rf -- {} +
@@ -856,14 +860,16 @@ SH
               done
             fi
             $retainUserPaths
+            rm -rf -- "${'$'}install_root".kite-uninstall-staging-* 2>/dev/null || true
             if [ -e "${'$'}install_root" ] || [ -L "${'$'}install_root" ]; then
-              rm -rf "${'$'}uninstall_staging"
               mv "${'$'}install_root" "${'$'}uninstall_staging" || exit 74
             fi
             if [ -e "${'$'}install_root" ] || [ -L "${'$'}install_root" ]; then
               echo "KITE_RESOURCE_FAILURE stage=uninstall step=remove-install-root reason=not-removed"
               exit 74
             fi
+            rm -rf -- "${'$'}uninstall_staging" 2>/dev/null || true
+            echo "KITE_RESOURCE_STEP uninstall-staging-cleaned ${safeId(resourceId)}"
             exit 0
         """.trimIndent()
     }
