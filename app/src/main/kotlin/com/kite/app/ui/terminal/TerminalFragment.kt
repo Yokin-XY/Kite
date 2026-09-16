@@ -766,9 +766,18 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         TerminalPanelActionRegistry.snapshot().forEach { page ->
             terminalControlPage.addView(buildTerminalPanelPageContainer(buildTerminalPanelPage(page)))
         }
+        terminalPanelPageIndex = terminalPanelPageIndex
+            .coerceIn(0, (terminalControlPage.childCount - 1).coerceAtLeast(0))
+        // 先等子页宽度按视口校正并触发重排，再在下一帧落位滚动，避免指示与内容错页。
         terminalControlPager.post {
             updateTerminalPanelPageWidths()
-            terminalControlPager.scrollTo(terminalPanelPageIndex * terminalControlPager.width, 0)
+            terminalControlPage.requestLayout()
+            terminalControlPager.post {
+                terminalControlPager.scrollTo(
+                    terminalPanelPageIndex * terminalControlPager.width,
+                    0,
+                )
+            }
         }
         renderTerminalPanelIndicator()
     }
@@ -792,7 +801,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.CENTER
+                    // 统一从左上铺开：各页内容按同一网格向右下扩充，不做居中漂移。
+                    Gravity.TOP or Gravity.START
                 )
             )
         }
