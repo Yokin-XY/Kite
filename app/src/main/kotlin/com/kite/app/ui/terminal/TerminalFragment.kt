@@ -72,6 +72,8 @@ import com.kite.app.application.surface.SurfaceChromeMode
 import com.kite.app.application.surface.SurfaceEffect
 import com.kite.app.feature.terminal.TerminalSurfaceResultContract
 import com.kite.app.theme.ThemeEnvironment
+import com.kite.app.ui.UiActionRole
+import com.kite.app.ui.UiDialogAction
 import com.kite.app.ui.UiKit
 import com.kite.app.ui.UiMenuItem
 import com.kite.app.ui.theme.kiteThemeEnvironment
@@ -87,6 +89,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallbacks {
@@ -99,6 +102,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         private const val TERMINAL_COMPOSER_MAX_LINES = 8
         private const val TERMINAL_CONTEXT_COPY_SCREEN = 4001
         private const val TERMINAL_CONTEXT_COPY_ALL = 4002
+        private const val TERMINAL_CUSTOM_SHORTCUTS_FIRST_PAGE_CAPACITY = 7
+        private const val TERMINAL_CUSTOM_SHORTCUTS_PAGE_CAPACITY = 8
 
         fun detailOnly(sessionId: String): TerminalFragment =
             TerminalFragment().apply {
@@ -135,6 +140,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private lateinit var terminalController: TerminalSessionController
     private lateinit var appThemeEnvironment: ThemeEnvironment
     private lateinit var appUi: UiKit
+    private lateinit var customShortcutStore: TerminalCustomShortcutStore
 
     private var isCtrlPressed = false
     private var isAltPressed = false
@@ -165,6 +171,14 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
         override fun showThemeMenu(anchor: View) {
             this@TerminalFragment.showThemeMenu(anchor)
+        }
+
+        override fun showCustomShortcutEditor() {
+            this@TerminalFragment.showCustomShortcutEditor()
+        }
+
+        override fun showCustomShortcutMenu(shortcutId: String) {
+            this@TerminalFragment.showCustomShortcutMenu(shortcutId)
         }
 
         override fun themeLabel(): String =
@@ -386,6 +400,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 setOnClickListener { sendSurfaceEffect(SurfaceEffect.RequestBack) }
             }
         }
+        customShortcutStore = TerminalCustomShortcutStore(requireContext())
+        refreshCustomShortcutPages(renderPanel = false)
         setupTerminalComposer()
         setupWindowInsets(view)
 
@@ -599,6 +615,151 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         terminalComposerInput.post { updateComposerScrollState() }
     }
 
+    private fun refreshCustomShortcutPages(renderPanel: Boolean = true) {
+        val shortcuts = customShortcutStore.snapshot()
+        TerminalPanelActionRegistry.setCustomPages(buildCustomShortcutPages(shortcuts))
+        if (renderPanel && ::terminalControlPage.isInitialized) {
+            renderTerminalPanelPage()
+        }
+    }
+
+    private fun buildCustomShortcutPages(shortcuts: List<TerminalShortcutDefinition>): List<TerminalPanelPage> {
+        val addAction = TerminalPanelAction(
+            id = "add-custom-shortcut",
+            titleRes = R.string.terminal_add_custom_shortcut,
+            subtitleRes = R.string.terminal_add_custom_shortcut_subtitle,
+            handler = TerminalPanelActionHandler { host, _ -> host.showCustomShortcutEditor() }
+        )
+        val firstPageActions = listOf(addAction) + shortcuts
+            .take(TERMINAL_CUSTOM_SHORTCUTS_FIRST_PAGE_CAPACITY)
+            .map(TerminalPanelActionRegistry::customShortcutAction)
+        val remainingStart = min(
+            TERMINAL_CUSTOM_SHORTCUTS_FIRST_PAGE_CAPACITY,
+            shortcuts.size,
+        )
+        val followingPages = shortcuts.drop(remainingStart)
+            .chunked(TERMINAL_CUSTOM_SHORTCUTS_PAGE_CAPACITY)
+            .mapIndexed { index, pageShortcuts ->
+                TerminalPanelPage(
+                    id = "${TerminalPanelActionRegistry.CUSTOM_PAGE_ID_PREFIX}${index + 1}",
+                    actions = pageShortcuts.map(TerminalPanelActionRegistry::customShortcutAction),
+                )
+            }
+        return listOf(
+            TerminalPanelPage(
+                id = "${TerminalPanelActionRegistry.CUSTOM_PAGE_ID_PREFIX}0",
+                actions = firstPageActions,
+            )
+        ) + followingPages
+    }
+
+    private fun showCustomShortcutEditor(existing: TerminalShortcutDefinition? = null) {
+        if (view == null) {
+            return
+        }
+        val existingLabels = customShortcutStore.snapshot()
+            .map { it.label }
+            .toSet()
+            .minus(existing?.label.orEmpty())
+        showTerminalShortcutEditor(
+            context = requireContext(),
+            ui = appUi,
+            strings = TerminalShortcutEditorStrings(
+                addTitle = getString(R.string.terminal_custom_shortcut_add_title),
+                editTitle = getString(R.string.terminal_custom_shortcut_edit_title),
+                cancelLabel = getString(R.string.terminal_custom_shortcut_cancel),
+                confirmLabel = getString(
+                    if (existing == null) {
+                        R.string.terminal_custom_shortcut_add
+                    } else {
+                        R.string.terminal_custom_shortcut_save
+                    }
+                ),
+                previewLabel = getString(R.string.terminal_custom_shortcut_preview),
+                modifierLabel = getString(R.string.terminal_custom_shortcut_modifiers),
+                keyLabel = getString(R.string.terminal_custom_shortcut_key),
+                lettersLabel = getString(R.string.terminal_custom_shortcut_letters),
+                digitsLabel = getString(R.string.terminal_custom_shortcut_digits),
+                symbolsLabel = getString(R.string.terminal_custom_shortcut_symbols),
+                functionsLabel = getString(R.string.terminal_custom_shortcut_functions),
+                selectKeyHint = getString(R.string.terminal_custom_shortcut_select_key),
+                duplicateMessage = getString(R.string.terminal_custom_shortcut_duplicate),
+                unsupportedMessage = getString(R.string.terminal_custom_shortcut_unsupported),
+            ),
+            initial = existing,
+            existingLabels = existingLabels,
+        ) { definition ->
+            val result = if (existing == null) {
+                customShortcutStore.add(definition)
+            } else {
+                customShortcutStore.update(existing.id, definition)
+            }
+            when (result) {
+                is TerminalCustomShortcutWriteResult.Accepted -> {
+                    refreshCustomShortcutPages()
+                    showSessionNote(
+                        getString(
+                            if (existing == null) {
+                                R.string.terminal_custom_shortcut_added
+                            } else {
+                                R.string.terminal_custom_shortcut_updated
+                            }
+                        )
+                    )
+                }
+
+                is TerminalCustomShortcutWriteResult.Rejected ->
+                    showSessionNote(result.reason)
+            }
+        }
+    }
+
+    private fun showCustomShortcutMenu(shortcutId: String) {
+        if (view == null) {
+            return
+        }
+        val shortcut = customShortcutStore.snapshot().singleOrNull { it.id == shortcutId }
+        if (shortcut == null) {
+            showSessionNote(getString(R.string.terminal_custom_shortcut_missing))
+            return
+        }
+        appUi.showChoiceDialog(
+            context = requireContext(),
+            title = shortcut.label,
+            options = listOf(
+                getString(R.string.terminal_custom_shortcut_edit),
+                getString(R.string.terminal_custom_shortcut_delete),
+            ),
+            selectedIndex = -1,
+            dismissLabel = getString(R.string.terminal_custom_shortcut_cancel),
+        ) { index ->
+            when (index) {
+                0 -> showCustomShortcutEditor(shortcut)
+                1 -> confirmRemoveCustomShortcut(shortcut)
+            }
+        }
+    }
+
+    private fun confirmRemoveCustomShortcut(definition: TerminalShortcutDefinition) {
+        if (view == null) {
+            return
+        }
+        appUi.showConfirmDialog(
+            context = requireContext(),
+            title = getString(R.string.terminal_custom_shortcut_delete_title),
+            message = getString(R.string.terminal_custom_shortcut_delete_message, definition.label),
+            dismissLabel = getString(R.string.terminal_custom_shortcut_cancel),
+            primaryAction = UiDialogAction(
+                label = getString(R.string.terminal_custom_shortcut_delete),
+                role = UiActionRole.Danger,
+            ) {
+                customShortcutStore.remove(definition.id)
+                refreshCustomShortcutPages()
+                showSessionNote(getString(R.string.terminal_custom_shortcut_deleted))
+            },
+        )
+    }
+
     private fun renderTerminalPanelPage() {
         terminalControlPage.removeAllViews()
         terminalPanelActionBindings.clear()
@@ -754,9 +915,12 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                     page.actions.map { action ->
                         PanelButton(
                             id = action.id,
-                            title = getString(action.titleRes),
+                            title = action.resolvedTitle(terminalPanelActionHost, ::getString),
                             subtitle = action.resolvedSubtitle(terminalPanelActionHost, ::getString),
-                            iconRes = action.iconRes
+                            iconRes = action.iconRes,
+                            longPressAction = action.longPressHandler?.let { handler ->
+                                { anchor -> handler.execute(terminalPanelActionHost, anchor) }
+                            }
                         ) { anchor -> action.execute(terminalPanelActionHost, anchor) }
                     }
                 ),
@@ -831,6 +995,12 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 onSubtitleView = { subtitleView = it },
             ).apply {
                 setOnClickListener { button.action(this) }
+                button.longPressAction?.let { longPressAction ->
+                    setOnLongClickListener {
+                        longPressAction(it)
+                        true
+                    }
+                }
             }
             terminalPanelActionBindings[button.id] = PanelActionBinding(
                 tile = tile,
@@ -1210,6 +1380,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         val title: String,
         val subtitle: String,
         val iconRes: Int? = null,
+        val longPressAction: ((View) -> Unit)? = null,
         val action: (View) -> Unit
     )
 
