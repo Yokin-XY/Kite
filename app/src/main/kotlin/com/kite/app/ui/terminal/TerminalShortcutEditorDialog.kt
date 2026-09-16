@@ -102,6 +102,8 @@ fun showTerminalShortcutEditor(
             gravity = Gravity.CENTER
             includeFontPadding = false
             maxLines = 1
+            // contentDescription 只进无障碍树；不设 text 时芯片在屏幕上是空白块。
+            text = label
             contentDescription = label
             ui.applyTextRole(this, UiTextRole.Action)
         }
