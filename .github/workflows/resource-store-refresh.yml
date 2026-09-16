@@ -90,7 +90,8 @@ jobs:
           fi
 
       - name: Sync to GitCode mirror
-        if: ${{ secrets.GITCODE_API_TOKEN != '' }}
+        # secrets 上下文不能直接用于 if 条件——改用 env 变量判断
+        if: env.GITCODE_API_TOKEN != ''
         env:
           GITCODE_API_TOKEN: ${{ secrets.GITCODE_API_TOKEN }}
         run: |
