@@ -229,8 +229,8 @@ object KiteResourceSourcePlanFactory {
 
     /**
      * official_command：安装与更新都按官方命令原样执行，位置由官方安装器决定。
-     * 我们只做三件事：注入镜像加速环境、跑命令、把 versionProbe 的首行输出成
-     * KITE_RESOURCE_INSTALLED_VERSION 信号交给现有记账链路。
+     * 镜像策略：npm 系命令自动注入多源循环（华为云→npmmirror→阿里云→官方），
+     * 失败自动换下一个源；非 npm 命令原样执行。
      */
     private fun officialCommandInstallAction(
         manifest: KiteResourceManifest,
@@ -251,12 +251,11 @@ object KiteResourceSourcePlanFactory {
             append("\n")
             append("fi")
         }
-        // npm 系命令注入镜像 registry（npmmirror 优先，由用户的源偏好决定）
-        val accelerators = officialCommandAccelerators(manifest, sourcePreferences)
-        val fullCmd = if (accelerators.isEmpty()) {
-            command.trim() + "\n" + marker
+        val isNpm = command.contains("npm install")
+        val fullCmd = if (isNpm) {
+            buildMultiSourceNpmScript(command.trim(), manifest, sourcePreferences, marker)
         } else {
-            accelerators.joinToString("\n") + "\n" + command.trim() + "\n" + marker
+            command.trim() + "\n" + marker
         }
         return KiteResourceShellAction(
             type = KiteResourceInstallPlanCompiler.STEP_SHELL,
@@ -272,19 +271,43 @@ object KiteResourceSourcePlanFactory {
     }
 
     /**
-     * 为 official_command 注入镜像加速环境变量。
-     * npm install -g 默认走 registry.npmjs.org（国外），在国内极慢；
-     * 注入 npm_config_registry 指向用户偏好的镜像源。
+     * 为 npm install 生成多源自动切换脚本。
+     * 按用户源偏好顺序循环尝试（华为云→npmmirror→阿里云→官方），
+     * 某个源失败自动换下一个，全部失败才退出。
      */
-    private fun officialCommandAccelerators(
+    private fun buildMultiSourceNpmScript(
+        npmCommand: String,
         manifest: KiteResourceManifest,
         sourcePreferences: KiteResourceSourcePreferences,
-    ): List<String> {
-        if (!manifest.source.command.contains("npm install")) return emptyList()
+        versionMarker: String,
+    ): String {
         val routes = KiteResourceSourcePolicy.npmRoutes(sourcePreferences)
-        val mirror = routes.firstOrNull { it.sourceId != KiteResourceSourceCatalog.OFFICIAL }
-            ?: return emptyList()
-        return listOf("export npm_config_registry=\"${mirror.endpoint.trimEnd('/')}\"")
+        val registries = routes.joinToString(" ") { route ->
+            "\"${route.endpoint.trimEnd('/')}\""
+        }
+        val sb = StringBuilder()
+        sb.append("kite_npm_registries=(").append(registries).append(")\n")
+        sb.append("kite_npm_installed=0\n")
+        sb.append("for kite_registry in \"${'$'}{kite_npm_registries[@]}\"; do\n")
+        sb.append("  echo \"KITE_RESOURCE_ROUTE source=mirror registry=\"${'$'}kite_registry\"\"\n")
+        sb.append("  export npm_config_registry=\"${'$'}kite_registry\"\n")
+        sb.append("  set +e\n")
+        sb.append("  ").append(npmCommand).append("\n")
+        sb.append("  kite_npm_status=\"${'$'}?\"\n")
+        sb.append("  set -e\n")
+        sb.append("  if [ \"${'$'}kite_npm_status\" -eq 0 ]; then\n")
+        sb.append("    kite_npm_installed=1\n")
+        sb.append("    break\n")
+        sb.append("  fi\n")
+        sb.append("  echo \"KITE_RESOURCE_RETRY source=mirror registry=\"${'$'}kite_registry\" exit=\"${'$'}kite_npm_status\"\"\n")
+        sb.append("done\n")
+        sb.append("unset npm_config_registry\n")
+        sb.append("if [ \"${'$'}kite_npm_installed\" -ne 1 ]; then\n")
+        sb.append("  echo \"KITE_RESOURCE_FAILURE stage=acquire reason=no-verified-source\"\n")
+        sb.append("  exit 1\n")
+        sb.append("fi\n")
+        sb.append(versionMarker)
+        return sb.toString()
     }
 
     private fun officialCommandUninstallAction(manifest: KiteResourceManifest): KiteResourceShellAction? {
