@@ -6,6 +6,7 @@ import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
@@ -164,7 +165,8 @@ internal class ResourceInstallTransactionRecovery(
         ledgerEntries(ledger).forEach { (commandName, targetPath) ->
             val link = File(binRoot, commandName).toPath()
             if (pathExists(link.toFile())) return@forEach
-            Files.createSymbolicLink(link, Path.of(targetPath))
+            // Path.of 需要 API 34，Paths.get 等价且兼容 minSdk 28。
+            Files.createSymbolicLink(link, Paths.get(targetPath))
         }
     }
 

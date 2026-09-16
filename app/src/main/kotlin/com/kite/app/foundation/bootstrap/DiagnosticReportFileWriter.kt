@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.annotation.RequiresApi
 import java.io.BufferedWriter
 import java.io.File
 import java.io.OutputStreamWriter
@@ -34,6 +35,8 @@ object DiagnosticReportFileWriter {
         }
     }
 
+    // 调用方 write() 已按 SDK_INT 分流，lint 无法跨函数看到该守卫，需显式标注。
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun writeWithMediaStore(
         context: Context,
         displayName: String,
