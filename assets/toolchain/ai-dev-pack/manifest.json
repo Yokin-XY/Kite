@@ -1,44 +1,59 @@
 {
-  "packId": "ai-dev-pack",
-  "displayName": "KF tool environment",
-  "version": 19,
-  "description": "Official KFShell toolchain pack for runtime repair, command-line tools, and developer workflows.",
-  "installScript": "install.sh",
-  "installTarget": "/workspace/.kf/toolchains",
-  "binTarget": "/workspace/.kf/bin",
-  "env": {
-    "UV_LINK_MODE": "copy"
-  },
-  "packages": {
-    "node": {
-      "version": "26.4.0",
-      "file": "packages/node-v26.4.0-linux-arm64.tar.xz",
-      "source": "https://nodejs.org/dist/v26.4.0/"
+    "packId": "ai-dev-pack",
+    "displayName": "KF tool environment",
+    "version": 20,
+    "description": "Official KFShell toolchain pack for runtime repair, command-line tools, and developer workflows.",
+    "installScript": "install.sh",
+    "installTarget": "/workspace/.kf/toolchains",
+    "binTarget": "/workspace/.kf/bin",
+    "env": {
+        "UV_LINK_MODE": "copy"
     },
-    "libatomic": {
-      "version": "1.2.0",
-      "file": "packages/libatomic.so.1.2.0",
-      "source": "https://ports.ubuntu.com/ubuntu-ports/pool/main/g/gcc-14/libatomic1_14.2.0-4ubuntu2~24.04.1_arm64.deb"
-    },
-    "uv": {
-      "version": "0.11.25",
-      "file": "packages/uv-aarch64-unknown-linux-gnu.tgz",
-      "source": "https://github.com/astral-sh/uv/releases/tag/0.11.25"
-    },
-    "pnpm": {
-      "version": "11.9.0",
-      "file": "packages/pnpm-11.9.0.tgz",
-      "source": "https://registry.npmjs.org/pnpm/-/pnpm-11.9.0.tgz"
-    },
-    "python": {
-      "version": "3.14.6",
-      "buildTag": "20260623",
-      "file": "packages/cpython-3.14.6+20260623-aarch64-unknown-linux-gnu-install_only_stripped.tgz",
-      "source": "https://github.com/astral-sh/python-build-standalone/releases/tag/20260623"
-    },
-    "adb": {
-      "version": "rootfs",
-      "source": "Kite offline rootfs"
+    "packages": {
+        "node": {
+            "version": "26.4.0",
+            "file": "packages/node-v26.4.0-linux-arm64.tar.xz",
+            "source": "https://nodejs.org/dist/v26.4.0/"
+        },
+        "libatomic": {
+            "version": "1.2.0",
+            "file": "packages/libatomic.so.1.2.0",
+            "source": "https://ports.ubuntu.com/ubuntu-ports/pool/main/g/gcc-14/libatomic1_14.2.0-4ubuntu2~24.04.1_arm64.deb"
+        },
+        "uv": {
+            "version": "0.11.25",
+            "file": "packages/uv-aarch64-unknown-linux-gnu.tgz",
+            "source": "https://github.com/astral-sh/uv/releases/tag/0.11.25"
+        },
+        "pnpm": {
+            "version": "11.9.0",
+            "file": "packages/pnpm-11.9.0.tgz",
+            "source": "https://registry.npmjs.org/pnpm/-/pnpm-11.9.0.tgz"
+        },
+        "python": {
+            "version": "3.14.6",
+            "buildTag": "20260623",
+            "file": "packages/cpython-3.14.6+20260623-aarch64-unknown-linux-gnu-install_only_stripped.tgz",
+            "source": "https://github.com/astral-sh/python-build-standalone/releases/tag/20260623"
+        },
+        "adb": {
+            "version": "rootfs",
+            "source": "Kite offline rootfs"
+        },
+        "rg": {
+            "version": "14.1.1",
+            "file": "packages/rg-v14.1.1-aarch64",
+            "source": "https://github.com/BurntSushi/ripgrep/releases/tag/14.1.1"
+        },
+        "fd": {
+            "version": "10.2.0",
+            "file": "packages/fd-v10.2.0-aarch64",
+            "source": "https://github.com/sharkdp/fd/releases/tag/v10.2.0"
+        },
+        "jq": {
+            "version": "1.7.1",
+            "file": "packages/jq-v1.7.1-arm64",
+            "source": "https://github.com/jqlang/jq/releases/tag/jq-1.7.1"
+        }
     }
-  }
 }

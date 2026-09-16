@@ -181,10 +181,12 @@ object ToolchainPackInstaller {
             workspacePathExists(File(workspaceDir, ".kf/bin/curl"), workspaceDir) &&
             workspacePathExists(File(workspaceDir, ".kf/bin/git"), workspaceDir) &&
             workspacePathExists(File(workspaceDir, ".kf/bin/wget"), workspaceDir) &&
-            workspacePathExists(File(workspaceDir, ".kf/bin/jq"), workspaceDir) &&
-            workspacePathExists(File(workspaceDir, ".kf/bin/rg"), workspaceDir) &&
-            workspacePathExists(File(workspaceDir, ".kf/bin/fd"), workspaceDir) &&
-            workspacePathExists(File(workspaceDir, ".kf/bin/zip"), workspaceDir)
+            workspacePathExists(File(workspaceDir, ".kf/bin/zip"), workspaceDir) &&
+            // v20+: rg/fd/jq 从 rootfs 链接升级为原生预构建二进制。
+            // 检查 native-tools 目录确保升级后重装。
+            workspacePathExists(File(workspaceDir, ".kf/toolchains/native-tools/rg"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/toolchains/native-tools/fd"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/toolchains/native-tools/jq"), workspaceDir)
     }
 
     fun bootstrapResourcesSettled(context: Context): Boolean {
