@@ -48,7 +48,11 @@ data class KiteResourceSourcePlan(
  * 把标准来源声明编译成资源动作。复杂资源仍可提供显式 actions，显式动作优先。
  */
 object KiteResourceSourcePlanFactory {
-    fun plan(manifest: KiteResourceManifest, targetVersion: String? = null): KiteResourceSourcePlan {
+    fun plan(
+        manifest: KiteResourceManifest,
+        targetVersion: String? = null,
+        sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
+    ): KiteResourceSourcePlan {
         if (!manifest.management.userLifecycleEnabled) {
             return KiteResourceSourcePlan(
                 installActions = manifest.installActions,
@@ -71,7 +75,7 @@ object KiteResourceSourcePlanFactory {
         val generatedInstall = if (explicitInstall || explicitUpdate && targetVersion != null) {
             emptyList()
         } else {
-            generatedInstallActions(manifest, targetVersion)
+            generatedInstallActions(manifest, targetVersion, sourcePreferences)
         }
         val generatedUninstall = if (explicitUninstall) emptyList() else generatedUninstallActions(manifest)
         val rawInstallActions = when {
@@ -212,22 +216,26 @@ object KiteResourceSourcePlanFactory {
 
     private fun generatedInstallActions(
         manifest: KiteResourceManifest,
-        targetVersion: String?
+        targetVersion: String?,
+        sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
     ): List<KiteResourceShellAction> = when (manifest.source.type) {
         SOURCE_NPM -> npmInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
         SOURCE_GITHUB_RELEASE -> githubReleaseInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
         SOURCE_OFFICIAL_SCRIPT -> officialScriptInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
-        SOURCE_OFFICIAL_COMMAND -> officialCommandInstallAction(manifest)?.let(::listOf).orEmpty()
+        SOURCE_OFFICIAL_COMMAND -> officialCommandInstallAction(manifest, sourcePreferences)?.let(::listOf).orEmpty()
         SOURCE_BUNDLED -> managedScriptInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
         else -> emptyList()
     }
 
     /**
      * official_command：安装与更新都按官方命令原样执行，位置由官方安装器决定。
-     * 我们只做两件事：跑命令、把 versionProbe 的首行输出成 KITE_RESOURCE_INSTALLED_VERSION
-     * 信号交给现有记账链路（App 侧 ResourceVersionParser 继续按 probe pattern 解析）。
+     * 我们只做三件事：注入镜像加速环境、跑命令、把 versionProbe 的首行输出成
+     * KITE_RESOURCE_INSTALLED_VERSION 信号交给现有记账链路。
      */
-    private fun officialCommandInstallAction(manifest: KiteResourceManifest): KiteResourceShellAction? {
+    private fun officialCommandInstallAction(
+        manifest: KiteResourceManifest,
+        sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
+    ): KiteResourceShellAction? {
         val command = manifest.source.command.takeIf(String::isNotBlank) ?: return null
         val probeCommand = manifest.management.versionProbe?.command
             ?.takeIf { it.isNotBlank() && "'" !in it }
@@ -243,9 +251,16 @@ object KiteResourceSourcePlanFactory {
             append("\n")
             append("fi")
         }
+        // npm 系命令注入镜像 registry（npmmirror 优先，由用户的源偏好决定）
+        val accelerators = officialCommandAccelerators(manifest, sourcePreferences)
+        val fullCmd = if (accelerators.isEmpty()) {
+            command.trim() + "\n" + marker
+        } else {
+            accelerators.joinToString("\n") + "\n" + command.trim() + "\n" + marker
+        }
         return KiteResourceShellAction(
             type = KiteResourceInstallPlanCompiler.STEP_SHELL,
-            cmd = command.trim() + "\n" + marker,
+            cmd = fullCmd,
             surfaceMode = "panel",
             workdir = "/workspace",
             timeoutMs = 900_000L,
@@ -254,6 +269,22 @@ object KiteResourceSourcePlanFactory {
             npmUninstallPackages = emptyList(),
             verifications = verificationSteps(manifest)
         )
+    }
+
+    /**
+     * 为 official_command 注入镜像加速环境变量。
+     * npm install -g 默认走 registry.npmjs.org（国外），在国内极慢；
+     * 注入 npm_config_registry 指向用户偏好的镜像源。
+     */
+    private fun officialCommandAccelerators(
+        manifest: KiteResourceManifest,
+        sourcePreferences: KiteResourceSourcePreferences,
+    ): List<String> {
+        if (!manifest.source.command.contains("npm install")) return emptyList()
+        val routes = KiteResourceSourcePolicy.npmRoutes(sourcePreferences)
+        val mirror = routes.firstOrNull { it.sourceId != KiteResourceSourceCatalog.OFFICIAL }
+            ?: return emptyList()
+        return listOf("export npm_config_registry=\"${mirror.endpoint.trimEnd('/')}\"")
     }
 
     private fun officialCommandUninstallAction(manifest: KiteResourceManifest): KiteResourceShellAction? {
