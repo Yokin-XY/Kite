@@ -21,6 +21,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: kite
+          # PAT push 需要干净认证：checkout 默认把 GITHUB_TOKEN 持久化到
+          # http.extraheader，会盖过 URL 里的 PAT 导致 GH006；关掉它。
+          persist-credentials: false
 
       - name: Checkout resource store
         uses: actions/checkout@v4
