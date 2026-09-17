@@ -84,7 +84,7 @@
     "package": "@deepseek-ai/dsh",
     "command": "npm install -g @deepseek-ai/dsh@latest && npm install -g @openma/deepseek-harness-acp@latest",
     "uninstallCommand": "npm uninstall -g @deepseek-ai/dsh && npm uninstall -g @openma/deepseek-harness-acp",
-    "latestVersion": "0.1.1-rc.2"
+    "latestVersion": "0.1.5-rc.1"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.deepseek.harness",

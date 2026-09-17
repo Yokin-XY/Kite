@@ -33,6 +33,9 @@ if (process.argv[2] === '--proot-shim') {
   const encode = (value) => Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
   process.env.KITE_NODE_HOST_LAUNCHER = process.execPath;
   process.env.KITE_NODE_HOST_BINARY = process.execPath;
+  process.env.KITE_NODE_HOST_LOADER = process.execPath;
+  process.env.KITE_NODE_HOST_LIBRARY_PATH = '/opt/fake/lib';
+  process.env.KITE_NODE_HOST_COMPAT_LIBRARY = path.join(controlDirectory, 'libkite-fake-compat.so');
   process.env.KITE_NODE_HOST_WORKSPACE = scriptDirectory;
   process.env.KITE_NODE_HOST_CONTROL = controlDirectory;
   process.env.KITE_NODE_HOST_ROOTFS = path.dirname(scriptDirectory);
@@ -125,6 +128,46 @@ if (process.argv[2] === '--proot-shim') {
     assert.equal(wrappedChild.status, 0, wrappedChild.stderr);
     assert.equal(wrappedChild.stdout, 'managed-wrapper:test-direct:nested value');
   }
+
+  const nativeToolDirectory = path.join(controlDirectory, 'toolchains', 'native-tools');
+  fs.mkdirSync(nativeToolDirectory, { recursive: true });
+  const nativeDynamic = path.join(nativeToolDirectory, 'native-dynamic-tool');
+  fs.symlinkSync(nativeDynamic, path.join(managedBin, 'native-dynamic-tool'));
+  const dynamicElf = Buffer.alloc(256, 0);
+  dynamicElf[0] = 0x7f; dynamicElf[1] = 0x45; dynamicElf[2] = 0x4c; dynamicElf[3] = 0x46;
+  dynamicElf[4] = 2; dynamicElf[5] = 1; dynamicElf[6] = 1;
+  dynamicElf.writeUInt16LE(0x3e, 18);
+  dynamicElf.writeUInt16LE(64, 52);
+  dynamicElf.writeUInt16LE(56, 54);
+  dynamicElf.writeUInt16LE(1, 56);
+  dynamicElf.writeBigUInt64LE(64n, 32);
+  dynamicElf.writeUInt32LE(3, 64);
+  dynamicElf.writeBigUInt64LE(128n, 64 + 8);
+  dynamicElf.writeBigUInt64LE(25n, 64 + 32);
+  dynamicElf.write('/lib/ld-linux-aarch64.so.1\0', 128);
+  fs.writeFileSync(nativeDynamic, dynamicElf);
+  const dynamicTool = childProcess.spawnSync(
+    'native-dynamic-tool',
+    ['/workspace/value with spaces'],
+    { encoding: 'utf8', cwd: '/workspace' },
+  );
+  assert.equal(dynamicTool.status, 9);
+  assert.match(dynamicTool.stderr, /bad option/);
+
+  const nativeStatic = path.join(nativeToolDirectory, 'native-static-tool');
+  fs.symlinkSync(nativeStatic, path.join(managedBin, 'native-static-tool'));
+  const staticElf = Buffer.alloc(64, 0);
+  staticElf[0] = 0x7f; staticElf[1] = 0x45; staticElf[2] = 0x4c; staticElf[3] = 0x46;
+  staticElf[4] = 2; staticElf[5] = 1; staticElf[6] = 1;
+  staticElf.writeUInt16LE(0x3e, 18);
+  staticElf.writeUInt16LE(64, 52);
+  staticElf.writeUInt16LE(56, 54);
+  staticElf.writeUInt16LE(0, 56);
+  fs.writeFileSync(nativeStatic, staticElf);
+  const staticProbe = childProcess.spawnSync('native-static-tool', [], { encoding: 'utf8' });
+  // 哑静态 ELF 应被路由层直接 exec（而非进 PRoot shim）：在宿主上 spawn 一个
+  // 无效可执行格式必然失败，但失败必须来自 OS exec 层，而不是 shim 的 JSON 输出。
+  assert.ok(staticProbe.error !== undefined || (staticProbe.stdout || '').trim().startsWith('{') === false);
 
   const managedShellChild = childProcess.spawnSync(
     'arbitrary-shell-cli',
