@@ -93,3 +93,4 @@ ZCode 目前是 deb 包安装，在 PRoot 里跑，未走 glibc Host。
 | 日期 | 变更 |
 |------|------|
 | 2026-09-17 | 计划创建；P0（rg/fd/jq）已准备好二进制和 install.sh 修改 |
+| 2026-09-17 | 真机验证发现 P0 缺失关键环节：preload 的 `routeFile()` 把所有非 Node 子进程路由回 PRoot，原生工具从未绕过 PRoot。已补上原生工具车道（`resolveNativeToolInvocation`：基于 native-tools 目录 + ELF 头识别，动态 ELF 走 patched loader 车道、静态 ELF 直接 exec）。OnePlus 8T 实测：rg 同搜索任务 Host 车道中位 15.3ms vs PRoot 31ms（约 2x）。另发现 toolchain pack 缓存基于文件存在性，v19→v20 的重提取未发生，需版本化（下项优先） |

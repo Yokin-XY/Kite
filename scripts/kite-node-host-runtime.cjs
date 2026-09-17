@@ -9,6 +9,9 @@ const { fileURLToPath } = require('node:url');
 
 const launcher = process.env.KITE_NODE_HOST_LAUNCHER || '';
 const nodeBinary = process.env.KITE_NODE_HOST_BINARY || '';
+const loader = process.env.KITE_NODE_HOST_LOADER || '';
+const libraryPath = process.env.KITE_NODE_HOST_LIBRARY_PATH || '';
+const compatLibrary = process.env.KITE_NODE_HOST_COMPAT_LIBRARY || '';
 const prootArgv = decodeJson('KITE_NODE_HOST_PROOT_ARGV_B64', []);
 const prootEnv = decodeJson('KITE_NODE_HOST_PROOT_ENV_B64', {});
 const hostWorkspace = normalizedPath(process.env.KITE_NODE_HOST_WORKSPACE || '');
@@ -147,6 +150,101 @@ function isNodeCommand(file) {
   if (!launcher || typeof file !== 'string') return false;
   if (file === launcher || file === nodeBinary) return true;
   return file === 'node';
+}
+
+// 预构建原生工具（rg/fd/jq 等）位于 control 目录下的 toolchains/native-tools/。
+// 它们是 Android 内核可直接执行的 ELF：动态链接的走修补 glibc loader 车道，
+// 静态链接的直接 exec。识别基于目录与 ELF 头，不按工具名白名单。
+function nativeToolDirectory() {
+  return hostControl ? path.join(hostControl, 'toolchains', 'native-tools') : '';
+}
+
+function elfProgramInterpreter(fd) {
+  // ELF64 小端。读 program headers 找 PT_INTERP，返回其描述的字符串或 ''。
+  const header = Buffer.alloc(64);
+  if (fs.readSync(fd, header, 0, 64, 0) !== 64) return '';
+  if (header[0] !== 0x7f || header[1] !== 0x45 || header[2] !== 0x4c || header[3] !== 0x46) return '';
+  if (header[4] !== 2 /* ELFCLASS64 */ || header[5] !== 1 /* ELFDATA2LSB */) return '';
+  const e_phoff = Number(header.readBigUInt64LE(32));
+  const e_phentsize = header.readUInt16LE(54);
+  const e_phnum = header.readUInt16LE(56);
+  if (e_phnum === 0 || e_phentsize < 56) return '';
+  const phdrs = Buffer.alloc(e_phentsize * e_phnum);
+  if (fs.readSync(fd, phdrs, 0, phdrs.length, e_phoff) !== phdrs.length) return '';
+  for (let index = 0; index < e_phnum; index += 1) {
+    const entry = phdrs.subarray(index * e_phentsize, (index + 1) * e_phentsize);
+    if (entry.readUInt32LE(0) !== 3 /* PT_INTERP */) continue;
+    const offset = Number(entry.readBigUInt64LE(8));
+    const length = Number(entry.readBigUInt64LE(32));
+    const buffer = Buffer.alloc(length);
+    if (fs.readSync(fd, buffer, 0, length, offset) !== length) return '';
+    return buffer.toString('utf8').replace(/\0.*$/s, '');
+  }
+  return '';
+}
+
+function resolveNativeToolInvocation(file, options) {
+  const directory = nativeToolDirectory();
+  if (!directory || !loader || !libraryPath || !compatLibrary) return null;
+  let candidate = commandCandidate(file, options);
+  if (!candidate) return null;
+  candidate = normalizedPath(candidate);
+  let stat;
+  try {
+    stat = fs.lstatSync(candidate);
+  } catch {
+    return null;
+  }
+  if (stat.isSymbolicLink()) {
+    try {
+      const resolved = normalizedPath(fs.realpathSync(candidate));
+      const resolvedStat = fs.lstatSync(resolved);
+      if (!resolvedStat.isFile()) return null;
+      candidate = resolved;
+    } catch {
+      return null;
+    }
+  } else if (!stat.isFile()) {
+    return null;
+  }
+  if (!isInside(candidate, directory)) return null;
+  let fd;
+  let interpreter = '';
+  try {
+    fd = fs.openSync(candidate, 'r');
+    interpreter = elfProgramInterpreter(fd);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  const requested = options && typeof options === 'object' ? options : {};
+  const requestedEnv = requested.env && typeof requested.env === 'object' ? requested.env : process.env;
+  const env = {};
+  for (const [key, value] of Object.entries(requestedEnv || {})) {
+    if (value === undefined) continue;
+    if (key.startsWith('KITE_NODE_HOST_') || key === 'NODE_OPTIONS') continue;
+    if (key === 'LD_PRELOAD' || key === 'LD_LIBRARY_PATH') continue;
+    env[key] = value;
+  }
+  env['GLIBC_TUNABLES'] = 'glibc.pthread.rseq=0';
+  const cwd = pathFromCwd(requested.cwd);
+  const nativeOptions = {
+    ...requested,
+    cwd: cwd ? mapContainerPathToHost(cwd) : requested.cwd,
+    shell: false,
+    env,
+  };
+  if (interpreter === '') {
+    // 静态 ELF：直接执行。
+    return { file: candidate, prefix: [], options: nativeOptions };
+  }
+  // 动态 glibc ELF：loader --library-path … --preload compat target。
+  return {
+    file: loader,
+    prefix: ['--library-path', libraryPath, '--preload', compatLibrary, candidate],
+    options: nativeOptions,
+  };
 }
 
 function withinRuntimeRoots(candidate) {
@@ -308,6 +406,17 @@ function routeFile(file, args, options) {
         ...normalizedArgs.map((value) => mapOptionPath(value, mapContainerPathToHost)),
       ],
       options: hostOptions(options),
+    };
+  }
+  const nativeTool = resolveNativeToolInvocation(file, options);
+  if (nativeTool) {
+    return {
+      file: nativeTool.file,
+      args: [
+        ...nativeTool.prefix,
+        ...normalizedArgs.map((value) => mapOptionPath(value, mapContainerPathToHost)),
+      ],
+      options: nativeTool.options,
     };
   }
   const prefix = prootPrefix(options && options.cwd);
