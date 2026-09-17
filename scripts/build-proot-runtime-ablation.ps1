@@ -143,7 +143,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $hash = (Get-FileHash $binary -Algorithm SHA256).Hash
 $size = (Get-Item $binary).Length
-$formalHash = '0A465CE2F5E3DCD80F801EF500478E4932248806EDC86CE5C9B0918D60C604BC'
+$formalHash = '9A599F91A089EF05AB774AC5272745A813285C791F62CFA72824BBDBABBF88F0'
 if ($Stage -eq 'block-view' -and $NdkVersion -eq '26.3.11579264' -and !$UnbundleLoader -and $hash -ne $formalHash) {
     throw "正式链复现失败：期望 $formalHash，实际 $hash"
 }

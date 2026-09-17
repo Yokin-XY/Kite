@@ -7,6 +7,7 @@ import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class RunSurfaceReportOwnershipTest {
@@ -37,6 +38,23 @@ class RunSurfaceReportOwnershipTest {
 
         assertEquals(listOf(CardRunSurface.Report), ui.windows.map(RunSurfaceWindowUiState::surface))
         assertEquals("SH 报告", ui.windows.single().title)
+    }
+
+    @Test
+    fun `SH 报告只展示终端输出而不展示资源心跳`() {
+        val recipe = recipe(KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "install"))
+        val state = state(
+            surface = CardRunSurface.Report,
+            shellReportText = "原始输出：\n" +
+                "KITE_RESOURCE_HEARTBEAT stage=install step=tool elapsed=5\n" +
+                "Downloading cryptography 20%\rDownloading cryptography 100%\n" +
+                "Installed successfully",
+        )
+
+        val report = RunReportPresenter.project(recipe, state)
+
+        assertEquals("Downloading cryptography 100%\nInstalled successfully", report.outputText)
+        assertFalse(report.outputText.contains("HEARTBEAT"))
     }
 
     private fun recipe(step: KiteRecipeStep): KiteRecipe = KiteRecipe(

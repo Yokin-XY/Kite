@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 2,
+  "revision": 21,
+  "taskKey": "install-reliability-closure",
+  "objective": "Complete the general resource installation reliability contract: content-addressed immutable artifacts, capacity-aware candidate installation, durable phase recovery, and repair.",
+  "status": "completed",
+  "activeTasks": [],
+  "ready": [],
+  "blocked": [],
+  "phaseGates": [],
+  "boundaries": [
+    "Local code, focused tests, builds, device installation, and local phase commits only. Do not push or release.",
+    "For each phase, validation is limited to one concrete target effect plus one final true-device crash check; no broad suites.",
+    "Do not disable concurrency, add resource/device special cases, or restore UI-owned installation state."
+  ],
+  "nextAction": "All planned installation reliability phases are complete; wait for user-directed Hermes fault finding.",
+  "lastValidation": {
+    "taskId": "T104",
+    "name": "invalid install exposes candidate-scoped repair",
+    "status": "passed",
+    "summary": "The focused repair contract test projected an installed invalid resource to the Repair primary action and maintenance entry, dispatched the Repair intent, and confirmed its recipe uses candidate protection with exactly the target install write scopes. The built APK cold-started on Meizu 18 as process 5444 with no AndroidRuntime or ActivityManager error.",
+    "evidenceRefs": [
+      "test:ResourceRepairContractTest",
+      "build:app:assembleDebug",
+      "device:181QGEYH222B9:pid=5444:no-crash"
+    ],
+    "at": "2026-08-28T12:20:14Z"
+  },
+  "lastBatch": null,
+  "ledgerCursor": 21,
+  "legacyRefs": [
+    {
+      "path": "D:\\xm\\Kite-agent-conversation\\docs\\autonomous-task\\install-reliability\\state.json",
+      "mode": "legacy_cold",
+      "bytes": 1320,
+      "sha256": "2db8d23eef5b8ee149a46b4944e9a4b6fc8b95e816ea3ffe820449bfbebdf8ae"
+    }
+  ],
+  "updatedAt": "2026-08-28T12:20:14Z"
+}

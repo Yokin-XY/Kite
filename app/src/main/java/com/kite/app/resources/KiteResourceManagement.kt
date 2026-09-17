@@ -68,12 +68,21 @@ data class KiteResourceSourceSpec(
     val latestUrl: String = "",
     val latestFormat: String = "json",
     val latestJsonField: String = "",
+    val latestRegex: String = "",
     val latestStripPrefix: String = "",
+    val registries: List<String> = emptyList(),
+    val latestVersionWindow: List<KiteResourceSourceVersion> = emptyList(),
     val installArguments: List<String> = emptyList(),
     val versionArguments: List<String> = emptyList(),
     val environment: Map<String, String> = emptyMap(),
     val profile: String = "",
     val interpreter: String = "",
     val entry: String = "",
-    val maxBytes: Long = 0L
+    val maxBytes: Long = 0L,
+    /** official_command：官方安装命令（幂等，更新同用）。 */
+    val command: String = "",
+    /** official_command：官方卸载命令。 */
+    val uninstallCommand: String = "",
+    /** official_command：最新版本号（由资源商店清单维护，App 端零网络读取）。 */
+    val latestVersion: String = ""
 )

@@ -4,7 +4,7 @@
   "base": {
     "name": "Codex 兼容协议桥",
     "description": "把 Codex Responses 请求转换为兼容供应商接口",
-    "version": "0.5.5",
+    "version": "0.5.8",
     "icon": {
       "type": "asset",
       "value": "resources/kite.codex.cli/icon.png",
@@ -47,7 +47,24 @@
   "source": {
     "type": "pypi",
     "package": "codex-relay",
-    "repository": "https://github.com/MetaFARS/codex-relay"
+    "repository": "https://github.com/MetaFARS/codex-relay",
+    "latestVersionWindow": [
+      {
+        "artifact": "codex-relay",
+        "version": "0.5.8",
+        "sha256": "ec2d0c63145647be0bdd6bb8415c13dbf707ed67a88c17da0eef3e96a6ddf72d"
+      },
+      {
+        "artifact": "codex-relay",
+        "version": "0.5.7",
+        "sha256": "e0fa55a43197a39c97e4d42ed785004594db3e8072e65f5ecac7253563f15fd8"
+      },
+      {
+        "artifact": "codex-relay",
+        "version": "0.5.6",
+        "sha256": "dc4499b0376b1ed1e7264ce42b6078f85ff6f3f4730ff90f68c6a9e785ed9028"
+      }
+    ]
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.codex.relay",
@@ -61,8 +78,8 @@
         "steps": [
           {
             "id": "install-codex-relay",
-            "type": "shell",
-            "cmd": "export UV_TOOL_DIR=\"$install_root/uv-tools\"\nexport UV_TOOL_BIN_DIR=\"$install_root/bin\"\nexport UV_CACHE_DIR=\"$install_root/uv-cache\"\nmkdir -p \"$UV_TOOL_BIN_DIR\"\nuv tool install --force --python /workspace/.kf/bin/python3 'codex-relay==0.5.5'"
+            "type": "pypi",
+            "packages": ["codex-relay"]
           },
           {
             "id": "install-kite-codex-launcher",

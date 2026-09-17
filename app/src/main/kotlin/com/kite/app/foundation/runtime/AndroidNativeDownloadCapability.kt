@@ -15,6 +15,7 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.SSLException
 
 internal data class NativeCapabilityDestinationRoot(
     val containerPath: String,
@@ -45,6 +46,7 @@ internal data class AndroidNativeDownloadPlan(
     val maximumAttempts: Int,
     val retryDelayMs: Long,
     val replaceExisting: Boolean,
+    val fallbackSources: List<URI> = emptyList(),
 )
 
 /**
@@ -75,7 +77,7 @@ internal object AndroidNativeDownloadCapabilityProvider :
         if (parameters.keys.any { it !in PARAMETERS }) {
             return blocked("native_download_parameter_unknown")
         }
-        val source = parameters[PARAM_URL]?.let(::parseHttpsUri)
+        val sources = parseSources(parameters)
             ?: return blocked("native_download_url_invalid")
         val destination = parameters[PARAM_DESTINATION]
             ?.let { resolveDestination(context.destinationRoots, it) }
@@ -87,6 +89,9 @@ internal object AndroidNativeDownloadCapabilityProvider :
             ?: if (parameters[PARAM_EXPECTED_SHA256].isNullOrBlank()) null else {
                 return blocked("native_download_sha256_invalid")
             }
+        if (sources.size > 1 && expectedSha256 == null) {
+            return blocked("native_download_mirrors_require_sha256")
+        }
         val maximumBytes = parameters[PARAM_MAX_BYTES]
             ?.toLongOrNull()
             ?.takeIf { it in 1..MAXIMUM_BYTES }
@@ -125,7 +130,7 @@ internal object AndroidNativeDownloadCapabilityProvider :
         return RuntimeProviderDecision.Ready(
             provider = kind,
             plan = AndroidNativeDownloadPlan(
-                source = source,
+                source = sources.first(),
                 destination = destination,
                 temporaryFile = temporaryFile,
                 expectedSha256 = expectedSha256,
@@ -135,6 +140,7 @@ internal object AndroidNativeDownloadCapabilityProvider :
                 maximumAttempts = maximumAttempts,
                 retryDelayMs = retryDelayMs,
                 replaceExisting = replaceExisting,
+                fallbackSources = sources.drop(1),
             ),
             reason = "native_download_sha256_ready",
         )
@@ -147,6 +153,20 @@ internal object AndroidNativeDownloadCapabilityProvider :
                 uri.userInfo == null &&
                 uri.fragment == null
         }
+
+    private fun parseSources(parameters: Map<String, String>): List<URI>? {
+        val single = parameters[PARAM_URL].orEmpty().takeIf(String::isNotBlank)
+        val multiple = parameters[PARAM_URLS].orEmpty().takeIf(String::isNotBlank)
+        if (single != null && multiple != null) return null
+        val values = when {
+            single != null -> listOf(single)
+            multiple != null -> multiple.lineSequence().map(String::trim).toList()
+            else -> null
+        } ?: return null
+        if (values.size !in 1..MAXIMUM_SOURCES || values.any(String::isBlank)) return null
+        val sources = values.map { value -> parseHttpsUri(value) ?: return null }.distinct()
+        return sources.takeIf(List<URI>::isNotEmpty)
+    }
 
     private fun resolveDestination(
         roots: List<NativeCapabilityDestinationRoot>,
@@ -185,6 +205,7 @@ internal object AndroidNativeDownloadCapabilityProvider :
 
     const val CAPABILITY_ID = "network.download_sha256"
     const val PARAM_URL = "url"
+    const val PARAM_URLS = "urls"
     const val PARAM_DESTINATION = "destination"
     const val PARAM_EXPECTED_SHA256 = "expectedSha256"
     const val PARAM_MAX_BYTES = "maxBytes"
@@ -196,6 +217,7 @@ internal object AndroidNativeDownloadCapabilityProvider :
 
     private val PARAMETERS = setOf(
         PARAM_URL,
+        PARAM_URLS,
         PARAM_DESTINATION,
         PARAM_EXPECTED_SHA256,
         PARAM_MAX_BYTES,
@@ -211,6 +233,7 @@ internal object AndroidNativeDownloadCapabilityProvider :
     private const val DEFAULT_MAXIMUM_ATTEMPTS = 1
     private const val DEFAULT_RETRY_DELAY_MS = 1_000L
     private const val MAXIMUM_BYTES = 8L * 1024L * 1024L * 1024L
+    private const val MAXIMUM_SOURCES = 8
 }
 
 internal fun interface NativeDownloadCancellation {
@@ -260,6 +283,7 @@ internal sealed interface NativeDownloadExecutionResult {
     val attempts: Int
 
     data class Success(
+        val source: URI,
         val destination: File,
         val bytesWritten: Long,
         val actualSha256: String,
@@ -330,88 +354,99 @@ internal class AndroidNativeDownloadExecutor(
         checkNotNull(plan.destination.parentFile).mkdirs()
         var attempt = 0
         var lastReason = "native_download_failed"
-        while (attempt < plan.maximumAttempts) {
-            attempt += 1
-            if (!deleteTemporary(plan.temporaryFile)) {
-                return NativeDownloadExecutionResult.Failure("native_download_temp_cleanup_failed", attempt)
-            }
-            if (cancelled(cancellation)) {
-                return NativeDownloadExecutionResult.Cancelled(0L, attempt)
-            }
-            try {
-                val opened = openFollowingRedirects(plan)
-                opened.connection.use { connection ->
-                    cancellation.invokeOnCancellation(connection::close).use {
-                        val contentLength = connection.contentLength.takeIf { it >= 0L }
-                        if (contentLength != null && contentLength > plan.maximumBytes) {
-                            throw DownloadFailure("native_download_size_limit", retryable = false)
-                        }
-                        val usableSpace = plan.destination.parentFile?.usableSpace ?: 0L
-                        if (contentLength != null && usableSpace > 0L && contentLength > usableSpace) {
-                            throw DownloadFailure("native_download_insufficient_space", retryable = false)
-                        }
-                        val digest = MessageDigest.getInstance("SHA-256")
-                        var written = 0L
-                        FileOutputStream(plan.temporaryFile, false).use { output ->
-                            connection.inputStream().use { input ->
-                                val buffer = ByteArray(BUFFER_SIZE)
-                                while (true) {
-                                    if (cancelled(cancellation)) throw DownloadCancelled(written)
-                                    val count = input.read(buffer)
-                                    if (count < 0) break
-                                    if (count == 0) continue
-                                    written += count
-                                    if (written > plan.maximumBytes) {
-                                        throw DownloadFailure("native_download_size_limit", retryable = false)
-                                    }
-                                    output.write(buffer, 0, count)
-                                    digest.update(buffer, 0, count)
-                                    progress.onProgress(written, contentLength)
-                                }
-                            }
-                            output.fd.sync()
-                        }
-                        val actualSha256 = digest.digest().toHex()
-                        if (plan.expectedSha256 != null && actualSha256 != plan.expectedSha256) {
-                            throw DownloadFailure("native_download_sha256_mismatch", retryable = false)
-                        }
-                        val atomicMove = publish(plan)
-                        return NativeDownloadExecutionResult.Success(
-                            destination = plan.destination,
-                            bytesWritten = written,
-                            actualSha256 = actualSha256,
-                            atomicMove = atomicMove,
-                            attempts = attempt,
-                        )
-                    }
-                }
-            } catch (cancelled: DownloadCancelled) {
-                return if (deleteTemporary(plan.temporaryFile)) {
-                    NativeDownloadExecutionResult.Cancelled(cancelled.bytesWritten, attempt)
-                } else {
-                    NativeDownloadExecutionResult.Failure("native_download_temp_cleanup_failed", attempt)
-                }
-            } catch (failure: DownloadFailure) {
-                if (!deleteTemporary(plan.temporaryFile)) {
-                    return NativeDownloadExecutionResult.Failure("native_download_temp_cleanup_failed", attempt)
-                }
-                lastReason = failure.reason
-                if (!failure.retryable || attempt >= plan.maximumAttempts) break
-            } catch (error: IOException) {
+        val sources = listOf(plan.source) + plan.fallbackSources
+        val retiredSources = mutableSetOf<URI>()
+        for (round in 0 until plan.maximumAttempts) {
+            sources.filterNot(retiredSources::contains).forEach { source ->
+                attempt += 1
                 if (!deleteTemporary(plan.temporaryFile)) {
                     return NativeDownloadExecutionResult.Failure("native_download_temp_cleanup_failed", attempt)
                 }
                 if (cancelled(cancellation)) {
                     return NativeDownloadExecutionResult.Cancelled(0L, attempt)
                 }
-                lastReason = if (isNoSpace(error)) {
-                    "native_download_insufficient_space"
-                } else {
-                    "native_download_io_failure"
+                try {
+                    val opened = openFollowingRedirects(plan, source)
+                    opened.connection.use { connection ->
+                        cancellation.invokeOnCancellation(connection::close).use {
+                            val contentLength = connection.contentLength.takeIf { it >= 0L }
+                            if (contentLength != null && contentLength > plan.maximumBytes) {
+                                throw DownloadFailure("native_download_size_limit")
+                            }
+                            val usableSpace = plan.destination.parentFile?.usableSpace ?: 0L
+                            if (contentLength != null && usableSpace > 0L && contentLength > usableSpace) {
+                                throw DownloadFailure("native_download_insufficient_space")
+                            }
+                            val digest = MessageDigest.getInstance("SHA-256")
+                            var written = 0L
+                            FileOutputStream(plan.temporaryFile, false).use { output ->
+                                connection.inputStream().use { input ->
+                                    val buffer = ByteArray(BUFFER_SIZE)
+                                    while (true) {
+                                        if (cancelled(cancellation)) throw DownloadCancelled(written)
+                                        val count = input.read(buffer)
+                                        if (count < 0) break
+                                        if (count == 0) continue
+                                        written += count
+                                        if (written > plan.maximumBytes) {
+                                            throw DownloadFailure("native_download_size_limit")
+                                        }
+                                        output.write(buffer, 0, count)
+                                        digest.update(buffer, 0, count)
+                                        progress.onProgress(written, contentLength)
+                                    }
+                                }
+                                output.fd.sync()
+                            }
+                            val actualSha256 = digest.digest().toHex()
+                            if (plan.expectedSha256 != null && actualSha256 != plan.expectedSha256) {
+                                throw DownloadFailure("native_download_sha256_mismatch")
+                            }
+                            val atomicMove = publish(plan)
+                            return NativeDownloadExecutionResult.Success(
+                                source = source,
+                                destination = plan.destination,
+                                bytesWritten = written,
+                                actualSha256 = actualSha256,
+                                atomicMove = atomicMove,
+                                attempts = attempt,
+                            )
+                        }
+                    }
+                } catch (cancelled: DownloadCancelled) {
+                    return if (deleteTemporary(plan.temporaryFile)) {
+                        NativeDownloadExecutionResult.Cancelled(cancelled.bytesWritten, attempt)
+                    } else {
+                        NativeDownloadExecutionResult.Failure("native_download_temp_cleanup_failed", attempt)
+                    }
+                } catch (failure: DownloadFailure) {
+                    if (!deleteTemporary(plan.temporaryFile)) {
+                        return NativeDownloadExecutionResult.Failure("native_download_temp_cleanup_failed", attempt)
+                    }
+                    lastReason = failure.reason
+                    if (!failure.allowSourceFallback) {
+                        return NativeDownloadExecutionResult.Failure(lastReason, attempt)
+                    }
+                    if (!failure.retryable) retiredSources += source
+                } catch (error: IOException) {
+                    if (!deleteTemporary(plan.temporaryFile)) {
+                        return NativeDownloadExecutionResult.Failure("native_download_temp_cleanup_failed", attempt)
+                    }
+                    if (cancelled(cancellation)) {
+                        return NativeDownloadExecutionResult.Cancelled(0L, attempt)
+                    }
+                    lastReason = when {
+                        isNoSpace(error) -> "native_download_insufficient_space"
+                        isTlsFailure(error) -> "native_download_tls_failure"
+                        else -> "native_download_io_failure"
+                    }
+                    if (lastReason != "native_download_io_failure") {
+                        return NativeDownloadExecutionResult.Failure(lastReason, attempt)
+                    }
                 }
-                if (attempt >= plan.maximumAttempts || lastReason == "native_download_insufficient_space") break
             }
-            if (!waitForRetry(plan.retryDelayMs, cancellation)) {
+            if (retiredSources.size == sources.size) break
+            if (round + 1 < plan.maximumAttempts && !waitForRetry(plan.retryDelayMs, cancellation)) {
                 return if (deleteTemporary(plan.temporaryFile)) {
                     NativeDownloadExecutionResult.Cancelled(0L, attempt)
                 } else {
@@ -426,8 +461,8 @@ internal class AndroidNativeDownloadExecutor(
         }
     }
 
-    private fun openFollowingRedirects(plan: AndroidNativeDownloadPlan): OpenedConnection {
-        var current = plan.source
+    private fun openFollowingRedirects(plan: AndroidNativeDownloadPlan, source: URI): OpenedConnection {
+        var current = source
         repeat(MAX_REDIRECTS + 1) { redirectCount ->
             val connection = connectionFactory.open(
                 current.toURL(),
@@ -458,6 +493,7 @@ internal class AndroidNativeDownloadExecutor(
                 throw DownloadFailure(
                     reason = "native_download_http_$responseCode",
                     retryable = responseCode == 408 || responseCode == 429 || responseCode >= 500,
+                    allowSourceFallback = true,
                 )
             }
             return OpenedConnection(connection)
@@ -517,6 +553,9 @@ internal class AndroidNativeDownloadExecutor(
                     message.contains("No space left", ignoreCase = true)
             }
 
+    private fun isTlsFailure(error: IOException): Boolean =
+        generateSequence<Throwable>(error) { it.cause }.any { it is SSLException }
+
     private fun ByteArray.toHex(): String = joinToString("") { byte -> "%02x".format(byte) }
 
     private data class OpenedConnection(
@@ -525,7 +564,8 @@ internal class AndroidNativeDownloadExecutor(
 
     private class DownloadFailure(
         val reason: String,
-        val retryable: Boolean,
+        val retryable: Boolean = false,
+        val allowSourceFallback: Boolean = false,
     ) : IOException(reason)
 
     private class DownloadCancelled(val bytesWritten: Long) : IOException("native_download_cancelled")

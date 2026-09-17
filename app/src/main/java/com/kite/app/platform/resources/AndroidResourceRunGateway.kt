@@ -5,6 +5,7 @@ import com.kite.app.application.resources.ResourceRunGateway
 import com.kite.app.application.resources.ResourceRunLaunchRequest
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
+import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifestLoader
@@ -15,6 +16,7 @@ import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
 import com.kite.app.run.CardRunSurface
 import org.json.JSONObject
+import java.io.File
 import java.util.UUID
 import kotlin.concurrent.thread
 
@@ -23,6 +25,8 @@ internal class AndroidResourceRunGateway(
     private val installStore: KiteResourceInstallStore,
     private val manifestLoader: KiteResourceManifestLoader,
     private val recipeFactory: AndroidResourceRecipeFactory,
+    private val candidateCoordinator: ResourceInstallCandidateCoordinator,
+    private val capacityGuard: ResourceInstallCapacityGuard = ResourceInstallCapacityGuard(),
     private val diagnostics: KiteDiagnostics
 ) : ResourceRunGateway {
     private val appContext = context.applicationContext
@@ -32,6 +36,9 @@ internal class AndroidResourceRunGateway(
 
     override fun isBundled(resourceId: String): Boolean =
         recipeFactory.isBundled(resourceId)
+
+    override fun writeScopes(request: ResourceRunLaunchRequest): Set<String> =
+        recipeFactory.writeScopes(request.resourceId, request.operation, request.targetVersion)
 
     override fun currentEnvironmentId(): String = installStore.currentEnvironmentId()
 
@@ -78,7 +85,8 @@ internal class AndroidResourceRunGateway(
         instanceId: String,
         callback: (Result<Unit>) -> Unit
     ) {
-        if (!request.stageBundledResource) {
+        val needsTransaction = request.operation in TRANSACTION_OPERATIONS
+        if (!request.stageBundledResource && !needsTransaction) {
             callback(Result.success(Unit))
             return
         }
@@ -88,11 +96,77 @@ internal class AndroidResourceRunGateway(
                     if (request.stageBundledResource) {
                         stageBundledResource(request.resourceId)
                     }
+                    if (needsTransaction) {
+                        val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(appContext)
+                        capacityGuard.requireCapacity(
+                            workspaceDirectory = File(container.workspacePath),
+                            resourceId = request.resourceId,
+                            declaredWorkingBytes = recipeFactory.declaredWorkingBytes(
+                                request.resourceId,
+                                request.operation,
+                                request.targetVersion,
+                            ),
+                        )
+                        val manifest = manifestLoader.requestManifest(request.resourceId)
+                            ?: error("resource_manifest_missing:${request.resourceId}")
+                        candidateCoordinator.begin(
+                            workspaceDirectory = File(container.workspacePath),
+                            resourceId = request.resourceId,
+                            runInstanceId = instanceId,
+                            guestInstallRoot = manifest.installRoot,
+                            preservePaths = manifest.management.preservePaths,
+                            operation = request.operation,
+                            targetVersion = request.targetVersion.orEmpty(),
+                            previousVersion = installStore
+                                .registryEntry(request.resourceId, request.environmentId)
+                                ?.version
+                                .orEmpty(),
+                        ).getOrThrow()
+                    }
                     Unit
                 }
             )
         }
     }
+
+    override fun commitMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        if (request.operation in TRANSACTION_OPERATIONS) {
+            candidateCoordinator.commit(request.resourceId, instanceId)
+        } else {
+            Result.success(Unit)
+        }
+
+    override fun markMutationInstalling(
+        request: ResourceRunLaunchRequest,
+        instanceId: String,
+    ): Result<Unit> = if (request.operation in TRANSACTION_OPERATIONS) {
+        candidateCoordinator.markInstalling(request.resourceId, instanceId)
+    } else {
+        Result.success(Unit)
+    }
+
+    override fun markMutationVerified(
+        request: ResourceRunLaunchRequest,
+        instanceId: String,
+    ): Result<Unit> = if (request.operation in TRANSACTION_OPERATIONS) {
+        candidateCoordinator.markVerified(request.resourceId, instanceId)
+    } else {
+        Result.success(Unit)
+    }
+
+    override fun finalizeMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        if (request.operation in TRANSACTION_OPERATIONS) {
+            candidateCoordinator.finalize(request.resourceId, instanceId)
+        } else {
+            Result.success(Unit)
+        }
+
+    override fun rollbackMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        if (request.operation in TRANSACTION_OPERATIONS) {
+            candidateCoordinator.rollback(request.resourceId, instanceId)
+        } else {
+            Result.success(Unit)
+        }
 
     override fun failRunPreparation(
         request: ResourceRunLaunchRequest,
@@ -111,13 +185,28 @@ internal class AndroidResourceRunGateway(
         )
     }
 
-    override fun markOperationStarted(resourceId: String, operation: String, environmentId: String) {
+    override fun markOperationStarted(
+        resourceId: String,
+        operation: String,
+        instanceId: String,
+        environmentId: String,
+    ) {
         when (operation) {
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
-            KiteResourceInstallRecipes.OP_REINSTALL ->
-                installStore.markInstalling(resourceId, operation = operation, environmentId = environmentId)
-            KiteResourceInstallRecipes.OP_UNINSTALL -> installStore.markUninstalling(resourceId, environmentId = environmentId)
+            KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR ->
+                installStore.markInstalling(
+                    resourceId,
+                    runId = instanceId,
+                    operation = operation,
+                    environmentId = environmentId,
+                )
+            KiteResourceInstallRecipes.OP_UNINSTALL -> installStore.markUninstalling(
+                resourceId,
+                runId = instanceId,
+                environmentId = environmentId,
+            )
         }
     }
 
@@ -197,11 +286,8 @@ internal class AndroidResourceRunGateway(
         reason: String,
         environmentId: String
     ) {
-        if (operation in setOf(
-                KiteResourceInstallRecipes.OP_UPDATE,
-                KiteResourceInstallRecipes.OP_REINSTALL
-            ) &&
-            installStore.registryEntry(resourceId, environmentId)?.version?.isNotBlank() == true
+        if (operation in KiteResourceInstallRecipes.MAINTENANCE_OPERATIONS &&
+            installStore.registryEntry(resourceId, environmentId)?.installed == true
         ) {
             installStore.markMaintenanceFailed(resourceId, operation, reason, environmentId)
         } else {
@@ -261,5 +347,11 @@ internal class AndroidResourceRunGateway(
     companion object {
         private const val TOOLCHAIN_PACK_ASSET = "toolchain/ai-dev-pack"
         private const val INSTALLED_VERSION_MARKER = "KITE_RESOURCE_INSTALLED_VERSION "
+        private val TRANSACTION_OPERATIONS = setOf(
+            KiteResourceInstallRecipes.OP_INSTALL,
+            KiteResourceInstallRecipes.OP_UPDATE,
+            KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR,
+        )
     }
 }

@@ -14,6 +14,7 @@ import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentReasoningMode
 import com.kite.app.agent.contract.AgentReasoningSemantics
+import com.kite.app.agent.config.AgentProviderCatalogSyncMetadata
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.KeyStore
@@ -48,6 +49,8 @@ data class AgentCatalogProvider(
     val ownerId: String? = null,
     val sourceVersion: String? = null,
     val credentialPresent: Boolean = false,
+    /** 仅用户供应商可携带；描述它与远端预置目录的绑定和用户排除意图。 */
+    val catalogSync: AgentProviderCatalogSyncMetadata? = null,
 )
 
 data class AgentProviderCatalogSnapshot(
@@ -520,6 +523,9 @@ class AgentProviderCatalogStore private constructor(
             ownerId = optString(KEY_OWNER_ID).trim().take(MAX_ID).takeIf(String::isNotBlank),
             sourceVersion = optString(KEY_SOURCE_VERSION).trim().take(MAX_VERSION).takeIf(String::isNotBlank),
             credentialPresent = credentialVault.contains(credentialKey(agentId, id)),
+            catalogSync = if (policy == AgentProviderCatalogPolicy.UserManaged) {
+                optJSONObject(KEY_CATALOG_SYNC)?.toCatalogSync()
+            } else null,
         )
     }
 
@@ -531,6 +537,7 @@ class AgentProviderCatalogStore private constructor(
         put(KEY_POLICY, policy.name)
         ownerId?.let { put(KEY_OWNER_ID, it) }
         sourceVersion?.let { put(KEY_SOURCE_VERSION, it) }
+        catalogSync?.let { put(KEY_CATALOG_SYNC, it.toJson()) }
         put(KEY_MODELS, JSONArray().apply {
             models.forEach { model -> put(JSONObject().put(KEY_ID, model.id).put(KEY_NAME, model.displayName)) }
         })
@@ -635,7 +642,45 @@ class AgentProviderCatalogStore private constructor(
             ownerId = ownerId?.trim()?.take(MAX_ID)?.takeIf(String::isNotBlank),
             sourceVersion = sourceVersion?.trim()?.take(MAX_VERSION)?.takeIf(String::isNotBlank),
             credentialPresent = false,
+            catalogSync = if (policy == AgentProviderCatalogPolicy.UserManaged) {
+                catalogSync?.normalized()
+            } else null,
         )
+    }
+
+    private fun JSONObject.toCatalogSync(): AgentProviderCatalogSyncMetadata? {
+        val presetId = optString(KEY_PRESET_ID).trim().take(MAX_ID)
+        if (presetId.isBlank()) return null
+        return AgentProviderCatalogSyncMetadata(
+            presetId = presetId,
+            catalogModelIds = optJSONArray(KEY_CATALOG_MODEL_IDS).toStringSet(MAX_MODEL_ID),
+            suppressedModelIds = optJSONArray(KEY_SUPPRESSED_MODEL_IDS).toStringSet(MAX_MODEL_ID),
+        ).normalized()
+    }
+
+    private fun AgentProviderCatalogSyncMetadata.toJson(): JSONObject = JSONObject().apply {
+        put(KEY_PRESET_ID, presetId)
+        put(KEY_CATALOG_MODEL_IDS, JSONArray().apply { catalogModelIds.sorted().forEach(::put) })
+        put(KEY_SUPPRESSED_MODEL_IDS, JSONArray().apply { suppressedModelIds.sorted().forEach(::put) })
+    }
+
+    private fun AgentProviderCatalogSyncMetadata.normalized(): AgentProviderCatalogSyncMetadata? {
+        val normalizedPresetId = presetId.trim().take(MAX_ID)
+        if (normalizedPresetId.isBlank()) return null
+        return copy(
+            presetId = normalizedPresetId,
+            catalogModelIds = catalogModelIds.map(String::trim).filter(String::isNotBlank)
+                .map { it.take(MAX_MODEL_ID) }.toSet(),
+            suppressedModelIds = suppressedModelIds.map(String::trim).filter(String::isNotBlank)
+                .map { it.take(MAX_MODEL_ID) }.toSet(),
+        )
+    }
+
+    private fun JSONArray?.toStringSet(maxLength: Int): Set<String> = buildSet {
+        val source = this@toStringSet ?: return@buildSet
+        for (index in 0 until source.length()) {
+            source.optString(index).trim().take(maxLength).takeIf(String::isNotBlank)?.let(::add)
+        }
     }
 
     private fun AgentMode.normalized(): AgentMode? {
@@ -714,6 +759,10 @@ class AgentProviderCatalogStore private constructor(
         const val KEY_POLICY = "policy"
         const val KEY_OWNER_ID = "ownerId"
         const val KEY_SOURCE_VERSION = "sourceVersion"
+        const val KEY_CATALOG_SYNC = "catalogSync"
+        const val KEY_PRESET_ID = "presetId"
+        const val KEY_CATALOG_MODEL_IDS = "catalogModelIds"
+        const val KEY_SUPPRESSED_MODEL_IDS = "suppressedModelIds"
         const val KEY_DESCRIPTION = "description"
         const val KEY_CATEGORY = "category"
         const val KEY_TYPE = "type"

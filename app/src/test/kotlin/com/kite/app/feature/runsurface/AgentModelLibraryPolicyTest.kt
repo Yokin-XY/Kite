@@ -88,6 +88,45 @@ class AgentModelLibraryPolicyTest {
     }
 
     @Test
+    fun `协议明确声明的官方模型无需静态账号清单也能进入官方目录`() {
+        val option = AgentConfigOption.Select(
+            id = "acp.session.model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "gemini-3-flash",
+            choices = listOf(
+                AgentConfigChoice(
+                    value = "gemini-3-flash",
+                    name = "Gemini 3 Flash",
+                    groupId = "gemini",
+                    groupName = "Google Gemini",
+                    modelSource = AgentModelSource.OfficialLogin,
+                ),
+                AgentConfigChoice(
+                    value = "gemini-3-pro",
+                    name = "Gemini 3 Pro",
+                    groupId = "gemini",
+                    groupName = "Google Gemini",
+                    modelSource = AgentModelSource.OfficialLogin,
+                ),
+            ),
+        )
+
+        val provider = AgentModelLibraryPolicy.projectProviders(
+            snapshot = AgentLiveConfigSnapshot("gemini", "gemini-cli", "1", "/config"),
+            modelOption = option,
+            library = AgentModelLibrarySnapshot(),
+        ).single()
+
+        assertEquals("gemini", provider.id)
+        assertEquals("Google Gemini", provider.name)
+        assertEquals(AgentModelSource.OfficialLogin, provider.source)
+        assertEquals(option.choices.map { it.value }, provider.models.map { it.value })
+        assertEquals(AgentModelLibraryStore.OFFICIAL_GROUP_ID, provider.libraryGroupId)
+        assertEquals(null, provider.officialAccount)
+    }
+
+    @Test
     fun `供应商显示偏好只在供应商层过滤并保留其全部模型`() {
         val option = modelOption()
         val library = AgentModelLibrarySnapshot(

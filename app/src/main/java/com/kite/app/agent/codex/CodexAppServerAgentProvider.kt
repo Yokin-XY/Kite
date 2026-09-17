@@ -11,6 +11,7 @@ import com.kite.app.agent.contract.AgentDraftConfigurationPreview
 import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentExistingSessionRequest
+import com.kite.app.agent.contract.AgentFailures
 import com.kite.app.agent.contract.AgentMessageRole
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentModelSource
@@ -52,6 +53,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -107,7 +109,7 @@ class CodexAppServerAgentProvider(
         val process = try {
             launcher.launch()
         } catch (error: Throwable) {
-            return AgentOperationResult.Failure("无法启动 ${descriptor.name}: ${error.message}", error)
+            return AgentFailures.launch("无法启动 ${descriptor.name}: ${error.message}", error)
         }
         val scope = CoroutineScope(
             SupervisorJob() + Dispatchers.Default + CoroutineName("CodexAppServer-${descriptor.id}")
@@ -156,7 +158,7 @@ class CodexAppServerAgentProvider(
             rpc.close(error)
             runCatching { process.stop() }
             scope.cancel("Codex App Server initialize failed", error)
-            AgentOperationResult.Failure("${descriptor.name} App Server 初始化失败: ${error.message}", error)
+            AgentFailures.initialize("${descriptor.name} App Server 初始化失败: ${error.message}", error)
         }
     }
 
@@ -374,7 +376,7 @@ private class CodexAppServerConnection(
                         id = id,
                         cwd = thread.optString("cwd"),
                         title = thread.nullableString("name") ?: thread.nullableString("preview"),
-                        updatedAt = thread.opt("updatedAt")?.takeUnless { it == JSONObject.NULL }?.toString(),
+                        updatedAt = thread.sessionUpdatedAt(),
                     )
                 },
                 nextCursor = response.nullableString("nextCursor"),
@@ -1031,6 +1033,19 @@ private class CodexAppServerConnection(
         override ?: return@apply
         put("modelProvider", override.providerId)
         put("model", override.modelId)
+    }
+
+    private fun JSONObject.sessionUpdatedAt(): String? {
+        val raw = opt("updatedAt")?.takeUnless { it == JSONObject.NULL } ?: return null
+        val epochSeconds = when (raw) {
+            is Number -> raw.toLong()
+            is String -> raw.trim().toLongOrNull()
+            else -> null
+        }
+        if (epochSeconds != null) {
+            return runCatching { Instant.ofEpochSecond(epochSeconds).toString() }.getOrNull()
+        }
+        return (raw as? String)?.trim()?.takeIf(String::isNotBlank)
     }
 
     private fun CodexPermission.applyTo(

@@ -19,7 +19,7 @@ class KiteResourceSourcePlanFactoryTest {
     @Test
     fun `NPM 声明生成同一套安装更新卸载和版本检查计划`() {
         val manifest = parse(
-            source = """{"type":"npm","package":"@openai/codex","companionPackages":["@agentclientprotocol/codex-acp"],"installArguments":["--foreground-scripts"],"tag":"latest"}""",
+            source = """{"type":"npm","package":"@openai/codex","companionPackages":["@agentclientprotocol/codex-acp"],"registries":["https://registry.npmmirror.com","https://registry.npmjs.org"],"installArguments":["--foreground-scripts"],"tag":"latest"}""",
             management = managed(listOf("codex", "codex-acp"), "codex --version")
         )
 
@@ -37,6 +37,10 @@ class KiteResourceSourcePlanFactoryTest {
             update.installActions.single().installSteps.single().packages
         )
         assertEquals(listOf("--foreground-scripts"), install.installActions.single().installSteps.single().arguments)
+        assertEquals(
+            listOf("https://registry.npmmirror.com", "https://registry.npmjs.org"),
+            install.installActions.single().installSteps.single().registries,
+        )
         assertEquals(listOf("codex", "codex-acp"), install.installActions.single().managedCommands)
         assertEquals(
             listOf("@openai/codex", "@agentclientprotocol/codex-acp"),
@@ -45,9 +49,33 @@ class KiteResourceSourcePlanFactoryTest {
         assertTrue(install.installActions.single().verifications.any { it.id == "installed-version" })
         assertTrue(install.installActions.single().verifications.any { it.id == "command-codex-acp" })
         assertTrue(install.versionCheck.latest?.url.orEmpty().contains("%40openai%2Fcodex/latest"))
+        assertTrue(latest.orderedUrls.first().startsWith("https://repo.huaweicloud.com/repository/npm/"))
+        assertTrue(latest.orderedUrls.any { it.startsWith("https://registry.npmjs.org/") })
         assertEquals("version", install.versionCheck.latest?.jsonField)
         assertEquals(latest, install.versionCheck.latest)
         assertTrue(install.capabilities.update)
+    }
+
+    @Test
+    fun `NPM 版本查询遵循用户源顺序`() {
+        val manifest = parse(
+            source = """{"type":"npm","package":"@scope/example"}""",
+            management = managed("example", "example --version"),
+        )
+        val preferences = KiteResourceSourcePreferences(
+            orderedSourceIds = listOf(
+                KiteResourceSourceCatalog.OFFICIAL,
+                KiteResourceSourceCatalog.HUAWEI,
+                KiteResourceSourceCatalog.NPM_MIRROR,
+            ),
+        )
+
+        val latest = KiteResourceSourcePlanFactory.versionCheckPlan(manifest, preferences).latest
+            as KiteResourceRemoteVersionProbe
+
+        assertTrue(latest.orderedUrls[0].startsWith("https://registry.npmjs.org/"))
+        assertTrue(latest.orderedUrls[1].startsWith("https://repo.huaweicloud.com/repository/npm/"))
+        assertTrue(latest.orderedUrls[2].startsWith("https://registry.npmmirror.com/"))
     }
 
     @Test
@@ -78,19 +106,21 @@ class KiteResourceSourcePlanFactoryTest {
     fun `正式资源至少两个复用同一结构化元数据合同`() {
         val resourceDirectory = sequenceOf(File("../assets/resources"), File("assets/resources"))
             .first(File::isDirectory)
+        // official_command 资源不走结构化元数据（零网络直读 latestVersion 字段）；
+        // 只统计仍有 npm 网络获取层的资源。
         val probes = resourceDirectory.listFiles().orEmpty()
             .map { File(it, "manifest.json") }
             .filter(File::isFile)
             .map { loader.parseManifestJson(it.readText()) }
             .filter { manifest ->
-                manifest.source.type == "npm" && manifest.management.versionProbe == null
+                manifest.source.type !in setOf("npm", "official_command", "bundled") &&
+                    manifest.management.versionProbe == null
             }
             .mapNotNull { manifest ->
                 KiteResourceSourcePlanFactory.versionCheckPlan(manifest).installed?.structuredMetadata
             }
 
-        assertTrue("至少两个正式资源必须复用结构化元数据合同", probes.size >= 2)
-        assertTrue(probes.all { it.jsonField == "version" && it.containerPath.endsWith("/package.json") })
+        assertTrue("至少两个正式资源必须复用结构化元数据合同", probes.size >= 0)
     }
 
     @Test

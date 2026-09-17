@@ -6,22 +6,32 @@
     "description": "Google 的终端 AI 编码 Agent",
     "version": "npm",
     "icon": {
-      "type": "text",
-      "value": "Ge"
+      "type": "asset",
+      "value": "resources/kite.gemini.cli/icon.png",
+      "fallbackText": "Ge",
+      "fit": "fullBleed"
     }
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["gemini"],
+    "managedCommands": [
+      "gemini"
+    ],
     "versionProbe": {
       "command": "gemini --version",
       "pattern": "([0-9]+(?:\\.[0-9]+)+)"
     },
-    "preservePaths": ["user-home"]
+    "preservePaths": [
+      "user-home"
+    ]
   },
   "display": {
-    "sections": ["ai-vendor"],
-    "tabs": ["angel-cli"],
+    "sections": [
+      "ai-vendor"
+    ],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 85,
     "category": "AI",
     "accent": "purple",
@@ -67,9 +77,11 @@
     "extensions": []
   },
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "@google/gemini-cli",
-    "repository": "https://github.com/google-gemini/gemini-cli"
+    "command": "npm install -g @google/gemini-cli@latest",
+    "uninstallCommand": "npm uninstall -g @google/gemini-cli",
+    "latestVersion": "0.60.0"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.gemini.cli",
@@ -90,7 +102,10 @@
         "providerId": "gemini",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["gemini", "--acp"],
+        "argv": [
+          "gemini",
+          "--acp"
+        ],
         "title": "Gemini CLI"
       }
     }

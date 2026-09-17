@@ -112,6 +112,56 @@ class WorkspaceBuildSupportTest {
     }
 
     @Test
+    fun ensure_projectsDeviceBridgeCapabilityCatalogFromSharedContract() {
+        val workspace = Files.createTempDirectory("kite-device-catalog-").toFile()
+        try {
+            WorkspaceBuildSupport.ensure(workspace)
+
+            val catalog = JSONObject(
+                workspace.resolve(".kf/system/device-bridge-capabilities-v1.json").readText()
+            )
+            val capabilities = catalog.getJSONArray("capabilities")
+            assertTrue(capabilities.length() > 10)
+            assertEquals(1, catalog.getInt("protocolVersion"))
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensure_writesBoundedProbeSupportIntoHostSelfBridge() {
+        val workspace = Files.createTempDirectory("kite-device-bridge-timeout-").toFile()
+        try {
+            WorkspaceBuildSupport.ensure(workspace)
+
+            val script = workspace.resolve(".kf/system/bin/kf-adb-bridge").readText()
+            assertTrue(script.contains("KF_ADB_BRIDGE_REQUEST_TIMEOUT_SEC"))
+            assertTrue(script.contains("request timed out after"))
+            assertTrue(script.contains("return 124"))
+            assertTrue(script.contains("head -c ${'$'}((size - stdout_pos))"))
+            assertTrue(script.contains("head -c ${'$'}((size - stderr_pos))"))
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensure_exposesDeviceBridgeDiscoveryInHostContract() {
+        val workspace = Files.createTempDirectory("kite-device-host-contract-").toFile()
+        try {
+            WorkspaceBuildSupport.ensure(workspace)
+
+            val contract = JSONObject(workspace.resolve(".kf/host-contract.json").readText())
+            val bridge = contract.getJSONObject("deviceBridge")
+            assertEquals("v1", contract.getString("surfaceVersion"))
+            assertEquals("kite-device capabilities --json", bridge.getString("capabilityCommand"))
+            assertEquals("adb -s kf-host-self", bridge.getString("compatibilityTarget"))
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
     fun ensure_disablesPreviouslyGeneratedAutoCapacityPolicy() {
         val workspace = Files.createTempDirectory("kite-capacity-policy-migrate-").toFile()
         try {

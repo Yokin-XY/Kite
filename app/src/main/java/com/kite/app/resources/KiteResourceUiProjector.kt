@@ -19,6 +19,7 @@ object KiteResourceUiProjector {
         failedOperation: String,
         currentOperation: String = "",
         idleStateLabel: String,
+        updateAvailable: Boolean = false,
         openRunStatus: CardRunStatus? = null,
         extraBusy: Boolean = false,
         installPlanInProgress: Boolean = false,
@@ -26,12 +27,14 @@ object KiteResourceUiProjector {
         val labels = when {
             installPlanInProgress -> "获取中" to "获取中"
             preparing -> "准备中" to "准备中"
-            installing && currentOperation == KiteResourceInstallRecipes.OP_UPDATE -> "更新中" to "更新中"
-            installing && currentOperation == KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装中" to "重新安装中"
+            installing && currentOperation == KiteResourceInstallRecipes.OP_UPDATE -> "更新中" to "查看进度"
+            installing && currentOperation == KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装中" to "查看进度"
+            installing && currentOperation == KiteResourceInstallRecipes.OP_REPAIR -> "修复中" to "查看进度"
             installing -> "获取中" to "获取中"
             uninstalling -> "卸载中" to "卸载中"
             failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "卸载失败" to "重新获取"
             failed -> "获取失败" to "重新获取"
+            installed && updateAvailable -> "可更新" to "更新"
             installed -> openRunLabels(openRunStatus) ?: ("已获取" to "打开")
             else -> idleStateLabel to "获取"
         }
@@ -42,7 +45,7 @@ object KiteResourceUiProjector {
             actionLabel = labels.second,
             actionEnabled = when (labels.second) {
                 "准备中", "启动中", "停止中", "卸载中", "处理中" -> false
-                "获取中" -> true
+                "获取中", "查看进度" -> true
                 else -> !busy
             },
             secondaryActionLabel = when {

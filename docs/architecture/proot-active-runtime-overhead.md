@@ -10,7 +10,7 @@
 
 | 变体 | 资产 | SHA-256 | 大小 | loader | 用途 |
 | --- | --- | --- | ---: | --- | --- |
-| active | `proot-kf-lifecycle-arm64` | `0A465CE2F5E3DCD80F801EF500478E4932248806EDC86CE5C9B0918D60C604BC` | 356864 | embedded | 当前正式 v23，具备生命周期、保护与 View 能力 |
+| active | `proot-kf-lifecycle-arm64` | `9A599F91A089EF05AB774AC5272745A813285C791F62CFA72824BBDBABBF88F0` | 356816 | embedded | 当前正式 v24，具备生命周期、保护、View 与 procfs 符号链接透传能力 |
 | stock | `proot-arm64` | `125DFF2415AE1DCB8B1AE97C51357DE73EF11F28268B86CD50A0F13AA1C3EA91` | 214416 | external | APK 已有无遥测库存候选，仅供 Debug A/B |
 | historical | `proot-termux-baseline-arm64` | `AAB80BBBB38345A6CF30D5173B1D9E5FB506B72FCFB48B089DB0DA62088B51C4` | 258472 | embedded | 已因 `execve ENOSYS` quarantine，不进入成功/性能对照 |
 
@@ -84,7 +84,7 @@ OnePlus 8T 九轮结果：
 
 ## RF1432 可复现源码与 lifecycle 候选
 
-正式 v23 已从 `d30b98846cfdf0923bea26956922a2acf9ef23ae` 和六个仓库 patch 在隔离目录重建。固定 NDK 26.3、版本字符串和构建参数后，重建产物为 356864 bytes，SHA-256 `0A465CE2F5E3DCD80F801EF500478E4932248806EDC86CE5C9B0918D60C604BC`，与 APK 正式资产逐字节一致。仓库通过 `scripts/build-proot-runtime-ablation.ps1` 保留这一复现合同；脚本只向 `local-artifacts/` 输出，不生成 Git 构建物。
+正式 v24 已从 `d30b98846cfdf0923bea26956922a2acf9ef23ae` 和六个仓库 patch 在隔离目录重建。固定 NDK 26.3、版本字符串和构建参数后，重建产物为 356816 bytes，SHA-256 `9A599F91A089EF05AB774AC5272745A813285C791F62CFA72824BBDBABBF88F0`，并在魅族 18 验证：普通 `comm` 仍读取投影，`exe/cwd` 则保持 `readlink` 符号链接语义。仓库通过 `scripts/build-proot-runtime-ablation.ps1` 保留这一复现合同；脚本只向 `local-artifacts/` 输出，不生成 Git 构建物。
 
 三个无损 lifecycle 候选依次尝试：
 

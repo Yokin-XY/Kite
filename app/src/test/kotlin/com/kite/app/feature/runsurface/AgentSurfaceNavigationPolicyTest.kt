@@ -26,11 +26,16 @@ import com.kite.app.agent.store.AgentModelLibraryProviderPreference
 import com.kite.app.agent.store.AgentModelLibrarySnapshot
 import com.kite.app.agent.store.AgentProviderCatalogStore
 import com.kite.app.agent.registration.KiteAgentRegistry
+import com.kite.app.agent.registration.AgentDefinition
+import com.kite.app.agent.registration.AgentLaunchSpec
+import com.kite.app.agent.registration.AgentRegistration
+import com.kite.app.agent.registration.AgentRegistrationSource
 import com.kite.app.agent.registration.AgentOfficialAccountCommand
 import com.kite.app.agent.registration.AgentOfficialAccountSpec
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.AdapterBackedAgentConfigurationApi
 import com.kite.app.agent.sdk.configuration.StoreBackedAgentProviderCatalogApi
+import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
 import com.kite.app.theme.KiteTheme
 import androidx.appcompat.app.AppCompatActivity
 import org.junit.Assert.assertEquals
@@ -46,6 +51,90 @@ import kotlinx.coroutines.SupervisorJob
 
 @RunWith(RobolectricTestRunner::class)
 class AgentSurfaceNavigationPolicyTest {
+    @Test
+    fun `活动运行时会话覆盖迟到的持久化旧会话身份`() {
+        val resolved = AgentSurfaceNavigationPolicy.resolveSessionBinding(
+            persistedSessionId = "old-session",
+            runtime = AgentSurfaceRuntimeSessionIdentity(
+                sessionId = "current-session",
+                isDraft = false,
+                conversationSessionId = "current-session",
+            ),
+        )
+
+        assertEquals("current-session", resolved.nativeSessionId)
+        assertEquals("current-session", resolved.conversationSessionId)
+    }
+
+    @Test
+    fun `冷草稿不会被持久化旧会话重新绑定`() {
+        val resolved = AgentSurfaceNavigationPolicy.resolveSessionBinding(
+            persistedSessionId = "old-session",
+            runtime = AgentSurfaceRuntimeSessionIdentity(
+                sessionId = null,
+                isDraft = true,
+                conversationSessionId = "draft:instance:1",
+            ),
+        )
+
+        assertEquals(null, resolved.nativeSessionId)
+        assertEquals("draft:instance:1", resolved.conversationSessionId)
+    }
+
+    @Test
+    fun `打开供应商页不会被动执行官方账号状态命令`() {
+        val activity = Robolectric.buildActivity(AppCompatActivity::class.java).setup().get()
+        val tokens = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens
+        val accountJob = SupervisorJob()
+        var commandRuns = 0
+        val registration = AgentRegistration(
+            definition = AgentDefinition("hermes", "Hermes"),
+            source = AgentRegistrationSource.Resource("kite.hermes.core"),
+            launch = AgentLaunchSpec.Managed("hermes", "acp", "stdio", listOf("hermes", "acp")),
+            officialAccounts = listOf(
+                AgentOfficialAccountSpec(
+                    id = "nous",
+                    displayName = "Nous Portal 官方",
+                    status = AgentOfficialAccountCommand(listOf("hermes", "portal", "info")),
+                    login = AgentOfficialAccountCommand(listOf("hermes", "portal", "login")),
+                )
+            ),
+        )
+        val registry = KiteAgentRegistry(
+            context = activity,
+            resourceRegistrationSource = { listOf(registration) },
+        )
+        val binding = RunAgentSurfaceBinding(
+            context = activity,
+            tokens = tokens,
+            onCloseInstance = {},
+            onPickImages = {},
+            onPickFiles = {},
+            agentRegistry = registry,
+            officialAccountManager = AgentOfficialAccountManager(
+                scope = CoroutineScope(accountJob + Dispatchers.Unconfined),
+                registry = registry,
+                commandRunner = {
+                    commandRuns += 1
+                    AgentOfficialAccountCommandResult(0, "Logged in")
+                },
+            ),
+            agentConfigurationApi = AdapterBackedAgentConfigurationApi(AgentConfigAdapterRegistry(emptyList())),
+            agentProviderCatalogApi = StoreBackedAgentProviderCatalogApi(
+                AgentProviderCatalogStore(activity),
+                AgentConfigAdapterRegistry(emptyList()),
+            ),
+        )
+        val selected = requireNotNull(registry.snapshot().entry("hermes"))
+
+        binding.observeOfficialAccountsForTesting(selected, AgentConfigurationTarget("hermes", null))
+
+        assertEquals(0, commandRuns)
+        binding.dispose()
+        accountJob.cancel()
+        activity.finish()
+    }
+
     @Test
     fun `会话读取失败隐藏底层英文并区分登录需求`() {
         assertEquals(
@@ -681,6 +770,34 @@ class AgentSurfaceNavigationPolicyTest {
         assertEquals(null, AgentProviderEditorPolicy.validateModel("日常模型", "model-a"))
         assertEquals("请输入显示名称", AgentProviderEditorPolicy.validateDisplayName("\t"))
         assertEquals(null, AgentProviderEditorPolicy.validateDisplayName("日常模型"))
+    }
+
+    @Test
+    fun `供应商离开策略只拦截真实草稿变化且不持有凭据`() {
+        val baseline = AgentProviderEditorDraftSnapshot(
+            providerId = "zhipu",
+            displayName = "智谱 GLM",
+            baseUrl = "https://open.bigmodel.cn/api/paas/v4/",
+            models = listOf(AgentProviderModelSummary("glm-5.2", "GLM-5.2")),
+            groupId = null,
+            presetId = "zhipu-global-api",
+            catalogSync = null,
+            credentialChanged = false,
+        )
+
+        assertFalse(AgentProviderEditorExitPolicy.hasUnsavedChanges(baseline, baseline.copy()))
+        assertTrue(
+            AgentProviderEditorExitPolicy.hasUnsavedChanges(
+                baseline,
+                baseline.copy(displayName = "智谱国际版"),
+            )
+        )
+        assertTrue(
+            AgentProviderEditorExitPolicy.hasUnsavedChanges(
+                baseline,
+                baseline.copy(credentialChanged = true),
+            )
+        )
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.kite.app.resources
 
 import org.json.JSONObject
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -23,6 +24,26 @@ class KiteResourceInstallContractTest {
         val current = manifest(description = "说明", command = "agent-next")
 
         assertTrue(KiteResourceInstallContract.hasDrift(current, installed.toString()))
+        assertEquals(
+            KiteResourceInstallContractResolution.RepairRequired,
+            KiteResourceInstallContract.resolve(current, installed.toString()),
+        )
+    }
+
+    @Test
+    fun versionedContractChangeWithExplicitUpdateIsMigratable() {
+        val installed = manifest(description = "说明", command = "agent", version = "1.0.0")
+        val current = manifest(
+            description = "说明",
+            command = "agent-next",
+            version = "1.1.0",
+            updateCommand = "migrate-agent",
+        )
+
+        assertEquals(
+            KiteResourceInstallContractResolution.UpdateAvailable("1.0.0", "1.1.0"),
+            KiteResourceInstallContract.resolve(current, installed.toString()),
+        )
     }
 
     @Test
@@ -33,17 +54,25 @@ class KiteResourceInstallContractTest {
         assertTrue(KiteResourceInstallContract.hasDrift(current, "not-json"))
     }
 
-    private fun manifest(description: String, command: String): JSONObject = JSONObject(
+    private fun manifest(
+        description: String,
+        command: String,
+        version: String = "1.0.0",
+        updateCommand: String = "",
+    ): JSONObject = JSONObject(
         """
         {
           "id":"test.agent",
-          "base":{"name":"Agent","description":"$description","version":"1.0.0"},
+          "base":{"name":"Agent","description":"$description","version":"$version"},
           "management":{"mode":"managed_extension","managedCommands":["$command"]},
           "display":{"longDescription":"$description"},
           "relations":{"base":["test.runtime"],"defaults":[]},
           "source":{"type":"bundled","asset":"agent"},
           "paths":{"installRoot":"/workspace/.kf/software/test.agent","binRoot":"/workspace/.kf/bin"},
-          "actions":{"install":[{"type":"managed","managedCommands":["$command"]}]}
+          "actions":{
+            "install":[{"type":"managed","managedCommands":["$command"]}]
+            ${if (updateCommand.isBlank()) "" else ",\"update\":[{\"type\":\"managed\",\"steps\":[{\"type\":\"shell\",\"cmd\":\"$updateCommand\"}]}]"}
+          }
         }
         """.trimIndent()
     )

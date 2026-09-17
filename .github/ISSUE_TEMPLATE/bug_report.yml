@@ -1,0 +1,63 @@
+name: 问题反馈 / Bug report
+description: 报告可复现的问题，不要求报告者预先设计修复 / Report a reproducible problem without designing the fix first
+title: "[问题] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈问题。普通使用者只需要提供可复现事实，不需要先提出实现机制。如果你准备认领并修复该问题，请在开始写代码前补充消费场景、预期效果和实现机制；可以编辑本 Issue，也可以关联一个新的 `[共建]` Issue。
+
+        Thank you for reporting a problem. Reporters only need reproducible evidence and do not need to design the fix. If you plan to claim and implement the fix, add the use case, expected outcome, and implementation mechanism before writing code, either here or in a linked `[共建]` Issue.
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 当前表现 / Current behavior
+      description: 实际发生了什么？ / What actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期表现 / Expected behavior
+      description: 正常情况下应该发生什么？ / What should happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤 / Reproduction steps
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境 / Environment
+      description: 请提供 Kite 版本、Android 版本、设备和相关 Agent 或资源版本。 / Provide the Kite version, Android version, device, and relevant Agent or resource versions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 证据 / Evidence
+      description: 可提供必要日志、截图或录屏，但必须移除 Token、API Key、账号和隐私数据。 / Add relevant logs, screenshots, or recordings after removing tokens, API keys, account data, and private information.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交确认 / Submission checks
+      options:
+        - label: 我已搜索现有 Issue，未发现同一问题。 / I searched existing Issues and found no duplicate.
+          required: true
+        - label: 我已从证据中移除凭据和隐私数据。 / I removed credentials and private data from the evidence.
+          required: true

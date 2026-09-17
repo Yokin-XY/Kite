@@ -5,10 +5,12 @@ import com.kite.app.application.runs.RunInstanceCloseCommand
 import com.kite.app.application.runs.RunInstanceCloseSource
 import com.kite.app.foundation.service.KiteTaskContract
 import com.kite.app.foundation.service.KiteTaskContractHost
+import com.kite.app.foundation.bootstrap.StartupTraceStore
 import com.kite.app.foundation.terminal.BrowserEnvironmentProvider
 import com.kite.app.foundation.terminal.BrowserEnvironmentProviderHost
 import com.kite.app.foundation.toolchain.ToolchainResourcePort
 import com.kite.app.foundation.toolchain.ToolchainResourcePortHost
+import com.kite.app.foundation.toolchain.ResourceInstallRecoverySummary
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.shell.KiteAppGraph
 
@@ -46,6 +48,9 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
                 KiteBrowserProxyInstaller.defaultEnvironment(context, source)
         })
         ToolchainResourcePortHost.install(object : ToolchainResourcePort {
+            override fun recoverInterruptedInstalls(context: android.content.Context): ResourceInstallRecoverySummary =
+                KiteAppGraph.from(context.applicationContext).resourceInstallRecoveryCoordinator.recover()
+
             override fun currentEnvironmentId(context: android.content.Context): String =
                 KiteAppGraph.from(context.applicationContext).resourceInstallStore.currentEnvironmentId()
 
@@ -96,9 +101,17 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
             ) {
                 KiteAppGraph.from(context.applicationContext).resourceInstallStore
                     .markFailed(resourceId, KiteResourceInstallStore.OP_INSTALL, runId, reason, environmentId)
+                StartupTraceStore.recordSetupFailure(
+                    context,
+                    resourceId,
+                    reason.orEmpty().ifBlank { "安装失败，但没有记录原因" },
+                )
             }
 
         })
+        context?.applicationContext?.let { appContext ->
+            KiteAppGraph.from(appContext).refreshResourceDefinitions()
+        }
         return true
     }
 

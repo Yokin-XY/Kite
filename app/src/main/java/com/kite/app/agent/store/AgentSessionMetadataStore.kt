@@ -7,8 +7,8 @@ import org.json.JSONObject
 /**
  * Kite 对 Agent 原生会话附加的轻量用户元数据。
  *
- * 这里只保存 Kite 自有的归档标记，以及模型、权限这两个输入草稿偏好；不复制消息、标题、
- * 工作目录、运行状态或 Agent 当前配置。偏好只在发送时由 SDK 映射，不提前修改 Agent。
+ * 这里只保存 Kite 自有的归档标记、回合用时，以及模型、权限这两个输入草稿偏好；不复制消息、
+ * 标题、工作目录、运行状态或 Agent 当前配置。偏好只在发送时由 SDK 映射，不提前修改 Agent。
  */
 class AgentSessionMetadataStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(
@@ -100,6 +100,30 @@ class AgentSessionMetadataStore(context: Context) {
         next to (next != current)
     }
 
+    fun turnTimings(providerId: String, sessionId: String): List<AgentPersistedTurnTiming> =
+        synchronized(LOCK) {
+            readRecords()
+                .firstOrNull { it.providerId == providerId && it.sessionId == sessionId }
+                ?.turnTimings
+                .orEmpty()
+        }
+
+    fun saveTurnTimings(
+        providerId: String,
+        sessionId: String,
+        timings: List<AgentPersistedTurnTiming>,
+    ): Boolean = update(providerId, sessionId) { current ->
+        val normalized = timings
+            .asSequence()
+            .filter { it.ordinal > 0L && it.durationMillis >= 0L && TURN_FINGERPRINT.matches(it.fingerprint) }
+            .distinctBy(AgentPersistedTurnTiming::ordinal)
+            .sortedBy(AgentPersistedTurnTiming::ordinal)
+            .toList()
+            .takeLast(MAX_TURN_TIMINGS)
+        val next = current.copy(turnTimings = normalized)
+        next to (next != current)
+    }
+
     fun remove(providerId: String, sessionId: String): Boolean = synchronized(LOCK) {
         val records = readRecords().toMutableList()
         val removed = records.removeAll { it.providerId == providerId && it.sessionId == sessionId }
@@ -164,6 +188,7 @@ class AgentSessionMetadataStore(context: Context) {
                     modelUsesAgentDefault = json.optBoolean(KEY_DRAFT_MODEL_USES_AGENT_DEFAULT),
                     permissionConfigId = json.optString(KEY_DRAFT_PERMISSION_CONFIG_ID).normalizedOrNull(),
                     permissionValue = json.optString(KEY_DRAFT_PERMISSION_VALUE).normalizedOrNull(),
+                    turnTimings = json.optJSONArray(KEY_TURN_TIMINGS).toTurnTimings(),
                 ).normalizedDraftPreferences()
                 if (!record.isEmpty()) add(record)
             }
@@ -196,6 +221,16 @@ class AgentSessionMetadataStore(context: Context) {
                         }
                         record.permissionConfigId?.let { put(KEY_DRAFT_PERMISSION_CONFIG_ID, it) }
                         record.permissionValue?.let { put(KEY_DRAFT_PERMISSION_VALUE, it) }
+                        if (record.turnTimings.isNotEmpty()) {
+                            put(KEY_TURN_TIMINGS, JSONArray().apply {
+                                record.turnTimings.forEach { timing ->
+                                    put(JSONObject()
+                                        .put(KEY_TURN_ORDINAL, timing.ordinal)
+                                        .put(KEY_TURN_FINGERPRINT, timing.fingerprint)
+                                        .put(KEY_TURN_DURATION, timing.durationMillis))
+                                }
+                            })
+                        }
                     })
                 }
             })
@@ -213,6 +248,7 @@ class AgentSessionMetadataStore(context: Context) {
         val modelUsesAgentDefault: Boolean = false,
         val permissionConfigId: String? = null,
         val permissionValue: String? = null,
+        val turnTimings: List<AgentPersistedTurnTiming> = emptyList(),
     ) {
         fun normalizedDraftPreferences(): Record {
             val hasModel = modelProviderId != null && modelId != null
@@ -235,7 +271,24 @@ class AgentSessionMetadataStore(context: Context) {
         )
 
         fun isEmpty(): Boolean = archivedAtMillis == null &&
-            modelProviderId == null && permissionConfigId == null
+            modelProviderId == null && permissionConfigId == null && turnTimings.isEmpty()
+    }
+
+    private fun JSONArray?.toTurnTimings(): List<AgentPersistedTurnTiming> {
+        val source = this ?: return emptyList()
+        return buildList {
+            for (index in 0 until source.length()) {
+                val json = source.optJSONObject(index) ?: continue
+                val ordinal = json.optLong(KEY_TURN_ORDINAL, 0L)
+                val fingerprint = json.optString(KEY_TURN_FINGERPRINT).trim().lowercase()
+                val durationMillis = json.optLong(KEY_TURN_DURATION, -1L)
+                if (ordinal > 0L && durationMillis >= 0L && TURN_FINGERPRINT.matches(fingerprint)) {
+                    add(AgentPersistedTurnTiming(ordinal, fingerprint, durationMillis))
+                }
+            }
+        }.distinctBy(AgentPersistedTurnTiming::ordinal)
+            .sortedBy(AgentPersistedTurnTiming::ordinal)
+            .takeLast(MAX_TURN_TIMINGS)
     }
 
     private fun String.normalizedOrNull(): String? = trim().take(MAX_DRAFT_VALUE).takeIf(String::isNotBlank)
@@ -256,12 +309,24 @@ class AgentSessionMetadataStore(context: Context) {
         const val KEY_DRAFT_MODEL_USES_AGENT_DEFAULT = "draftModelUsesAgentDefault"
         const val KEY_DRAFT_PERMISSION_CONFIG_ID = "draftPermissionConfigId"
         const val KEY_DRAFT_PERMISSION_VALUE = "draftPermissionValue"
+        const val KEY_TURN_TIMINGS = "turnTimings"
+        const val KEY_TURN_ORDINAL = "ordinal"
+        const val KEY_TURN_FINGERPRINT = "fingerprint"
+        const val KEY_TURN_DURATION = "durationMillis"
         const val SOURCE_AVAILABLE = "available"
         const val SOURCE_DELETED = "deleted"
-        const val VERSION = 4
+        const val VERSION = 5
         const val MAX_DRAFT_VALUE = 512
+        const val MAX_TURN_TIMINGS = 500
+        val TURN_FINGERPRINT = Regex("[0-9a-f]{64}")
     }
 }
+
+data class AgentPersistedTurnTiming(
+    val ordinal: Long,
+    val fingerprint: String,
+    val durationMillis: Long,
+)
 
 data class AgentSessionDraftPreferences(
     val modelProviderId: String? = null,

@@ -14,13 +14,21 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["mimo"]
+    "managedCommands": [
+      "mimo"
+    ],
+    "versionProbe": {
+      "command": "mimo --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    }
   },
   "display": {
     "sections": [
       "ai-vendor"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 120,
     "category": "AI",
     "accent": "orange",
@@ -72,9 +80,11 @@
     "extensions": []
   },
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "@mimo-ai/cli",
-    "repository": "https://github.com/XiaomiMiMo/MiMo-Code"
+    "command": "npm install -g @mimo-ai/cli@latest",
+    "uninstallCommand": "npm uninstall -g @mimo-ai/cli",
+    "latestVersion": "0.1.14"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.mimo.code",
@@ -95,37 +105,15 @@
         "providerId": "mimo",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["mimo", "acp"],
+        "argv": [
+          "mimo",
+          "acp"
+        ],
         "title": "MiMo Code"
       }
     }
   ],
   "actions": {
-    "install": [
-      {
-        "type": "managed",
-        "steps": [
-          {
-            "id": "install-mimo-package",
-            "type": "npm",
-            "packages": [
-              "@mimo-ai/cli"
-            ]
-          }
-        ],
-        "managedCommands": [
-          "mimo"
-        ],
-        "cleanInstallRoot": true,
-        "verify": [
-          {
-            "id": "mimo-command",
-            "cmd": "command -v mimo >/dev/null 2>&1"
-          }
-        ],
-        "timeoutMs": 600000
-      }
-    ],
     "open": {
       "runtime": "kite_recipe",
       "recipe": {

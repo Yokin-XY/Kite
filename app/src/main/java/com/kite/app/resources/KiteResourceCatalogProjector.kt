@@ -25,19 +25,25 @@ internal object KiteResourceCatalogProjector {
             val projectedSections = when {
                 tab.sections.size == 1 -> {
                     val section = tab.sections.single()
+                    val automatic = candidates.ifEmpty {
+                        visible.values
+                            .filter { section.id in it.sections }
+                            .sortedWith(resourceOrder)
+                    }
                     listOf(
                         section.copy(
                             items = merge(
                                 explicit = section.items,
-                                automatic = candidates.map(KiteResourceManifest::id),
+                                automatic = automatic.map(KiteResourceManifest::id),
                                 availableIds = visible.keys
                             )
                         )
                     ).filter { it.items.isNotEmpty() }
                 }
                 tab.sections.isNotEmpty() -> tab.sections.mapNotNull { section ->
-                    val automatic = candidates
+                    val automatic = (if (candidates.isEmpty()) visible.values else candidates)
                         .filter { section.id in it.sections }
+                        .sortedWith(resourceOrder)
                         .map(KiteResourceManifest::id)
                     section.copy(items = merge(section.items, automatic, visible.keys))
                         .takeIf { it.items.isNotEmpty() }

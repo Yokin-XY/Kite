@@ -38,13 +38,39 @@ class RunInstanceCloseCoordinatorTest {
     }
 
     @Test
+    fun `安装向导返回会把返回来源交给资源状态拥有者判断`() = runTest {
+        val state = state(ownerKind = CardRunState.OWNER_KIND_INSTALL_WIZARD, generation = 10L)
+        val sources = mutableListOf<RunInstanceCloseSource>()
+        val coordinator = RunInstanceCloseCoordinator(
+            scope = this,
+            state = { state },
+            stopRun = { error("安装向导不应进入普通停止链") },
+            cancelInstallWizard = { _, source ->
+                sources += source
+                true
+            },
+        )
+
+        val result = coordinator.close(
+            RunInstanceCloseCommand(
+                instanceId = state.instanceId,
+                expectedGeneration = state.createdAt,
+                source = RunInstanceCloseSource.NavigateBack,
+            )
+        )
+
+        assertEquals(RunCommandResult.Accepted(state.instanceId), result)
+        assertEquals(listOf(RunInstanceCloseSource.NavigateBack), sources)
+    }
+
+    @Test
     fun `安装向导取消被拒绝时保持实例且不伪报关闭`() = runTest {
         val state = state(ownerKind = CardRunState.OWNER_KIND_INSTALL_WIZARD, generation = 10L)
         val coordinator = RunInstanceCloseCoordinator(
             scope = this,
             state = { state },
             stopRun = { error("安装向导不应进入普通停止链") },
-            cancelInstallWizard = { false },
+            cancelInstallWizard = { _, _ -> false },
         )
 
         val result = coordinator.close(command(state, generation = 10L))
@@ -63,7 +89,7 @@ class RunInstanceCloseCoordinatorTest {
             scope = this,
             state = { null },
             stopRun = { error("缺失实例不应停止") },
-            cancelInstallWizard = { error("缺失实例不应取消") },
+            cancelInstallWizard = { _, _ -> error("缺失实例不应取消") },
         ).close(command(state, generation = 12L))
 
         assertEquals(RunCommandResult.Ignored("generation_mismatch"), stale)
@@ -81,7 +107,7 @@ class RunInstanceCloseCoordinatorTest {
             scope = this,
             state = { state },
             stopRun = { error("安装向导不应进入普通停止链") },
-            cancelInstallWizard = {
+            cancelInstallWizard = { _, _ ->
                 cancellations += 1
                 entered.complete(Unit)
                 release.await()
@@ -111,7 +137,7 @@ class RunInstanceCloseCoordinatorTest {
             stops += command
             RunCommandResult.Accepted(command.instanceId)
         },
-        cancelInstallWizard = { wizard ->
+        cancelInstallWizard = { wizard, _ ->
             cancelled += wizard
             true
         },

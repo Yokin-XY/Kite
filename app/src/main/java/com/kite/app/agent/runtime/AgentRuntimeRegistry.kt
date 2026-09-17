@@ -34,6 +34,7 @@ import com.kite.app.agent.sdk.skill.AgentPromptDraft
 import com.kite.app.agent.sdk.skill.AgentSkillPromptComposer
 import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationStore
+import com.kite.app.agent.store.AgentPersistedTurnTiming
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -66,6 +67,8 @@ data class AgentRuntimeStartRequest(
         preferences: AgentDraftPersistenceSnapshot,
         updateAgentDefault: Boolean,
     ) -> Unit = { _, _, _ -> },
+    val loadSessionTurnTimings: (String) -> List<AgentPersistedTurnTiming> = { emptyList() },
+    val onSessionTurnTimingsChanged: (String, List<AgentPersistedTurnTiming>) -> Unit = { _, _ -> },
     val composeSkillPrompt: (AgentPromptDraft) -> List<AgentContent> = AgentSkillPromptComposer::compose,
     val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {},
     val onDraftModeSelected: (String) -> Unit = {},
@@ -135,6 +138,35 @@ fun interface AgentRuntimeStatusSink {
     fun onStatus(sessionId: String?, phase: AgentSessionPhase, message: String?)
 }
 
+internal data class AgentRuntimeStatusRoute(
+    val shouldPublish: Boolean,
+    val sessionId: String?,
+)
+
+/**
+ * 原生连接可以在断开后继续吐出少量缓冲事件。只有当前运行时拥有的会话才能改写 CardRun 的
+ * 可见会话身份；准备新会话期间的中间事件只写入会话 Store，最终身份由 activate() 发布。
+ */
+internal object AgentRuntimeStatusRoutingPolicy {
+    fun route(
+        eventSessionId: String,
+        activeSessionId: String?,
+        activeIsDraft: Boolean,
+        hasActiveRuntime: Boolean,
+        preparingWarmDraft: Boolean,
+        preferredSessionId: String?,
+    ): AgentRuntimeStatusRoute = when {
+        hasActiveRuntime && preparingWarmDraft -> AgentRuntimeStatusRoute(false, null)
+        hasActiveRuntime && activeIsDraft -> AgentRuntimeStatusRoute(false, null)
+        hasActiveRuntime && activeSessionId != eventSessionId -> AgentRuntimeStatusRoute(false, null)
+        hasActiveRuntime -> AgentRuntimeStatusRoute(true, eventSessionId)
+        preferredSessionId != null && preferredSessionId != eventSessionId ->
+            AgentRuntimeStatusRoute(false, null)
+        preferredSessionId != null -> AgentRuntimeStatusRoute(true, eventSessionId)
+        else -> AgentRuntimeStatusRoute(true, null)
+    }
+}
+
 /**
  * Agent 长连接与待决权限的进程级拥有者。
  *
@@ -146,6 +178,18 @@ object AgentRuntimeRegistry {
     private const val MAX_COMPOSER_DRAFTS = 64
     private const val DRAFT_CONVERSATION_PREFIX = "kite-draft:"
     private const val COLD_COMPOSER_DRAFT_KEY = "kite-cold-draft"
+    private val PERSISTED_TURN_PHASES = setOf(
+        AgentSessionPhase.Ready,
+        AgentSessionPhase.Failed,
+        AgentSessionPhase.Cancelled,
+        AgentSessionPhase.Closed,
+    )
+
+    private data class FailedLocalMessage(
+        val key: AgentConversationKey,
+        val messageId: String,
+        val draft: AgentPromptDraft,
+    )
 
     private class ActiveRuntime(
         @Volatile var session: AgentRuntimeSession,
@@ -174,6 +218,7 @@ object AgentRuntimeRegistry {
         val draftConfiguration: LinkedHashMap<String, AgentConfigValue> = linkedMapOf(),
         val composerDrafts: LinkedHashMap<String, AgentPromptDraft> = linkedMapOf(),
         val composerDraftLock: Any = Any(),
+        val failedLocalMessages: LinkedHashMap<String, FailedLocalMessage> = linkedMapOf(),
         @Volatile var defaultDraftPermissionSelection: AgentDraftConfigurationSelection? = null,
         @Volatile var draftModeId: String? = null,
         @Volatile var defaultDraftModeId: String? = null,
@@ -183,6 +228,8 @@ object AgentRuntimeRegistry {
         val onDraftModeSelected: (String) -> Unit = {},
         val loadSessionDraftPreferences: (String) -> AgentDraftPersistenceSnapshot? = { null },
         val onDraftPreferencesChanged: (String?, AgentDraftPersistenceSnapshot, Boolean) -> Unit = { _, _, _ -> },
+        val loadSessionTurnTimings: (String) -> List<AgentPersistedTurnTiming> = { emptyList() },
+        val onSessionTurnTimingsChanged: (String, List<AgentPersistedTurnTiming>) -> Unit = { _, _ -> },
     )
 
     private data class PendingPermission(
@@ -208,6 +255,16 @@ object AgentRuntimeRegistry {
         }
 
         val preferredSessionId = request.preferredSessionId?.trim()?.takeIf(String::isNotBlank)
+        val restoredPreferences = preferredSessionId
+            ?.let { sessionId -> runCatching { request.loadSessionDraftPreferences(sessionId) }.getOrNull() }
+        val startupPreferences = restoredPreferences ?: request.initialDraftPreferences
+        startupPreferences.modelSelection?.let { selection ->
+            when (val prepared = request.prepareDraftModelSelection(selection)) {
+                is AgentProviderPreparationResult.Failed ->
+                    return AgentOperationResult.Failure(prepared.message)
+                is AgentProviderPreparationResult.Ready -> Unit
+            }
+        }
         var observedCatalog = request.initialDraftCatalog.copy(
             modes = request.normalizeModes(request.initialDraftCatalog.modes).distinctBy(AgentMode::id),
         )
@@ -266,21 +323,51 @@ object AgentRuntimeRegistry {
                 if (normalizedEvent is AgentSessionEvent.LifecycleChanged) {
                     val active = activeByInstance[request.instanceId]
                         ?.takeIf { it.session.generation == request.generation }
-                    val visibleSessionId = sessionId.takeUnless {
-                        active?.session?.isDraft == true ||
-                            active?.preparingWarmDraft == true ||
-                            (active == null && preferredSessionId == null)
+                    val route = AgentRuntimeStatusRoutingPolicy.route(
+                        eventSessionId = sessionId,
+                        activeSessionId = active?.session?.sessionId,
+                        activeIsDraft = active?.session?.isDraft == true,
+                        hasActiveRuntime = active != null,
+                        preparingWarmDraft = active?.preparingWarmDraft == true,
+                        preferredSessionId = preferredSessionId,
+                    )
+                    if (route.shouldPublish) {
+                        statusSink.onStatus(route.sessionId, normalizedEvent.phase, normalizedEvent.message)
+                        if (normalizedEvent.phase in PERSISTED_TURN_PHASES) {
+                            val timings = AgentConversationStore.persistedTurnTimings(key)
+                            if (timings.isNotEmpty()) {
+                                request.onSessionTurnTimingsChanged(sessionId, timings)
+                            }
+                        }
                     }
-                    statusSink.onStatus(visibleSessionId, normalizedEvent.phase, normalizedEvent.message)
                 }
             },
-            permissionHandler = { permission ->
+            permissionHandler = permissionHandler@ { permission ->
+                val permissionRoute = activeByInstance[request.instanceId]
+                    ?.takeIf { it.session.generation == request.generation }
+                    .let { active ->
+                        AgentRuntimeStatusRoutingPolicy.route(
+                            eventSessionId = permission.sessionId,
+                            activeSessionId = active?.session?.sessionId,
+                            activeIsDraft = active?.session?.isDraft == true,
+                            hasActiveRuntime = active != null,
+                            preparingWarmDraft = active?.preparingWarmDraft == true,
+                            preferredSessionId = preferredSessionId,
+                        )
+                }
+                if (!permissionRoute.shouldPublish) {
+                    return@permissionHandler AgentPermissionOutcome.Cancelled
+                }
                 val key = AgentConversationKey(request.providerId, permission.sessionId)
                 if (AgentConversationStore.snapshot(key) == null) {
                     AgentConversationStore.bind(request.instanceId, key, AgentSessionPhase.WaitingPermission)
                 }
                 AgentConversationStore.requestPermission(key, permission)
-                statusSink.onStatus(permission.sessionId, AgentSessionPhase.WaitingPermission, "等待权限选择")
+                statusSink.onStatus(
+                    permissionRoute.sessionId,
+                    AgentSessionPhase.WaitingPermission,
+                    "等待权限选择",
+                )
                 val pending = PendingPermission(
                     generation = request.generation,
                     conversationKey = key,
@@ -295,11 +382,23 @@ object AgentRuntimeRegistry {
                     } finally {
                         permissionByInstance.remove(request.instanceId, pending)
                         val restored = AgentConversationStore.resolvePermission(key)
-                        statusSink.onStatus(
-                            permission.sessionId,
-                            restored?.phase ?: AgentSessionPhase.Ready,
-                            "权限请求已处理"
+                        val active = activeByInstance[request.instanceId]
+                            ?.takeIf { it.session.generation == request.generation }
+                        val restoredRoute = AgentRuntimeStatusRoutingPolicy.route(
+                            eventSessionId = permission.sessionId,
+                            activeSessionId = active?.session?.sessionId,
+                            activeIsDraft = active?.session?.isDraft == true,
+                            hasActiveRuntime = active != null,
+                            preparingWarmDraft = active?.preparingWarmDraft == true,
+                            preferredSessionId = preferredSessionId,
                         )
+                        if (restoredRoute.shouldPublish) {
+                            statusSink.onStatus(
+                                restoredRoute.sessionId,
+                                restored?.phase ?: AgentSessionPhase.Ready,
+                                "权限请求已处理",
+                            )
+                        }
                     }
                 }
             }
@@ -339,7 +438,8 @@ object AgentRuntimeRegistry {
                 providerId = request.providerId,
                 sessionId = preferredSessionId,
                 cwd = request.cwd,
-                additionalDirectories = additionalDirectories
+                additionalDirectories = additionalDirectories,
+                turnTimings = request.loadSessionTurnTimings(preferredSessionId),
             )
             val openedSnapshot = when (opened) {
                 is AgentOperationResult.Success -> opened.value.copy(
@@ -379,9 +479,6 @@ object AgentRuntimeRegistry {
         val defaultPermission = observedCatalog.acceptedPermissionSelection(
             request.initialDraftPreferences.permissionSelection,
         )
-        val restoredPreferences = session.sessionId
-            ?.takeUnless { session.isDraft }
-            ?.let { sessionId -> runCatching { request.loadSessionDraftPreferences(sessionId) }.getOrNull() }
         val restoredPermission = observedCatalog.acceptedPermissionSelection(
             restoredPreferences?.permissionSelection,
         ) ?: defaultPermission
@@ -399,8 +496,7 @@ object AgentRuntimeRegistry {
             resolveDraftModelSelection = request.resolveDraftModelSelection,
             prepareDraftModelSelection = request.prepareDraftModelSelection,
             composeSkillPrompt = request.composeSkillPrompt,
-            draftModelSelection = restoredPreferences?.modelSelection
-                ?: request.initialDraftPreferences.modelSelection,
+            draftModelSelection = startupPreferences.modelSelection,
             defaultDraftModelSelection = request.initialDraftPreferences.modelSelection,
             draftCatalog = observedCatalog,
             draftConfiguration = linkedMapOf<String, AgentConfigValue>().apply {
@@ -415,6 +511,8 @@ object AgentRuntimeRegistry {
             onDraftModeSelected = request.onDraftModeSelected,
             loadSessionDraftPreferences = request.loadSessionDraftPreferences,
             onDraftPreferencesChanged = request.onDraftPreferencesChanged,
+            loadSessionTurnTimings = request.loadSessionTurnTimings,
+            onSessionTurnTimingsChanged = request.onSessionTurnTimingsChanged,
         )
         val previous = synchronized(catalogLock) {
             runtime.draftCatalog = observedCatalog
@@ -703,20 +801,7 @@ object AgentRuntimeRegistry {
             ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
         val nextCwd = cwd?.trim()?.takeIf(String::isNotBlank) ?: active.session.cwd
         return active.sessionOperationMutex.withLock {
-            when (val loaded = restoreExistingSession(
-                connection = active.connection,
-                instanceId = active.session.instanceId,
-                providerId = active.session.providerId,
-                sessionId = sessionId,
-                cwd = nextCwd,
-                additionalDirectories = active.additionalDirectories
-            )) {
-                is AgentOperationResult.Success -> AgentOperationResult.Success(
-                    active.activate(loaded.value, nextCwd, preserveDraftPreferences = false)
-                )
-                is AgentOperationResult.Failure -> loaded
-                is AgentOperationResult.Unsupported -> loaded
-            }
+            active.loadPreparedSession(sessionId, nextCwd)
         }
     }
 
@@ -804,21 +889,28 @@ object AgentRuntimeRegistry {
         val sourceComposerSessionId = active.session.sessionId
         active.storeComposerDraft(sourceComposerSessionId, draft)
         return active.sessionOperationMutex.withLock {
-            val localMessageId = "local-${System.currentTimeMillis()}"
-            val optimisticKey = AgentConversationKey(
+            val retry = active.takeFailedLocalMessage(sourceComposerSessionId, draft)
+            val localMessageId = retry?.messageId ?: "local-${System.currentTimeMillis()}"
+            val optimisticKey = retry?.key ?: AgentConversationKey(
                 active.session.providerId,
                 active.session.sessionId ?: draftConversationId(instanceId, generation),
             )
             AgentConversationStore.bind(active.session.instanceId, optimisticKey, AgentSessionPhase.Ready)
-            visibleContent.forEach { block ->
-                AgentConversationStore.applyEvent(
-                    optimisticKey,
-                    AgentSessionEvent.MessageChunk(
-                        role = com.kite.app.agent.contract.AgentMessageRole.User,
-                        content = block,
-                        messageId = localMessageId
+            val reusedMessage = retry != null && AgentConversationStore.retryLocalTurn(
+                optimisticKey,
+                localMessageId,
+            )
+            if (!reusedMessage) {
+                visibleContent.forEach { block ->
+                    AgentConversationStore.applyEvent(
+                        optimisticKey,
+                        AgentSessionEvent.MessageChunk(
+                            role = com.kite.app.agent.contract.AgentMessageRole.User,
+                            content = block,
+                            messageId = localMessageId
+                        )
                     )
-                )
+                }
             }
             AgentConversationStore.applyEvent(
                 optimisticKey,
@@ -827,18 +919,46 @@ object AgentRuntimeRegistry {
             val sessionId = when (val prepared = active.prepareDraftRequest()) {
                 is AgentOperationResult.Success -> prepared.value
                 is AgentOperationResult.Failure -> {
-                    AgentConversationStore.discardLocalMessage(optimisticKey, localMessageId)
-                    AgentConversationStore.applyEvent(
-                        optimisticKey,
-                        AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready),
+                    val failureKey = active.session.sessionId?.let { nativeSessionId ->
+                        AgentConversationKey(active.session.providerId, nativeSessionId)
+                    } ?: optimisticKey
+                    if (failureKey != optimisticKey) {
+                        AgentConversationStore.rekey(
+                            active.session.instanceId,
+                            optimisticKey,
+                            failureKey,
+                            AgentSessionPhase.Ready,
+                        )
+                    }
+                    AgentConversationStore.failLocalTurn(failureKey, localMessageId, prepared.message)
+                    active.persistTurnTimings(failureKey)
+                    active.rememberFailedLocalMessage(
+                        active.session.sessionId,
+                        FailedLocalMessage(failureKey, localMessageId, draft.immutableCopy()),
                     )
                     return@withLock prepared
                 }
                 is AgentOperationResult.Unsupported -> {
-                    AgentConversationStore.discardLocalMessage(optimisticKey, localMessageId)
-                    AgentConversationStore.applyEvent(
-                        optimisticKey,
-                        AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready),
+                    val failureKey = active.session.sessionId?.let { nativeSessionId ->
+                        AgentConversationKey(active.session.providerId, nativeSessionId)
+                    } ?: optimisticKey
+                    if (failureKey != optimisticKey) {
+                        AgentConversationStore.rekey(
+                            active.session.instanceId,
+                            optimisticKey,
+                            failureKey,
+                            AgentSessionPhase.Ready,
+                        )
+                    }
+                    AgentConversationStore.failLocalTurn(
+                        failureKey,
+                        localMessageId,
+                        "Agent 不支持：${prepared.operation}",
+                    )
+                    active.persistTurnTimings(failureKey)
+                    active.rememberFailedLocalMessage(
+                        active.session.sessionId,
+                        FailedLocalMessage(failureKey, localMessageId, draft.immutableCopy()),
                     )
                     return@withLock prepared
                 }
@@ -857,12 +977,22 @@ object AgentRuntimeRegistry {
                 AgentPromptRequest(sessionId, transportContent, messageId = localMessageId),
             )
             if (result !is AgentOperationResult.Success) {
-                AgentConversationStore.discardLocalMessage(key, localMessageId)
+                val message = when (result) {
+                    is AgentOperationResult.Failure -> result.message
+                    is AgentOperationResult.Unsupported -> "Agent 不支持：${result.operation}"
+                    is AgentOperationResult.Success -> error("unreachable")
+                }
+                AgentConversationStore.failLocalTurn(key, localMessageId, message)
+                active.rememberFailedLocalMessage(
+                    active.session.sessionId,
+                    FailedLocalMessage(key, localMessageId, draft.immutableCopy()),
+                )
             } else {
                 synchronized(active.composerDraftLock) {
                     active.composerDrafts.remove(composerDraftKey(sourceComposerSessionId))
                 }
             }
+            active.persistTurnTimings(key)
             result
         }
     }
@@ -926,6 +1056,34 @@ object AgentRuntimeRegistry {
         val sessionId = active.session.sessionId
             ?: return AgentOperationResult.Failure("空白草稿没有正在生成的会话")
         return active.connection.cancel(sessionId)
+    }
+
+    /** 只把当前连接在能力握手中公布的认证方法交还给同一连接执行。 */
+    suspend fun authenticate(
+        instanceId: String,
+        generation: Long,
+        methodId: String,
+    ): AgentOperationResult<Unit> {
+        val active = activeByInstance[instanceId]
+            ?.takeIf { it.session.generation == generation }
+            ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
+        if (active.connection.capabilities.authentication.methods.none { it.id == methodId }) {
+            return AgentOperationResult.Unsupported("authenticate:$methodId")
+        }
+        return active.connection.authenticate(methodId)
+    }
+
+    suspend fun logout(
+        instanceId: String,
+        generation: Long,
+    ): AgentOperationResult<Unit> {
+        val active = activeByInstance[instanceId]
+            ?.takeIf { it.session.generation == generation }
+            ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
+        if (!active.connection.capabilities.authentication.logout) {
+            return AgentOperationResult.Unsupported("logout")
+        }
+        return active.connection.logout()
     }
 
     fun resolvePermission(
@@ -1404,6 +1562,7 @@ object AgentRuntimeRegistry {
                     sessionId = sessionId,
                     cwd = session.cwd,
                     additionalDirectories = additionalDirectories,
+                    turnTimings = loadSessionTurnTimings(sessionId),
                 )
             }
         }
@@ -1454,6 +1613,12 @@ object AgentRuntimeRegistry {
         updateDraftCatalog { normalized }
     }
 
+    private fun ActiveRuntime.persistTurnTimings(key: AgentConversationKey) {
+        if (session.sessionId != key.sessionId) return
+        val timings = AgentConversationStore.persistedTurnTimings(key)
+        if (timings.isNotEmpty()) onSessionTurnTimingsChanged(key.sessionId, timings)
+    }
+
     private fun ActiveRuntime.updateDraftCatalog(
         transform: (AgentDraftCapabilityCatalog) -> AgentDraftCapabilityCatalog
     ) {
@@ -1497,10 +1662,123 @@ object AgentRuntimeRegistry {
         }
     }
 
+    private fun ActiveRuntime.takeFailedLocalMessage(
+        sessionId: String?,
+        draft: AgentPromptDraft,
+    ): FailedLocalMessage? = synchronized(composerDraftLock) {
+        val key = composerDraftKey(sessionId)
+        val failed = failedLocalMessages[key] ?: return@synchronized null
+        if (failed.draft != draft) {
+            failedLocalMessages.remove(key)
+            null
+        } else {
+            failedLocalMessages.remove(key)
+        }
+    }
+
+    private fun ActiveRuntime.rememberFailedLocalMessage(
+        sessionId: String?,
+        failed: FailedLocalMessage,
+    ) {
+        synchronized(composerDraftLock) {
+            failedLocalMessages[composerDraftKey(sessionId)] = failed
+            while (failedLocalMessages.size > MAX_COMPOSER_DRAFTS) {
+                failedLocalMessages.remove(failedLocalMessages.keys.first())
+            }
+        }
+    }
+
     private fun AgentPromptDraft.immutableCopy(): AgentPromptDraft = AgentPromptDraft(
         content = content.toList(),
         skills = skills.toList(),
     )
+
+    /**
+     * 加载历史会话前先恢复该会话保存的 Provider 选择。若 Agent 进程在配置准备前已经启动，
+     * 第一次加载失败后只重建一次连接并复用同一 session/load，不创建替代会话。
+     */
+    private suspend fun ActiveRuntime.loadPreparedSession(
+        sessionId: String,
+        cwd: String,
+    ): AgentOperationResult<AgentRuntimeSession> {
+        val preferences = runCatching { loadSessionDraftPreferences(sessionId) }.getOrNull()
+        val targetModel = preferences?.modelSelection ?: defaultDraftModelSelection
+        val preparation = targetModel?.let { prepareDraftModelSelection(it) }
+        if (preparation is AgentProviderPreparationResult.Failed) {
+            return AgentOperationResult.Failure(preparation.message)
+        }
+
+        val needsFreshConnection = (preparation as? AgentProviderPreparationResult.Ready)
+            ?.takeIf { it.nativeConfigurationChanged }
+            ?.effect in setOf(
+                AgentSessionConfigurationEffect.Reconnect,
+                AgentSessionConfigurationEffect.ReconnectNewSession,
+            )
+        var candidate = connection
+        var candidateOwned = false
+
+        suspend fun connectCandidate(): AgentOperationResult<Unit> = when (
+            val connected = provider.connect(connectionRequest, endpoint)
+        ) {
+            is AgentOperationResult.Success -> {
+                candidate = connected.value
+                candidateOwned = candidate !== connection
+                AgentOperationResult.Success(Unit)
+            }
+            is AgentOperationResult.Failure -> connected
+            is AgentOperationResult.Unsupported -> connected
+        }
+
+        if (needsFreshConnection) {
+            when (val connected = connectCandidate()) {
+                is AgentOperationResult.Success -> Unit
+                is AgentOperationResult.Failure -> return connected
+                is AgentOperationResult.Unsupported -> return connected
+            }
+        }
+
+        suspend fun restore(target: KiteAgentConnection) = restoreExistingSession(
+            connection = target,
+            instanceId = session.instanceId,
+            providerId = session.providerId,
+            sessionId = sessionId,
+            cwd = cwd,
+            additionalDirectories = additionalDirectories,
+            turnTimings = loadSessionTurnTimings(sessionId),
+        )
+
+        var loaded = restore(candidate)
+        if (loaded is AgentOperationResult.Failure && !candidateOwned && targetModel != null) {
+            when (val connected = connectCandidate()) {
+                is AgentOperationResult.Success -> loaded = restore(candidate)
+                is AgentOperationResult.Failure -> return connected
+                is AgentOperationResult.Unsupported -> return connected
+            }
+        }
+
+        return when (loaded) {
+            is AgentOperationResult.Success -> {
+                if (candidateOwned) {
+                    val previous = connection
+                    connection = candidate
+                    previous.disconnect()
+                }
+                draftModelSelection = targetModel
+                pendingProviderConfigurationEffect = null
+                AgentOperationResult.Success(
+                    activate(loaded.value, cwd, preserveDraftPreferences = false),
+                )
+            }
+            is AgentOperationResult.Failure -> {
+                if (candidateOwned) candidate.disconnect()
+                loaded
+            }
+            is AgentOperationResult.Unsupported -> {
+                if (candidateOwned) candidate.disconnect()
+                loaded
+            }
+        }
+    }
 
     private suspend fun restoreExistingSession(
         connection: KiteAgentConnection,
@@ -1508,19 +1786,19 @@ object AgentRuntimeRegistry {
         providerId: String,
         sessionId: String,
         cwd: String,
-        additionalDirectories: List<String>
+        additionalDirectories: List<String>,
+        turnTimings: List<AgentPersistedTurnTiming> = emptyList(),
     ): AgentOperationResult<AgentSessionSnapshot> {
         val key = AgentConversationKey(providerId, sessionId)
-        val hasProjection = AgentConversationStore.snapshot(key)?.history?.totalItems?.let { it > 0 } == true
         val request = AgentExistingSessionRequest(sessionId, cwd, additionalDirectories)
-        if (hasProjection && connection.capabilities.sessions.resume) {
-            return connection.resumeSession(request)
-        }
+        // `resume` 只恢复连接，不回放历史。只要 Agent 支持 `load`，切换会话就重新读取权威历史，
+        // 再由 ConversationStore 与仍未进入原生历史的本地回合对账，不能把一份内存投影视为完整历史。
         if (connection.capabilities.sessions.load) {
             AgentConversationStore.beginHistoryReplay(instanceId, key)
             return when (val loaded = connection.loadSession(request)) {
                 is AgentOperationResult.Success -> {
                     AgentConversationStore.completeHistoryReplay(key)
+                    AgentConversationStore.restoreTurnTimings(key, turnTimings)
                     loaded
                 }
                 is AgentOperationResult.Failure -> {

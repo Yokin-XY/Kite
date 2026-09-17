@@ -18,8 +18,10 @@ class KiteResourceActionCoordinatorTest {
             "获取" to KiteResourceActionIntent.Install,
             "重新获取" to KiteResourceActionIntent.Install,
             "获取中" to KiteResourceActionIntent.ReopenInstall,
+            "查看进度" to KiteResourceActionIntent.ReopenOperation,
             "打开" to KiteResourceActionIntent.Open,
             "运行中" to KiteResourceActionIntent.Open,
+            "更新" to KiteResourceActionIntent.Update,
             "卸载" to KiteResourceActionIntent.Uninstall,
             "卸载中" to KiteResourceActionIntent.BusyStatus,
             "未知" to KiteResourceActionIntent.Unsupported

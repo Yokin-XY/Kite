@@ -2,6 +2,8 @@ package com.kite.app.agent.config.native
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.kite.app.agent.codex.CodexPermission
+import com.kite.app.agent.config.AgentSessionPermissionHandling
 import com.kite.app.agent.config.normalizePublishedSessionConfiguration
 import com.kite.app.agent.config.SESSION_PERMISSION_CONFIG_ID
 import com.kite.app.agent.contract.AgentConfigCategory
@@ -11,7 +13,11 @@ import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.agent.contract.AgentReasoningMode
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentMode
+import com.kite.app.agent.contract.AgentModelSource
+import com.kite.app.agent.sdk.configuration.AgentControlCatalogProjector
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -21,7 +27,29 @@ class ProtocolSessionAgentConfigAdaptersTest {
     private val context by lazy { ApplicationProvider.getApplicationContext<Context>() }
 
     @Test
-    fun `Gemini CLI 保留 ACP 原生模式 ID 并只翻译显示语义`() {
+    fun `Codex 冷草稿持续公布原生会话权限目录`() {
+        val control = requireNotNull(CodexAgentConfigAdapter(context).sessionPermissionControl())
+        val option = control.option()
+        val projected = AgentControlCatalogProjector.project(listOf(option)).permission
+
+        assertEquals(SESSION_PERMISSION_CONFIG_ID, option.id)
+        assertEquals(CodexPermission.entries.map { it.id }, control.profiles.map { it.id })
+        assertEquals(CodexPermission.Custom.id, option.currentValue)
+        assertEquals(
+            listOf(
+                AgentSessionPermissionHandling.AskUser,
+                AgentSessionPermissionHandling.PreserveAgentDecision,
+                AgentSessionPermissionHandling.AllowRequest,
+                AgentSessionPermissionHandling.PreserveAgentDecision,
+            ),
+            control.profiles.map { it.handling },
+        )
+        assertNotNull(projected)
+        assertEquals(CodexPermission.Custom.id, projected?.currentProfileId)
+    }
+
+    @Test
+    fun `Gemini CLI 把 ACP 原生审批模式收进统一权限入口`() {
         val adapter = GeminiCliAgentConfigAdapter(context)
         val modes = adapter.normalizeSessionModes(
             listOf(
@@ -32,9 +60,43 @@ class ProtocolSessionAgentConfigAdaptersTest {
             )
         )
 
-        assertEquals(listOf("default", "auto_edit", "yolo", "plan"), modes.map { it.id })
-        assertEquals(listOf("审批", "自动编辑", "完全", "计划"), modes.map { it.name })
+        val control = requireNotNull(adapter.sessionPermissionControl())
+        assertTrue(modes.isEmpty())
+        assertEquals(listOf("default", "auto_edit", "yolo", "plan"), control.profiles.map { it.id })
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Lenient,
+                AgentPermissionLevel.Full,
+                AgentPermissionLevel.ReadOnly,
+            ),
+            control.profiles.map { it.level },
+        )
+        assertEquals(control.profiles.map { it.id }, control.profiles.mapNotNull { control.nativeModeId(it.id) })
     }
+
+    @Test
+    fun `Gemini CLI 把 ACP 模型声明为官方目录并保留真实模型 ID`() {
+        val adapter = GeminiCliAgentConfigAdapter(context)
+        val native = AgentConfigOption.Select(
+            id = "acp.session.model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "gemini-3-flash",
+            choices = listOf(
+                AgentConfigChoice("gemini-3-flash", "Gemini 3 Flash"),
+                AgentConfigChoice("gemini-3-pro", "Gemini 3 Pro"),
+            ),
+        )
+
+        val normalized = adapter.normalizeSessionConfiguration(listOf(native)).single() as AgentConfigOption.Select
+
+        assertEquals(native.currentValue, normalized.currentValue)
+        assertEquals(native.choices.map { it.value }, normalized.choices.map { it.value })
+        assertEquals(listOf("gemini", "gemini"), normalized.choices.map { it.groupId })
+        assertEquals(listOf(AgentModelSource.OfficialLogin, AgentModelSource.OfficialLogin), normalized.choices.map { it.modelSource })
+    }
+
 
     @Test
     fun `Reasonix 只把官方 ACP 公布的三档审批映射为统一权限`() {
@@ -143,6 +205,100 @@ class ProtocolSessionAgentConfigAdaptersTest {
         assertEquals(
             "用户模式",
             adapter.normalizeSessionModes(listOf(AgentMode("custom", "用户模式"))).single().name,
+        )
+    }
+
+    @Test
+    fun `Devin 将原生权限档位与计划模式分开投影`() {
+        val adapter = DevinCliAgentConfigAdapter(context)
+        val control = requireNotNull(adapter.sessionPermissionControl())
+
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Lenient,
+                AgentPermissionLevel.Smart,
+                AgentPermissionLevel.Full,
+            ),
+            control.option().choices.map { it.permission },
+        )
+        assertEquals("normal", control.initialProfileId)
+        assertEquals("bypass", control.nativeModeId("bypass"))
+        assertEquals(
+            listOf("plan", "custom"),
+            adapter.normalizeSessionModes(
+                listOf(
+                    AgentMode("normal", "Normal"),
+                    AgentMode("accept-edits", "Accept Edits"),
+                    AgentMode("smart", "Smart"),
+                    AgentMode("bypass", "Bypass"),
+                    AgentMode("plan", "Plan"),
+                    AgentMode("autonomous", "Autonomous"),
+                    AgentMode("custom", "用户模式"),
+                ),
+            ).map { it.id },
+        )
+    }
+
+    @Test
+    fun `CodeBuddy 使用官方六档权限并从工作模式中移除`() {
+        val adapter = CodeBuddyCodeAgentConfigAdapter(context)
+        val control = requireNotNull(adapter.sessionPermissionControl())
+
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.ReadOnly,
+                AgentPermissionLevel.Restricted,
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Lenient,
+                AgentPermissionLevel.Smart,
+                AgentPermissionLevel.Full,
+            ),
+            control.option().choices.map { it.permission },
+        )
+        assertEquals("default", control.initialProfileId)
+        assertEquals("bypassPermissions", control.nativeModeId("bypassPermissions"))
+        assertEquals(
+            listOf("custom"),
+            adapter.normalizeSessionModes(
+                listOf(
+                    AgentMode("default", "Default"),
+                    AgentMode("acceptEdits", "Accept Edits"),
+                    AgentMode("auto", "Auto"),
+                    AgentMode("dontAsk", "Don't Ask"),
+                    AgentMode("plan", "Plan"),
+                    AgentMode("bypassPermissions", "Bypass"),
+                    AgentMode("custom", "用户模式"),
+                ),
+            ).map { it.id },
+        )
+    }
+
+    @Test
+    fun `TraeCode 使用官方三档权限并从工作模式中移除`() {
+        val adapter = TraeCodeAgentConfigAdapter(context)
+        val control = requireNotNull(adapter.sessionPermissionControl())
+
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Smart,
+                AgentPermissionLevel.Full,
+            ),
+            control.option().choices.map { it.permission },
+        )
+        assertEquals("default", control.initialProfileId)
+        assertEquals("bypass_permissions", control.nativeModeId("bypass_permissions"))
+        assertEquals(
+            listOf("custom"),
+            adapter.normalizeSessionModes(
+                listOf(
+                    AgentMode("default", "Default"),
+                    AgentMode("auto", "Auto"),
+                    AgentMode("bypass_permissions", "Bypass"),
+                    AgentMode("custom", "用户模式"),
+                ),
+            ).map { it.id },
         )
     }
 }

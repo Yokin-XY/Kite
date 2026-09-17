@@ -15,6 +15,12 @@ import com.kite.app.application.runtimebootstrap.RuntimeRootfsPhase
 import com.kite.app.application.runtimemanagement.ProotEnvironmentOperation
 import com.kite.app.application.runtimemanagement.ProotViewInspectionSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.resources.KiteResourceSourceCatalog
+import com.kite.app.resources.KiteResourceSourcePreferences
+import com.kite.app.foundation.devicebridge.DeviceBridgeBackendMode
+import com.kite.app.foundation.devicebridge.DeviceBridgeBackendSnapshot
+import com.kite.app.foundation.devicebridge.DeviceBridgeIdentity
+import com.kite.app.foundation.devicebridge.DeviceBridgeLifecycleStatus
 import com.kite.app.theme.KiteTheme
 import com.kite.app.ui.UiTextRole
 import com.kite.app.ui.theme.isSystemDarkTheme
@@ -33,6 +39,7 @@ internal class SettingsCategoryScreen(
     private val destination: SettingsCategoryDestination,
     initialState: SettingsUiState,
     initialRuntimeSnapshot: RuntimeBootstrapSnapshot = RuntimeBootstrapSnapshot(),
+    initialDeviceBridgeSnapshot: DeviceBridgeBackendSnapshot = DeviceBridgeBackendSnapshot(),
     initialProotViewSnapshot: ProotViewInspectionSnapshot = ProotViewInspectionSnapshot(),
     appInfo: SettingsAppInfo = SettingsAppInfo(),
     initialTerminalFontSize: Int = 35,
@@ -42,6 +49,7 @@ internal class SettingsCategoryScreen(
     onOpenTheme: () -> Unit = {},
     private val onSelectAppLanguage: (AppLanguagePreference) -> Unit = {},
     private val onSelectBrowserMode: (BrowserRuntimeMode) -> Unit = {},
+    private val onSetResourceSourceOrder: (List<String>) -> Unit = {},
     private val onSelectTerminalFontSize: (Int) -> Unit = {},
     private val onSelectTerminalTheme: (TerminalThemeMode) -> Unit = {},
     onRestoreLastScreen: (Boolean) -> Unit = {},
@@ -49,6 +57,9 @@ internal class SettingsCategoryScreen(
     onOpenNotificationSettings: () -> Unit = {},
     onOpenAllFilesSettings: () -> Unit = {},
     onOpenProcesses: () -> Unit = {},
+    private val onSelectDeviceBridgeMode: (DeviceBridgeBackendMode) -> Unit = {},
+    private val onManageDeviceBridge: () -> Unit = {},
+    onOpenStartupReport: () -> Unit = {},
     onOpenLogs: () -> Unit = {},
     onOpenDropZone: () -> Unit = {},
     onOpenAboutPage: (SettingsAboutPage) -> Unit = {},
@@ -79,8 +90,13 @@ internal class SettingsCategoryScreen(
     private var terminalFontBinding: SettingsViewFactory.NavigationBinding? = null
     private var terminalThemeBinding: SettingsViewFactory.NavigationBinding? = null
     private var automationBinding: SettingsViewFactory.SwitchBinding? = null
+    private var resourceSourceBinding: SettingsViewFactory.NavigationBinding? = null
     private var allFilesBinding: SettingsViewFactory.NavigationBinding? = null
     private var runtimeStatusBinding: SettingsViewFactory.InformationBinding? = null
+    private var deviceBridgeSnapshot = initialDeviceBridgeSnapshot
+    private var deviceBridgeModeBinding: SettingsViewFactory.NavigationBinding? = null
+    private var deviceBridgeStatusBinding: SettingsViewFactory.InformationBinding? = null
+    private var deviceBridgeActionBinding: SettingsViewFactory.NavigationBinding? = null
     private var prootViewSnapshot: ProotViewInspectionSnapshot = initialProotViewSnapshot
     private var prootViewAcceptanceBinding: SettingsViewFactory.InformationBinding? = null
     private var prootViewAcceptanceActionBinding: SettingsViewFactory.NavigationBinding? = null
@@ -170,6 +186,25 @@ internal class SettingsCategoryScreen(
                             context.getString(R.string.settings_network_policy_title),
                             context.getString(R.string.settings_network_policy_summary),
                         ))
+                        resourceSourceBinding = factory.navigationRow(
+                            context.getString(R.string.settings_resource_source_title),
+                            context.resourceSourceOrderSummary(initialState.resourceSourcePreferences),
+                        ) {
+                            val preferences = latestState.resourceSourcePreferences.normalized()
+                            factory.showPriorityDialog(
+                                title = context.getString(R.string.settings_resource_source_dialog_title),
+                                summary = context.getString(R.string.settings_resource_source_dialog_summary),
+                                choices = preferences.orderedSourceIds.map { sourceId ->
+                                    SettingsViewFactory.PriorityChoice(
+                                        id = sourceId,
+                                        title = context.resourceSourceLabel(sourceId),
+                                        summary = context.resourceSourceCapabilitySummary(sourceId),
+                                    )
+                                },
+                                onOrderChanged = onSetResourceSourceOrder,
+                            )
+                        }
+                        addRow(resourceSourceBinding!!.root)
                         addRow(factory.navigationRow(
                             context.getString(R.string.settings_browser_experiment_entry_title),
                             context.getString(R.string.settings_browser_experiment_entry_summary),
@@ -201,6 +236,28 @@ internal class SettingsCategoryScreen(
                             runtimeSummary(initialRuntimeSnapshot),
                         )
                         addRow(runtimeStatusBinding!!.root, first = true)
+                        deviceBridgeModeBinding = factory.navigationRow(
+                            context.getString(R.string.settings_device_bridge_mode_title),
+                            deviceBridgeModeSummary(initialDeviceBridgeSnapshot),
+                        ) { showDeviceBridgeModeChoice() }
+                        addRow(deviceBridgeModeBinding!!.root)
+                        deviceBridgeStatusBinding = factory.informationBinding(
+                            context.getString(R.string.settings_device_bridge_status_title),
+                            deviceBridgeStatusSummary(initialDeviceBridgeSnapshot),
+                        )
+                        addRow(deviceBridgeStatusBinding!!.root)
+                        deviceBridgeActionBinding = factory.navigationRow(
+                            context.getString(R.string.settings_device_bridge_action_title),
+                            deviceBridgeActionSummary(initialDeviceBridgeSnapshot),
+                            onManageDeviceBridge,
+                        )
+                        addRow(deviceBridgeActionBinding!!.root)
+                        updateDeviceBridgeActionState(initialDeviceBridgeSnapshot)
+                        addRow(factory.navigationRow(
+                            context.getString(R.string.settings_startup_report_title),
+                            context.getString(R.string.settings_startup_report_summary),
+                            onOpenStartupReport,
+                        ).root)
                         addRow(factory.navigationRow(
                             context.getString(R.string.settings_processes_title),
                             context.getString(R.string.settings_processes_summary),
@@ -313,7 +370,38 @@ internal class SettingsCategoryScreen(
             state.browserRuntimeMode == BrowserRuntimeMode.AutomationBrowser,
             automationSummary(state.browserRuntimeMode),
         )
+        resourceSourceBinding?.bind(
+            context.resourceSourceOrderSummary(state.resourceSourcePreferences),
+        )
     }
+
+    private fun Context.resourceSourceOrderSummary(
+        preferences: KiteResourceSourcePreferences,
+    ): String = preferences.normalized().orderedSourceIds
+        .take(3)
+        .joinToString(" → ") { sourceId -> resourceSourceLabel(sourceId) }
+
+    private fun Context.resourceSourceLabel(sourceId: String): String = getString(
+        when (sourceId) {
+            KiteResourceSourceCatalog.HUAWEI -> R.string.settings_resource_source_huawei
+            KiteResourceSourceCatalog.NPM_MIRROR -> R.string.settings_resource_source_npmmirror
+            KiteResourceSourceCatalog.ALIYUN -> R.string.settings_resource_source_aliyun
+            KiteResourceSourceCatalog.TUNA -> R.string.settings_resource_source_tuna
+            KiteResourceSourceCatalog.GITCODE -> R.string.settings_resource_source_gitcode
+            else -> R.string.settings_resource_source_official
+        },
+    )
+
+    private fun Context.resourceSourceCapabilitySummary(sourceId: String): String = getString(
+        when (sourceId) {
+            KiteResourceSourceCatalog.HUAWEI -> R.string.settings_resource_source_huawei_summary
+            KiteResourceSourceCatalog.NPM_MIRROR -> R.string.settings_resource_source_npmmirror_summary
+            KiteResourceSourceCatalog.ALIYUN -> R.string.settings_resource_source_aliyun_summary
+            KiteResourceSourceCatalog.TUNA -> R.string.settings_resource_source_tuna_summary
+            KiteResourceSourceCatalog.GITCODE -> R.string.settings_resource_source_gitcode_summary
+            else -> R.string.settings_resource_source_official_summary
+        },
+    )
 
     fun renderProotViewSnapshot(snapshot: ProotViewInspectionSnapshot) {
         prootViewSnapshot = snapshot
@@ -357,6 +445,7 @@ internal class SettingsCategoryScreen(
         }
         return buildString {
             when (snapshot.environmentOperation) {
+                ProotEnvironmentOperation.None -> Unit
                 ProotEnvironmentOperation.Creating -> append(
                     context.getString(R.string.settings_engineering_environment_creating),
                 )
@@ -553,6 +642,14 @@ internal class SettingsCategoryScreen(
         runtimeStatusBinding?.subtitle?.text = runtimeSummary(snapshot)
     }
 
+    fun renderDeviceBridgeSnapshot(snapshot: DeviceBridgeBackendSnapshot) {
+        deviceBridgeSnapshot = snapshot
+        deviceBridgeModeBinding?.bind(deviceBridgeModeSummary(snapshot))
+        deviceBridgeStatusBinding?.subtitle?.text = deviceBridgeStatusSummary(snapshot)
+        deviceBridgeActionBinding?.bind(deviceBridgeActionSummary(snapshot))
+        updateDeviceBridgeActionState(snapshot)
+    }
+
     fun renderTerminalPreferences(fontSize: Int, theme: TerminalThemeMode) {
         terminalFontSize = fontSize
         terminalTheme = theme
@@ -725,6 +822,121 @@ internal class SettingsCategoryScreen(
             else -> R.string.settings_runtime_not_ready_summary
         },
     )
+
+    private fun showDeviceBridgeModeChoice() {
+        val modes = DeviceBridgeBackendMode.entries
+        factory.showTextChoiceDialog(
+            title = context.getString(R.string.settings_device_bridge_mode_dialog_title),
+            summary = context.getString(R.string.settings_device_bridge_mode_dialog_summary),
+            options = modes.map(::deviceBridgeModeLabel),
+            selectedIndex = modes.indexOf(deviceBridgeSnapshot.selectedMode).coerceAtLeast(0),
+        ) { index -> onSelectDeviceBridgeMode(modes[index]) }
+    }
+
+    private fun deviceBridgeModeSummary(snapshot: DeviceBridgeBackendSnapshot): String =
+        deviceBridgeModeLabel(snapshot.selectedMode)
+
+    private fun deviceBridgeModeLabel(mode: DeviceBridgeBackendMode): String = context.getString(
+        when (mode) {
+            DeviceBridgeBackendMode.Shizuku -> R.string.settings_device_bridge_mode_shizuku
+            DeviceBridgeBackendMode.RootExperimental -> R.string.settings_device_bridge_mode_root
+        },
+    )
+
+    private fun deviceBridgeStatusSummary(snapshot: DeviceBridgeBackendSnapshot): String =
+        when (snapshot.selectedMode) {
+            DeviceBridgeBackendMode.Shizuku -> when (snapshot.lifecycle) {
+                DeviceBridgeLifecycleStatus.Unavailable -> context.getString(
+                    R.string.settings_device_bridge_shizuku_missing,
+                )
+                DeviceBridgeLifecycleStatus.InstalledButStopped -> context.getString(
+                    R.string.settings_device_bridge_shizuku_stopped,
+                )
+                DeviceBridgeLifecycleStatus.PermissionRequired -> context.getString(
+                    R.string.settings_device_bridge_shizuku_permission_required,
+                )
+                DeviceBridgeLifecycleStatus.Connecting -> context.getString(
+                    R.string.settings_device_bridge_shizuku_connecting,
+                )
+                DeviceBridgeLifecycleStatus.Ready -> context.getString(
+                    R.string.settings_device_bridge_shizuku_ready,
+                    deviceBridgeIdentityLabel(snapshot.identity),
+                    snapshot.uid?.toString() ?: "-",
+                    snapshot.serverVersion?.toString() ?: "-",
+                )
+                DeviceBridgeLifecycleStatus.Revoked -> context.getString(
+                    R.string.settings_device_bridge_shizuku_revoked,
+                )
+                DeviceBridgeLifecycleStatus.Failed -> context.getString(
+                    R.string.settings_device_bridge_shizuku_failed,
+                    snapshot.detail.ifBlank { "-" },
+                )
+            }
+            DeviceBridgeBackendMode.RootExperimental -> when (snapshot.lifecycle) {
+                DeviceBridgeLifecycleStatus.Connecting -> context.getString(
+                    R.string.settings_device_bridge_root_checking,
+                )
+                DeviceBridgeLifecycleStatus.Ready -> context.getString(
+                    R.string.settings_device_bridge_root_ready,
+                    snapshot.uid?.toString() ?: "0",
+                )
+                DeviceBridgeLifecycleStatus.PermissionRequired,
+                DeviceBridgeLifecycleStatus.Revoked -> context.getString(
+                    R.string.settings_device_bridge_root_permission_required,
+                )
+                DeviceBridgeLifecycleStatus.Failed -> context.getString(
+                    R.string.settings_device_bridge_root_failed,
+                    snapshot.detail.ifBlank { "-" },
+                )
+                DeviceBridgeLifecycleStatus.Unavailable,
+                DeviceBridgeLifecycleStatus.InstalledButStopped -> context.getString(
+                    R.string.settings_device_bridge_root_not_checked,
+                )
+            }
+        }
+
+    private fun deviceBridgeActionSummary(snapshot: DeviceBridgeBackendSnapshot): String =
+        when (snapshot.selectedMode) {
+            DeviceBridgeBackendMode.Shizuku -> when {
+                !snapshot.managerInstalled -> context.getString(
+                    R.string.settings_device_bridge_action_get_shizuku,
+                )
+                !snapshot.binderAlive -> context.getString(
+                    R.string.settings_device_bridge_action_open_shizuku,
+                )
+                snapshot.lifecycle == DeviceBridgeLifecycleStatus.PermissionRequired ||
+                    snapshot.lifecycle == DeviceBridgeLifecycleStatus.Revoked -> context.getString(
+                        R.string.settings_device_bridge_action_authorize_shizuku,
+                    )
+                snapshot.checking -> context.getString(
+                    R.string.settings_device_bridge_action_waiting,
+                )
+                else -> context.getString(R.string.settings_device_bridge_action_refresh_shizuku)
+            }
+            DeviceBridgeBackendMode.RootExperimental -> context.getString(
+                if (snapshot.checking) {
+                    R.string.settings_device_bridge_action_waiting
+                } else {
+                    R.string.settings_device_bridge_action_check_root
+                },
+            )
+        }
+
+    private fun deviceBridgeIdentityLabel(identity: DeviceBridgeIdentity): String = context.getString(
+        when (identity) {
+            DeviceBridgeIdentity.App -> R.string.settings_device_bridge_identity_app
+            DeviceBridgeIdentity.Shell -> R.string.settings_device_bridge_identity_shell
+            DeviceBridgeIdentity.Root -> R.string.settings_device_bridge_identity_root
+            DeviceBridgeIdentity.Unknown -> R.string.settings_device_bridge_identity_unknown
+        },
+    )
+
+    private fun updateDeviceBridgeActionState(snapshot: DeviceBridgeBackendSnapshot) {
+        deviceBridgeActionBinding?.root?.let { root ->
+            root.isEnabled = !snapshot.checking
+            root.alpha = if (snapshot.checking) 0.62f else 1f
+        }
+    }
 
     private companion object {
         const val PROJECT_REPOSITORY_URL = "https://github.com/Yokin-XY/Kite"

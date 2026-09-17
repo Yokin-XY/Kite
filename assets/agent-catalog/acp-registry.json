@@ -1,0 +1,158 @@
+{
+  "version": "1.0.0",
+  "agents": [
+    {
+      "id": "claude-acp",
+      "name": "Claude Agent",
+      "version": "0.70.0",
+      "description": "ACP wrapper for Anthropic's Claude",
+      "repository": "https://github.com/agentclientprotocol/claude-agent-acp",
+      "license": "proprietary",
+      "distribution": {
+        "npx": {
+          "package": "@agentclientprotocol/claude-agent-acp@0.70.0"
+        }
+      }
+    },
+    {
+      "id": "codex-acp",
+      "name": "Codex",
+      "version": "1.7.0",
+      "description": "ACP adapter for OpenAI's coding assistant",
+      "repository": "https://github.com/agentclientprotocol/codex-acp",
+      "license": "Apache-2.0",
+      "distribution": {
+        "npx": {
+          "package": "@agentclientprotocol/codex-acp@1.7.0"
+        }
+      }
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini CLI",
+      "version": "0.57.0",
+      "description": "Google's Gemini coding agent",
+      "repository": "https://github.com/google-gemini/gemini-cli",
+      "license": "Apache-2.0",
+      "distribution": {
+        "npx": {
+          "package": "@google/gemini-cli@0.57.0",
+          "args": ["--acp"]
+        }
+      }
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi CLI",
+      "version": "1.49.0",
+      "description": "Moonshot AI's coding assistant",
+      "repository": "https://github.com/MoonshotAI/kimi-cli",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-aarch64": {
+            "archive": "https://github.com/MoonshotAI/kimi-cli/releases/download/1.49.0/kimi-1.49.0-aarch64-unknown-linux-gnu.tar.gz",
+            "cmd": "./kimi",
+            "args": ["acp"],
+            "sha256": "5ac54cabce16ede27b9d2069b9b88edee25528646e7bb5befa9980a1ca71febb"
+          }
+        }
+      }
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "version": "1.18.25",
+      "description": "The open source coding agent",
+      "repository": "https://github.com/anomalyco/opencode",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-aarch64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.18.25/opencode-linux-arm64.tar.gz",
+            "cmd": "./opencode",
+            "args": ["acp"],
+            "sha256": "35ef77897425e41b5183a2c21ac4fb1d4d944d82a94e3c920f57b5490af11ac5"
+          }
+        }
+      }
+    },
+    {
+      "id": "pi-acp",
+      "name": "pi ACP",
+      "version": "0.0.33",
+      "description": "ACP adapter for pi coding agent",
+      "repository": "https://github.com/svkozak/pi-acp",
+      "license": "MIT",
+      "distribution": {
+        "npx": {
+          "package": "pi-acp@0.0.33"
+        }
+      }
+    },
+    {
+      "id": "qwen-code",
+      "name": "Qwen Code",
+      "version": "0.22.3",
+      "description": "Alibaba's Qwen coding assistant",
+      "repository": "https://github.com/QwenLM/qwen-code",
+      "license": "Apache-2.0",
+      "distribution": {
+        "npx": {
+          "package": "@qwen-code/qwen-code@0.22.3",
+          "args": ["--acp", "--experimental-skills"]
+        }
+      }
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "version": "2026.08.11",
+      "description": "Cursor's coding agent",
+      "website": "https://cursor.com/docs/cli/acp",
+      "license": "proprietary",
+      "distribution": {
+        "binary": {
+          "linux-aarch64": {
+            "archive": "https://downloads.cursor.com/lab/2026.08.11-e8db854/linux/arm64/agent-cli-package.tar.gz",
+            "cmd": "./dist-package/cursor-agent",
+            "args": ["acp"]
+          }
+        }
+      }
+    },
+    {
+      "id": "devin",
+      "name": "Devin",
+      "version": "3000.6.7",
+      "description": "Devin CLI coding agent by Cognition",
+      "website": "https://docs.devin.ai/cli",
+      "repository": "https://github.com/CognitionAI/devin-cli",
+      "license": "proprietary",
+      "distribution": {
+        "binary": {
+          "linux-aarch64": {
+            "archive": "https://static.devin.ai/cli/3000.6.7/devin-3000.6.7-aarch64-unknown-linux.tar.gz",
+            "cmd": "./bin/devin",
+            "args": ["acp"]
+          }
+        }
+      }
+    },
+    {
+      "id": "qoder",
+      "name": "Qoder CLI",
+      "version": "1.1.36",
+      "description": "AI coding assistant with agentic capabilities",
+      "website": "https://qoder.com",
+      "license": "proprietary",
+      "distribution": {
+        "npx": {
+          "package": "@qoder-ai/qodercli@1.1.36",
+          "args": ["--acp"]
+        }
+      }
+    }
+  ],
+  "extensions": []
+}

@@ -25,6 +25,7 @@ import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.config.AgentWorkModeCatalog
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.runtime.AgentDraftModelSelection
@@ -138,6 +139,42 @@ class AgentProviderCatalogApiTest {
     }
 
     @Test
+    fun `旧版单模型供应商按真实路由接纳完整目录且保留现有密钥`() = runTest {
+        val zhipuAdapter = FakeAdapter("deepseek-harness").apply {
+            importedProviderId = "zhipu-coding-plan"
+            importedBaseUrl = "https://open.bigmodel.cn/api/coding/paas/v4"
+            importedModels = listOf(AgentProviderModelSummary("glm-5.3-flash", "GLM-5.3-Flash"))
+        }
+        val zhipuApi = StoreBackedAgentProviderCatalogApi(
+            store,
+            AgentConfigAdapterRegistry(listOf(zhipuAdapter)),
+        )
+        val zhipuTarget = AgentConfigurationTarget("deepseek-harness", "deepseek-harness")
+        zhipuApi.saveUserProvider(
+            zhipuTarget,
+            AgentProviderDraft(
+                id = "zhipu-coding-plan",
+                displayName = "智谱 Coding Plan",
+                baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4",
+                models = zhipuAdapter.importedModels,
+            ),
+            AgentProviderCredentialChange.replace("current-key"),
+        )
+
+        zhipuApi.migrateLegacyUserProviders(zhipuTarget)
+        zhipuApi.migrateLegacyUserProviders(zhipuTarget)
+
+        val migrated = zhipuApi.snapshot(zhipuTarget)
+        val provider = migrated.providers.single { it.id == "zhipu-coding-plan" }
+        assertEquals(10, provider.models.size)
+        assertEquals("glm-5.3-flash", provider.models.first().id)
+        assertEquals("zhipu-coding-plan", provider.catalogSync?.presetId)
+        assertEquals("current-key", store.credential("deepseek-harness", "zhipu-coding-plan")?.secret)
+        assertTrue("zhipu-coding-plan" in migrated.pendingNativeProviderIds)
+        assertEquals(1, zhipuAdapter.importCalls)
+    }
+
+    @Test
     fun `免费更新不会替换Kite保存的官方登录版本`() = runTest {
         api.saveOfficialVersion(
             target,
@@ -159,6 +196,44 @@ class AgentProviderCatalogApiTest {
         val official = opened.snapshot.providers.single { it.id == "official" }
         assertEquals("login-v1", official.sourceVersion)
         assertEquals(listOf("official-model"), official.models.map { it.id })
+    }
+
+    @Test
+    fun `协议官方模型目录按真实分组持久化并保留全部模型`() {
+        api.recordProtocolOfficialModels(
+            target,
+            listOf(
+                AgentConfigOption.Select(
+                    id = "acp.session.model",
+                    name = "模型",
+                    category = AgentConfigCategory.Model,
+                    currentValue = "gemini-3-flash",
+                    choices = listOf(
+                        AgentConfigChoice(
+                            value = "gemini-3-flash",
+                            name = "Gemini 3 Flash",
+                            groupId = "gemini",
+                            groupName = "Google Gemini",
+                            modelSource = AgentModelSource.OfficialLogin,
+                        ),
+                        AgentConfigChoice(
+                            value = "gemini/gemini-3-pro",
+                            name = "Gemini 3 Pro",
+                            groupId = "gemini",
+                            groupName = "Google Gemini",
+                            modelSource = AgentModelSource.OfficialLogin,
+                        ),
+                    ),
+                )
+            ),
+        )
+
+        val provider = api.snapshot(target).providers.single()
+        assertEquals("gemini", provider.id)
+        assertEquals("Google Gemini", provider.displayName)
+        assertEquals(listOf("gemini-3-flash", "gemini-3-pro"), provider.models.map { it.id })
+        assertEquals(AgentProviderCatalogPolicy.OfficialLoginVersion, provider.policy)
+        assertEquals("protocol", provider.ownerId)
     }
 
     @Test
@@ -321,8 +396,9 @@ class AgentProviderCatalogApiTest {
         assertEquals(0, adapter.applyCalls)
     }
 
-    private class FakeAdapter : AgentConfigAdapter {
-        override val adapterId: String = "fake"
+    private class FakeAdapter(
+        override val adapterId: String = "fake",
+    ) : AgentConfigAdapter {
         var importCalls = 0
         var freeScanCalls = 0
         var applyCalls = 0
@@ -331,6 +407,9 @@ class AgentProviderCatalogApiTest {
         var defaultModel: String? = null
         var bundled: AgentFreeProviderCatalog? = null
         var bundledModes: AgentWorkModeCatalog? = null
+        var importedProviderId = "zhipu"
+        var importedBaseUrl = "https://example.com/coding"
+        var importedModels = listOf(AgentProviderModelSummary("glm-5.2"))
         private var revision = 1
         private val providers = linkedMapOf<String, AgentProviderSummary>()
 
@@ -342,16 +421,18 @@ class AgentProviderCatalogApiTest {
                 AgentUserProviderImport(
                     providers = listOf(
                         AgentProviderSummary(
-                            id = "zhipu",
+                            id = importedProviderId,
                             displayName = "智谱",
-                            baseUrl = "https://example.com/coding",
-                            models = listOf(AgentProviderModelSummary("glm-5.2")),
+                            baseUrl = importedBaseUrl,
+                            models = importedModels,
                             credentialPresence = AgentCredentialPresence.Present,
                         ),
                     ),
-                    activeProviderId = "zhipu",
-                    defaultModel = "zhipu/glm-5.2",
-                    credentials = mapOf("zhipu" to AgentProviderCredentialChange.replace("legacy-key")),
+                    activeProviderId = importedProviderId,
+                    defaultModel = "$importedProviderId/${importedModels.first().id}",
+                    credentials = mapOf(
+                        importedProviderId to AgentProviderCredentialChange.replace("legacy-key"),
+                    ),
                 ),
             )
         }

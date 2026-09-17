@@ -21,6 +21,10 @@ import com.kite.app.agent.config.AgentMcpSummary
 import com.kite.app.agent.config.AgentMcpTransport
 import com.kite.app.agent.config.AgentPersistentConfigCapability
 import com.kite.app.agent.config.AgentPersistentConfigChange
+import com.kite.app.agent.config.AgentProviderCredentialChange
+import com.kite.app.agent.config.AgentProviderDraft
+import com.kite.app.agent.config.AgentProviderModelSummary
+import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentReasoningControl
 import com.kite.app.agent.config.AgentReasoningNativeMapping
 import com.kite.app.agent.config.AgentSkillActivation
@@ -38,6 +42,7 @@ import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import java.io.File
 import java.net.URI
+import org.tomlj.Toml
 
 internal class KimiCodeAgentConfigAdapter(
     context: Context,
@@ -48,8 +53,8 @@ internal class KimiCodeAgentConfigAdapter(
 ) : JanksonNativeAgentConfigAdapter(
     context,
     ADAPTER_ID,
-    linkedMapOf(MCP_KEY to MCP_PATH),
-    MCP_KEY,
+    linkedMapOf(CONFIG_KEY to CONFIG_PATH, MCP_KEY to MCP_PATH),
+    CONFIG_KEY,
     containerProvider,
     fileStore,
 ) {
@@ -125,6 +130,10 @@ internal class KimiCodeAgentConfigAdapter(
 
     override fun nativeCapabilities(): AgentConfigCapabilities = AgentConfigCapabilities(
         supported = setOf(
+            AgentPersistentConfigCapability.DefaultModel,
+            AgentPersistentConfigCapability.Provider,
+            AgentPersistentConfigCapability.ProviderProfiles,
+            AgentPersistentConfigCapability.CredentialStatus,
             AgentPersistentConfigCapability.Mcp,
             AgentPersistentConfigCapability.Skill,
             AgentPersistentConfigCapability.CoreDocuments,
@@ -152,10 +161,42 @@ internal class KimiCodeAgentConfigAdapter(
 
     override fun decode(files: Map<String, ByteArray>): NativeState {
         val root = parse(files.getValue(MCP_KEY))
+        val config = Toml.parse(files.getValue(CONFIG_KEY).toString(Charsets.UTF_8))
+        check(!config.hasErrors()) { "Kimi Code config.toml 格式无效" }
+        val providerTables = config.getTable(PROVIDERS_KEY)
+        val modelTables = config.getTable(MODELS_KEY)
+        val providers = providerTables?.keySet().orEmpty().mapNotNull { providerId ->
+            val provider = providerTables?.getTable(listOf(providerId)) ?: return@mapNotNull null
+            val models = modelTables?.keySet().orEmpty().mapNotNull { alias ->
+                val model = modelTables?.getTable(listOf(alias)) ?: return@mapNotNull null
+                if (model.getString(PROVIDER_KEY) != providerId) return@mapNotNull null
+                val modelId = model.getString(MODEL_ID_KEY)?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                AgentProviderModelSummary(
+                    modelId,
+                    model.getString(DISPLAY_NAME_KEY)?.takeIf(String::isNotBlank) ?: modelId,
+                )
+            }
+            AgentProviderSummary(
+                id = providerId,
+                displayName = providerId,
+                baseUrl = provider.getString(BASE_URL_TOML_KEY),
+                models = models,
+                credentialPresence = if (provider.getString(API_KEY_TOML_KEY).isNullOrBlank()) {
+                    AgentCredentialPresence.Missing
+                } else {
+                    AgentCredentialPresence.Present
+                },
+            )
+        }.sortedBy(AgentProviderSummary::id)
+        val defaultModel = config.getString(DEFAULT_MODEL_KEY)
+        val activeProvider = defaultModel?.let { alias ->
+            modelTables?.getTable(listOf(alias))?.getString(PROVIDER_KEY)
+        }
         return NativeState(
-            defaultModel = null,
-            providers = emptyList(),
-            credentialPresence = AgentCredentialPresence.NotApplicable,
+            defaultModel = defaultModel,
+            providers = providers,
+            credentialPresence = overallCredential(providers),
+            activeProviderId = activeProvider,
             mcpServers = kimiMcpServers(root.getObject(MCP_SERVERS_KEY)),
             skills = skillDirectory.summaries(
                 activation = ::kimiSkillActivation,
@@ -229,8 +270,18 @@ internal class KimiCodeAgentConfigAdapter(
         changes: List<AgentPersistentConfigChange>,
     ): Map<String, ByteArray> {
         val root = parse(files.getValue(MCP_KEY)).clone()
+        val configEditor = NativeTomlTextEditor(files.getValue(CONFIG_KEY).toString(Charsets.UTF_8))
         changes.forEach { change ->
             when (change) {
+                is AgentPersistentConfigChange.SetDefaultModel -> configEditor.setRootString(DEFAULT_MODEL_KEY, change.modelId)
+                is AgentPersistentConfigChange.SelectProvider -> configEditor.setRootString(
+                    DEFAULT_MODEL_KEY,
+                    providerModelRef(change.providerId, change.modelId),
+                )
+                is AgentPersistentConfigChange.ConfigureProvider ->
+                    configureKimiProvider(configEditor, change.provider, change.credential)
+                is AgentPersistentConfigChange.RemoveProvider ->
+                    removeKimiProvider(configEditor, change.providerId, change.removeCredential)
                 is AgentPersistentConfigChange.ConfigureMcpServer -> configureKimiMcp(root, change.server)
                 is AgentPersistentConfigChange.SetMcpEnabled -> {
                     val servers = root.objectCopy(MCP_SERVERS_KEY)
@@ -247,7 +298,83 @@ internal class KimiCodeAgentConfigAdapter(
                 else -> Unit
             }
         }
-        return mapOf(MCP_KEY to serialize(root))
+        return mapOf(
+            CONFIG_KEY to configEditor.text.toByteArray(),
+            MCP_KEY to serialize(root),
+        )
+    }
+
+    override fun validateBytes(key: String, bytes: ByteArray): String? = when (key) {
+        CONFIG_KEY -> if (Toml.parse(bytes.toString(Charsets.UTF_8)).hasErrors()) {
+            "Kimi Code 原生 config.toml 格式无效"
+        } else {
+            null
+        }
+        MCP_KEY -> super.validateBytes(key, bytes)
+        else -> "未知的 Kimi Code 配置文件"
+    }
+
+    private fun configureKimiProvider(
+        editor: NativeTomlTextEditor,
+        provider: AgentProviderDraft,
+        credential: AgentProviderCredentialChange,
+    ) {
+        val before = Toml.parse(editor.text)
+        val providerPath = listOf(PROVIDERS_KEY, provider.id)
+        val currentCredential = before.getTable(PROVIDERS_KEY)?.getTable(listOf(provider.id))
+            ?.getString(API_KEY_TOML_KEY)
+        val credentialValue = when (credential) {
+            AgentProviderCredentialChange.Keep -> currentCredential
+            is AgentProviderCredentialChange.Replace -> credential.secret
+            AgentProviderCredentialChange.Remove -> null
+        }
+        editor.setTableFields(
+            providerPath,
+            mapOf(
+                TYPE_TOML_KEY to NativeTomlTextEditor.tomlString(OPENAI_TYPE),
+                API_KEY_TOML_KEY to credentialValue?.let(NativeTomlTextEditor::tomlString),
+                BASE_URL_TOML_KEY to NativeTomlTextEditor.tomlString(provider.baseUrl.trim()),
+            ),
+        )
+        val existingModels = before.getTable(MODELS_KEY)
+        val desiredAliases = provider.models.map { providerModelRef(provider.id, it.id) }.toSet()
+        existingModels?.keySet().orEmpty().forEach { alias ->
+            val model = existingModels?.getTable(listOf(alias)) ?: return@forEach
+            if (model.getString(PROVIDER_KEY) == provider.id && alias !in desiredAliases) {
+                editor.removeTableTree(listOf(MODELS_KEY, alias))
+            }
+        }
+        provider.models.forEach { summary ->
+            val alias = providerModelRef(provider.id, summary.id)
+            val existing = existingModels?.getTable(listOf(alias))
+            val context = existing?.getLong(MAX_CONTEXT_KEY) ?: DEFAULT_CONTEXT
+            editor.setTableFields(
+                listOf(MODELS_KEY, alias),
+                mapOf(
+                    PROVIDER_KEY to NativeTomlTextEditor.tomlString(provider.id),
+                    MODEL_ID_KEY to NativeTomlTextEditor.tomlString(summary.id.trim()),
+                    MAX_CONTEXT_KEY to context.toString(),
+                    DISPLAY_NAME_KEY to NativeTomlTextEditor.tomlString(summary.displayName.ifBlank { summary.id }.trim()),
+                ),
+            )
+        }
+        if (Toml.parse(editor.text).getString(DEFAULT_MODEL_KEY).isNullOrBlank()) {
+            editor.setRootString(DEFAULT_MODEL_KEY, providerModelRef(provider.id, provider.models.first().id))
+        }
+    }
+
+    private fun removeKimiProvider(editor: NativeTomlTextEditor, providerId: String, _removeCredential: Boolean) {
+        val before = Toml.parse(editor.text)
+        before.getTable(MODELS_KEY)?.keySet().orEmpty().forEach { alias ->
+            val model = before.getTable(MODELS_KEY)?.getTable(listOf(alias)) ?: return@forEach
+            if (model.getString(PROVIDER_KEY) == providerId) editor.removeTableTree(listOf(MODELS_KEY, alias))
+        }
+        // Kimi 把 Provider 与凭据放在同一张表；删除 Provider 必须删整表。
+        // removeCredential 只用于独立凭据库的 Agent，在这个原生 schema 中没有第二个可保留位置。
+        editor.removeTableTree(listOf(PROVIDERS_KEY, providerId))
+        if (before.getString(DEFAULT_MODEL_KEY)?.startsWith("$providerId/") == true) {
+            editor.setRootString(DEFAULT_MODEL_KEY, null)
+        }
     }
 
     private fun kimiMcpServers(section: JsonObject?): List<AgentMcpSummary> = section?.entries
@@ -430,6 +557,20 @@ internal class KimiCodeAgentConfigAdapter(
         )
         private const val MCP_KEY = "mcp"
         private const val MCP_PATH = "/root/.kimi-code/mcp.json"
+        private const val CONFIG_KEY = "config"
+        private const val CONFIG_PATH = "/root/.kimi-code/config.toml"
+        private const val DEFAULT_MODEL_KEY = "default_model"
+        private const val PROVIDERS_KEY = "providers"
+        private const val MODELS_KEY = "models"
+        private const val PROVIDER_KEY = "provider"
+        private const val MODEL_ID_KEY = "model"
+        private const val DISPLAY_NAME_KEY = "display_name"
+        private const val TYPE_TOML_KEY = "type"
+        private const val OPENAI_TYPE = "openai"
+        private const val API_KEY_TOML_KEY = "api_key"
+        private const val BASE_URL_TOML_KEY = "base_url"
+        private const val MAX_CONTEXT_KEY = "max_context_size"
+        private const val DEFAULT_CONTEXT = 128_000L
         private const val MCP_SERVERS_KEY = "mcpServers"
         private const val SKILL_ROOT = "/root/.kimi-code/skills"
         private const val AGENTS_SKILL_ROOT = "/root/.agents/skills"

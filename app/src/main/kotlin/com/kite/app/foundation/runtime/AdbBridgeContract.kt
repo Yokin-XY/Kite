@@ -1,5 +1,10 @@
 package com.kite.app.foundation.runtime
 
+import com.kite.app.foundation.devicebridge.DeviceBridgeBackendMode
+import com.kite.app.foundation.devicebridge.DeviceBridgeCatalog
+import com.kite.app.foundation.devicebridge.DeviceBridgeContract
+import com.kite.app.foundation.workspace.WorkspaceBuildSupport
+
 /**
  * Container-visible ADB contract.
  *
@@ -22,7 +27,8 @@ object AdbBridgeContract {
             source = "apk_bridge_contract_v0",
             uid = "",
             version = ""
-        )
+        ),
+        backendMode: DeviceBridgeBackendMode = DeviceBridgeBackendMode.Shizuku,
     ): LinkedHashMap<String, String> {
         return linkedMapOf(
             "KF_ADB_MODE" to MODE,
@@ -37,7 +43,14 @@ object AdbBridgeContract {
             "KF_ADB_SHIZUKU_PERMISSION" to status.permission,
             "KF_ADB_SHIZUKU_UID" to status.uid,
             "KF_ADB_SHIZUKU_VERSION" to status.version,
-            "KF_ADB_SHIZUKU_ERROR" to (status.error ?: "")
+            "KF_ADB_SHIZUKU_ERROR" to (status.error ?: ""),
+            "KF_DEVICE_BRIDGE_PROTOCOL_VERSION" to DeviceBridgeContract.PROTOCOL_VERSION.toString(),
+            "KF_DEVICE_SELECTED_BACKEND" to backendMode.storageValue,
+            "KF_DEVICE_IMPLEMENTED_CAPABILITIES" to
+                DeviceBridgeCatalog.implementedCapabilityIds.joinToString(","),
+            "KF_DEVICE_CLI" to WorkspaceBuildSupport.CONTAINER_KITE_DEVICE_PATH,
+            "KF_DEVICE_CAPABILITY_CATALOG_PATH" to
+                WorkspaceBuildSupport.CONTAINER_DEVICE_BRIDGE_CAPABILITY_CATALOG_PATH
         )
     }
 }

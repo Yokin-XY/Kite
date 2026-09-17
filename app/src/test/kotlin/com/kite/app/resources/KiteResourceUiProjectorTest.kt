@@ -20,7 +20,21 @@ class KiteResourceUiProjectorTest {
             secondary = "取消"
         )
         assertProjection(installing = true, state = "获取中", action = "获取中", enabled = true, secondary = "取消")
+        assertProjection(
+            installing = true,
+            currentOperation = KiteResourceInstallRecipes.OP_REPAIR,
+            state = "修复中",
+            action = "查看进度",
+            enabled = true,
+        )
         assertProjection(installed = true, state = "已获取", action = "打开", enabled = true, secondary = "卸载")
+        assertProjection(
+            installed = true,
+            updateAvailable = true,
+            state = "可更新",
+            action = "更新",
+            enabled = true,
+        )
         assertProjection(uninstalling = true, state = "卸载中", action = "卸载中", enabled = false)
         assertProjection(failed = true, state = "获取失败", action = "重新获取", enabled = true, secondary = "取消")
         assertProjection(
@@ -66,6 +80,8 @@ class KiteResourceUiProjectorTest {
         uninstalling: Boolean = false,
         failed: Boolean = false,
         failedOperation: String = KiteResourceInstallStore.OP_INSTALL,
+        currentOperation: String = "",
+        updateAvailable: Boolean = false,
         state: String,
         action: String,
         enabled: Boolean,
@@ -78,7 +94,9 @@ class KiteResourceUiProjectorTest {
             installPlanInProgress = installPlanInProgress,
             uninstalling = uninstalling,
             failed = failed,
-            failedOperation = failedOperation
+            failedOperation = failedOperation,
+            currentOperation = currentOperation,
+            updateAvailable = updateAvailable,
         )
         assertEquals(state, projection.stateLabel)
         assertEquals(action, projection.actionLabel)
@@ -94,6 +112,8 @@ class KiteResourceUiProjectorTest {
         uninstalling: Boolean = false,
         failed: Boolean = false,
         failedOperation: String = KiteResourceInstallStore.OP_INSTALL,
+        currentOperation: String = "",
+        updateAvailable: Boolean = false,
         openRunStatus: CardRunStatus? = null
     ): KiteResourceUiProjection =
         KiteResourceUiProjector.project(
@@ -104,7 +124,9 @@ class KiteResourceUiProjectorTest {
             uninstalling = uninstalling,
             failed = failed,
             failedOperation = failedOperation,
+            currentOperation = currentOperation,
             idleStateLabel = "未获取",
+            updateAvailable = updateAvailable,
             openRunStatus = openRunStatus
         )
 }

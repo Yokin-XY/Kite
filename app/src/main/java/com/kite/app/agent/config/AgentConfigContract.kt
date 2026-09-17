@@ -314,13 +314,64 @@ data class AgentProviderDraft(
     val models: List<AgentProviderModelSummary>
 )
 
+/** 供应商预置的展示分类；只负责配对页组织，不改变模型来源或运行时协议。 */
+enum class AgentProviderCategory {
+    Official,
+    ChinaOfficial,
+    CloudProvider,
+    Aggregator,
+    ThirdParty,
+    Custom,
+}
+
+/** 同一厂商下可以存在多个互不等价的访问渠道。 */
+enum class AgentProviderAccessChannel {
+    Api,
+    CodingPlan,
+    TokenPlan,
+    OfficialLogin,
+    Custom,
+}
+
+/** 访问入口所面向的市场；未得到明确事实时保持未声明，不能按公司国别猜测。 */
+enum class AgentProviderMarket {
+    China,
+    Global,
+    Unspecified,
+}
+
+/** 预置中模型目录的数据新鲜度来源。 */
+enum class AgentProviderPresetSource {
+    ModelsDev,
+    ModelsDevCache,
+    Bundled,
+}
+
+/** 请求路线的事实来源；模型目录和 Agent 可用协议可以来自不同来源。 */
+enum class AgentProviderPresetRouteSource {
+    ModelsDev,
+    AdapterCatalog,
+}
+
 /** 预置只是可编辑的起点，保存后仍写入对应 Agent 的原生配置。 */
 data class AgentProviderPreset(
     val id: String,
     val providerId: String,
     val displayName: String,
     val baseUrl: String,
-    val models: List<AgentProviderModelSummary>
+    val models: List<AgentProviderModelSummary>,
+    /** 同一厂商的 API、Coding Plan 和国内/国际入口共用稳定厂商 ID。 */
+    val vendorId: String = providerId,
+    /** 卡片第一行只显示稳定厂商品牌；完整渠道名称仍由 [displayName] 保留。 */
+    val vendorDisplayName: String = displayName,
+    val category: AgentProviderCategory = AgentProviderCategory.ThirdParty,
+    val accessChannel: AgentProviderAccessChannel = AgentProviderAccessChannel.Api,
+    val market: AgentProviderMarket = AgentProviderMarket.Unspecified,
+    val source: AgentProviderPresetSource = AgentProviderPresetSource.Bundled,
+    val routeSource: AgentProviderPresetRouteSource = AgentProviderPresetRouteSource.AdapterCatalog,
+    val documentationUrl: String? = null,
+    /** models.dev 可能有数百个模型；表单只预填最近一批，但这里保留完整数量用于明确提示。 */
+    val catalogModelCount: Int = models.size,
 )
 
 /** Agent 官方权限档位的生效边界；显示层不得把它推断成更强的沙箱承诺。 */

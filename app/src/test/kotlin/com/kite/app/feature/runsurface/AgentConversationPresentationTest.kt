@@ -3,6 +3,7 @@ package com.kite.app.feature.runsurface
 import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentMessageRole
 import com.kite.app.agent.contract.AgentPlanEntry
+import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentToolCall
 import com.kite.app.agent.contract.AgentToolContent
 import com.kite.app.agent.contract.AgentToolLocation
@@ -16,6 +17,89 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentConversationPresentationTest {
+    @Test
+    fun `用户消息发送后立即出现左侧连接状态`() {
+        val items = AgentConversationPresentation.composeTurns(
+            items = listOf(
+                AgentConversationItem.Message(
+                    id = "user",
+                    role = AgentMessageRole.User,
+                    content = listOf(AgentContent.Text("你好")),
+                    turnOrdinal = 1L,
+                ),
+            ),
+            turns = listOf(
+                AgentConversationTurn(
+                    ordinal = 1L,
+                    state = AgentConversationTurnState.Running,
+                    startedAtMillis = 1_000L,
+                )
+            ),
+            phase = AgentSessionPhase.Preparing,
+        )
+
+        assertTrue(items[0] is AgentConversationDisplayItem.UserMessage)
+        val process = items[1] as AgentConversationDisplayItem.Process
+        assertTrue(process.entries.isEmpty())
+        assertEquals(1_000L, process.startedAtMillis)
+        val status = items[2] as AgentConversationDisplayItem.TurnStatus
+        assertEquals("正在连接 Agent…", status.label)
+    }
+
+    @Test
+    fun `运行过程持续显示计时且完成后默认收起`() {
+        val running = AgentConversationDisplayItem.Process(
+            id = "running",
+            turnOrdinal = 1L,
+            state = AgentConversationTurnState.Running,
+            startedAtMillis = 1_000L,
+            durationMillis = null,
+            entries = emptyList(),
+        )
+        val completed = running.copy(
+            id = "completed",
+            state = AgentConversationTurnState.Completed,
+            durationMillis = 832_000L,
+        )
+
+        assertEquals(
+            "用时 13分钟 52秒",
+            AgentConversationProcessPresentation.durationLabel(running, nowMillis = 833_000L),
+        )
+        assertEquals(
+            "用时 13分钟 52秒",
+            AgentConversationProcessPresentation.durationLabel(completed, nowMillis = 999_000L),
+        )
+        assertTrue(AgentConversationProcessPresentation.isExpandedByDefault(running.state))
+        assertFalse(AgentConversationProcessPresentation.isExpandedByDefault(completed.state))
+    }
+
+    @Test
+    fun `失败回合保留左侧原因而不伪装成Agent回答`() {
+        val items = AgentConversationPresentation.composeTurns(
+            items = listOf(
+                AgentConversationItem.Message(
+                    id = "user",
+                    role = AgentMessageRole.User,
+                    content = listOf(AgentContent.Text("你好")),
+                    turnOrdinal = 1L,
+                ),
+            ),
+            turns = listOf(
+                AgentConversationTurn(
+                    ordinal = 1L,
+                    state = AgentConversationTurnState.Failed,
+                    errorMessage = "网络连接失败",
+                ),
+            ),
+        )
+
+        val status = items[1] as AgentConversationDisplayItem.TurnStatus
+        assertEquals("本轮未完成", status.label)
+        assertEquals("网络连接失败", status.detail)
+        assertFalse(items.any { it is AgentConversationDisplayItem.AssistantText })
+    }
+
     @Test
     fun `行内强调和代码去掉标记并保留样式语义`() {
         val segments = AgentConversationPresentation.parseInlineMarkdown(
@@ -338,6 +422,39 @@ class AgentConversationPresentationTest {
         assertTrue(process.entries.single() is AgentConversationDisplayItem.Thought)
         val answer = items[2] as AgentConversationDisplayItem.AssistantText
         assertEquals("已完成", answer.text)
+    }
+
+    @Test
+    fun `恢复历史后仅有持久用时也会保留折叠入口`() {
+        val source = listOf(
+            AgentConversationItem.Message(
+                id = "user",
+                role = AgentMessageRole.User,
+                content = listOf(AgentContent.Text("你好")),
+                turnOrdinal = 1L,
+            ),
+            AgentConversationItem.Message(
+                id = "answer",
+                role = AgentMessageRole.Assistant,
+                content = listOf(AgentContent.Text("你好呀")),
+                turnOrdinal = 1L,
+            ),
+        )
+
+        val items = AgentConversationPresentation.composeTurns(
+            source,
+            listOf(
+                AgentConversationTurn(
+                    ordinal = 1L,
+                    state = AgentConversationTurnState.Historical,
+                    persistedDurationMillis = 8_000L,
+                )
+            ),
+        )
+
+        val process = items.filterIsInstance<AgentConversationDisplayItem.Process>().single()
+        assertEquals(8_000L, process.durationMillis)
+        assertTrue(process.entries.isEmpty())
     }
 
     @Test

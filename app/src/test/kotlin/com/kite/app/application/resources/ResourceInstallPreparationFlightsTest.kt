@@ -1,6 +1,7 @@
 package com.kite.app.application.resources
 
 import com.kite.app.resources.KiteResourcePlanSnapshot
+import com.kite.app.resources.KiteResourceInstallStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
@@ -114,6 +115,41 @@ class ResourceInstallPreparationFlightsTest {
         assertTrue(ResourcePlanCancellationPolicy.owns(old, "target", 11L, "target"))
         assertFalse(ResourcePlanCancellationPolicy.owns(replacement, "target", 11L, "target"))
         assertFalse(ResourcePlanCancellationPolicy.owns(old, "other", 11L, "target"))
+    }
+
+    @Test
+    fun `返回只取消准备中或全部尚未开始的计划`() {
+        val preparing = KiteResourcePlanSnapshot(
+            targetResourceId = "target",
+            status = KiteResourceInstallStore.PLAN_STATUS_PREPARING,
+            generation = 11L,
+        )
+        val pending = preparing.copy(
+            status = KiteResourceInstallStore.PLAN_STATUS_ACTIVE,
+            resourceIds = listOf("base", "target"),
+            pendingResourceIds = listOf("base", "target"),
+            stepStatusByResourceId = mapOf(
+                "base" to KiteResourceInstallStore.PLAN_STEP_PENDING,
+                "target" to KiteResourceInstallStore.PLAN_STEP_PENDING,
+            ),
+        )
+        val running = pending.copy(
+            runningResourceIds = listOf("base"),
+            pendingResourceIds = listOf("target"),
+            stepStatusByResourceId = pending.stepStatusByResourceId +
+                ("base" to KiteResourceInstallStore.PLAN_STEP_RUNNING),
+        )
+        val partiallyCompleted = pending.copy(
+            pendingResourceIds = listOf("target"),
+            stepStatusByResourceId = pending.stepStatusByResourceId +
+                ("base" to KiteResourceInstallStore.PLAN_STEP_DONE),
+        )
+
+        assertTrue(ResourcePlanCancellationPolicy.canCancelBeforeFirstStart(preparing, "target"))
+        assertTrue(ResourcePlanCancellationPolicy.canCancelBeforeFirstStart(pending, "target"))
+        assertFalse(ResourcePlanCancellationPolicy.canCancelBeforeFirstStart(running, "target"))
+        assertFalse(ResourcePlanCancellationPolicy.canCancelBeforeFirstStart(partiallyCompleted, "target"))
+        assertFalse(ResourcePlanCancellationPolicy.canCancelBeforeFirstStart(pending, "other"))
     }
 
     private fun token(target: String, generation: Long) = ResourceInstallPreparationToken(

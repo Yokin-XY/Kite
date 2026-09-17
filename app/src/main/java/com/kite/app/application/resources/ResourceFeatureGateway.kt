@@ -28,7 +28,9 @@ data class ResourceFeatureRunSnapshot(
     val status: CardRunStatus,
     val surface: CardRunSurface,
     val startedAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val progressText: String = "",
+    val reportText: String = "",
 )
 
 interface ResourceFeatureGateway {

@@ -192,15 +192,20 @@ internal class AndroidResourceVersionGateway(
     private suspend fun readRemoteVersion(probe: KiteResourceRemoteVersionProbe): Result<String> =
         withContext(Dispatchers.IO) {
             runCatching {
-                runCatching { readRemoteBody(probe.url) }.getOrElse { primaryError ->
-                    val fallbackUrl = probe.fallbackUrl.takeIf(String::isNotBlank)
-                        ?: throw primaryError
-                    runCatching { readRedirectTarget(fallbackUrl) }.getOrElse { fallbackError ->
-                        throw IllegalStateException(
-                            "remote_version_primary_${primaryError.message.orEmpty()}_fallback_${fallbackError.message.orEmpty()}",
-                            fallbackError
-                        )
-                    }
+                var lastError: Throwable? = null
+                probe.orderedUrls.forEach { url ->
+                    val body = runCatching { readRemoteBody(url) }
+                    if (body.isSuccess) return@runCatching body.getOrThrow()
+                    lastError = body.exceptionOrNull()
+                }
+                val primaryError = lastError ?: IllegalStateException("remote_version_source_missing")
+                val fallbackUrl = probe.fallbackUrl.takeIf(String::isNotBlank)
+                    ?: throw primaryError
+                runCatching { readRedirectTarget(fallbackUrl) }.getOrElse { fallbackError ->
+                    throw IllegalStateException(
+                        "remote_version_sources_${primaryError.message.orEmpty()}_fallback_${fallbackError.message.orEmpty()}",
+                        fallbackError
+                    )
                 }
             }
         }

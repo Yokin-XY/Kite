@@ -39,6 +39,7 @@ internal data class ResourceMaintenanceUiState(
     val statusSummary: String = "",
     val checkUpdateEnabled: Boolean = false,
     val updateEnabled: Boolean = false,
+    val repairEnabled: Boolean = false,
     val reinstallEnabled: Boolean = false,
     val uninstallEnabled: Boolean = false
 )

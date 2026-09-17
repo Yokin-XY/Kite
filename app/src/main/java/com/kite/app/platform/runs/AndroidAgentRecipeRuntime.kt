@@ -11,14 +11,15 @@ import com.kite.app.agent.codex.CodexAppServerProcessLauncher
 import com.kite.app.agent.codex.CodexAppServerProviderDescriptor
 import com.kite.app.agent.codex.CodexOfficialModelCatalogSink
 import com.kite.app.agent.codex.CodexSessionConfigurationOverride
-import com.kite.app.agent.pi.PiRpcAgentProvider
-import com.kite.app.agent.pi.PiRpcProcessLauncher
-import com.kite.app.agent.pi.PiRpcProviderDescriptor
+import com.kite.app.agent.zcode.ZCodeAppServerAgentProvider
+import com.kite.app.agent.zcode.ZCodeAppServerProcessLauncher
+import com.kite.app.agent.zcode.ZCodeAppServerProviderDescriptor
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentSessionConfigurationOverlayProvider
 import com.kite.app.agent.config.defaultAgentConfigAdapters
+import com.kite.app.agent.config.native.ZCodeAgentConfigAdapter
 import com.kite.app.agent.config.mergeAgentSessionConfigurationOverlay
 import com.kite.app.agent.config.normalizePublishedSessionConfiguration
 import com.kite.app.agent.contract.AgentConfigCategory
@@ -47,9 +48,11 @@ import com.kite.app.agent.runtime.AgentRuntimeStartRequest
 import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
 import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
 import com.kite.app.agent.sdk.configuration.StoreBackedAgentProviderCatalogApi
+import com.kite.app.agent.sdk.configuration.recordProtocolOfficialModels
 import com.kite.app.foundation.runtime.AndroidSharedStorageManager
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
+import com.kite.app.foundation.runtime.RuntimeHardLinkMode
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
@@ -160,6 +163,7 @@ internal fun interface ManagedAgentProcessLaunchPlanner {
         environment: Map<String, String>,
         runtimeGuarantees: Set<String>,
         runtimeGuaranteeEvidence: Map<String, String>,
+        hardLinkMode: RuntimeHardLinkMode,
     ): ManagedAgentProcessLaunch
 }
 
@@ -261,6 +265,7 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
         environment: Map<String, String>,
         runtimeGuarantees: Set<String>,
         runtimeGuaranteeEvidence: Map<String, String>,
+        hardLinkMode: RuntimeHardLinkMode,
     ): ManagedAgentProcessLaunch {
         require(argv.isNotEmpty()) { "agent_process_command_empty" }
         val guarantees = RuntimeExecutionGuaranteeCodec.decode(runtimeGuarantees)
@@ -279,6 +284,7 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
                 environment = environment,
                 guarantees = guarantees,
                 guaranteeEvidence = guaranteeEvidence,
+                hardLinkMode = hardLinkMode,
             ),
         )
         val selected = ManagedAgentProcessLaunchSelector.select(runtimePlan) { plan ->
@@ -361,6 +367,7 @@ internal class AndroidAgentRecipeRuntime(
         val argv: List<String>,
         val runtimeGuarantees: Set<String>,
         val runtimeGuaranteeEvidence: Map<String, String>,
+        val hardLinkMode: RuntimeHardLinkMode,
         val environmentFiles: Map<String, String>,
         val runtimeDependencies: List<KiteResourceAgentRuntimeDependency>,
         val initializeTimeoutMs: Long,
@@ -379,6 +386,9 @@ internal class AndroidAgentRecipeRuntime(
             )
         )
     private val manifestLoader = KiteResourceManifestLoader(appContext)
+    private val agentConfigProjection = ContainerAgentConfigProjection {
+        WorkSurfaceRuntimeBridge.getSavedContainer(appContext)
+    }
     private val draftCapabilityCache = AgentDraftCapabilityCacheStore(appContext)
     private val sessionMetadataStore = AgentSessionMetadataStore(appContext)
     private val managedProcessLaunchPlanner = managedProcessLaunchPlanner
@@ -486,6 +496,7 @@ internal class AndroidAgentRecipeRuntime(
                     environment = resolvedEnvironment,
                     runtimeGuarantees = resolved.runtimeGuarantees,
                     runtimeGuaranteeEvidence = resolved.runtimeGuaranteeEvidence,
+                    hardLinkMode = resolved.hardLinkMode,
                 )
             }.getOrElse { error ->
                 callback(
@@ -575,21 +586,27 @@ internal class AndroidAgentRecipeRuntime(
                         )
                     },
                 )
-                PROTOCOL_PI_RPC -> PiRpcAgentProvider(
-                    descriptor = PiRpcProviderDescriptor(
+                PROTOCOL_PI_RPC -> error("Pi RPC 协议已冻结")
+                PROTOCOL_ZCODE_APP_SERVER -> ZCodeAppServerAgentProvider(
+                    descriptor = ZCodeAppServerProviderDescriptor(
                         id = providerId,
                         name = resolved.displayName,
                         title = resolved.title,
                         version = resolved.version,
                     ),
-                    launcher = PiRpcProcessLauncher {
+                    launcher = ZCodeAppServerProcessLauncher {
                         processFactory.start(processLaunch.process)
                     },
                     initializeTimeoutMs = resolved.initializeTimeoutMs,
                     diagnosticSink = { line ->
                         Log.w(TAG, "Agent ${resolved.providerId}: $line")
                     },
+                    runtimeModelCatalogSource = {
+                        (agentConfigAdapters.adapter(resolved.configAdapterId) as? ZCodeAgentConfigAdapter)
+                            ?.runtimeModelCatalog()
+                    },
                 )
+                PROTOCOL_ANTIGRAVITY_STREAM_JSON -> error("Antigravity 协议已冻结")
                 else -> error("已由 managed protocol 校验限制协议")
             }
             startConnection(
@@ -829,9 +846,16 @@ internal class AndroidAgentRecipeRuntime(
                         )
                     }
                 },
+                loadSessionTurnTimings = { sessionId ->
+                    sessionMetadataStore.turnTimings(providerId, sessionId)
+                },
+                onSessionTurnTimingsChanged = { sessionId, timings ->
+                    sessionMetadataStore.saveTurnTimings(providerId, sessionId, timings)
+                },
                 onDraftCatalogChanged = { catalog ->
                     draftCapabilityCache.put(draftCatalogKey, catalog)
                     agentProviderCatalogApi.recordMappedControls(catalogTarget, catalog.configuration)
+                    agentProviderCatalogApi.recordProtocolOfficialModels(catalogTarget, catalog.configuration)
                     agentProviderCatalogApi.recordMappedWorkModes(
                         catalogTarget,
                         catalog.modes,
@@ -959,6 +983,7 @@ internal class AndroidAgentRecipeRuntime(
                     argv = launch.argv,
                     runtimeGuarantees = launch.runtimeGuarantees,
                     runtimeGuaranteeEvidence = launch.runtimeGuaranteeEvidence,
+                    hardLinkMode = profile?.hardLinkMode ?: RuntimeHardLinkMode.EMULATED,
                     environmentFiles = profile?.environmentFiles.orEmpty(),
                     runtimeDependencies = profile?.runtimeDependencies.orEmpty(),
                     initializeTimeoutMs = profile?.initializeTimeoutMs
@@ -980,6 +1005,7 @@ internal class AndroidAgentRecipeRuntime(
                 argv = emptyList(),
                 runtimeGuarantees = emptySet(),
                 runtimeGuaranteeEvidence = emptyMap(),
+                hardLinkMode = RuntimeHardLinkMode.EMULATED,
                 environmentFiles = emptyMap(),
                 runtimeDependencies = emptyList(),
                 initializeTimeoutMs = DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
@@ -1004,6 +1030,7 @@ internal class AndroidAgentRecipeRuntime(
             argv = argv,
             runtimeGuarantees = runtimeGuarantees,
             runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
+            hardLinkMode = hardLinkMode,
             environmentFiles = environmentFiles,
             runtimeDependencies = runtimeDependencies,
             initializeTimeoutMs = initializeTimeoutMs,
@@ -1190,6 +1217,8 @@ internal class AndroidAgentRecipeRuntime(
         const val PROTOCOL_ACP = "acp"
         const val PROTOCOL_CODEX_APP_SERVER = "codex-app-server"
         const val PROTOCOL_PI_RPC = "pi-rpc"
+        const val PROTOCOL_ZCODE_APP_SERVER = "zcode-app-server"
+        const val PROTOCOL_ANTIGRAVITY_STREAM_JSON = "antigravity-stream-json"
         const val CODEX_CHATGPT_ACCOUNT_ID = "chatgpt"
         const val CODEX_OFFICIAL_PROVIDER_ID = "openai"
         const val TRANSPORT_STDIO = "stdio"
@@ -1198,7 +1227,13 @@ internal class AndroidAgentRecipeRuntime(
         const val DEFAULT_WORKDIR = "/workspace"
         const val SESSION_COMMAND_TIMEOUT_MS = 20_000L
         val ENVIRONMENT_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
-        val MANAGED_PROTOCOLS = setOf(PROTOCOL_ACP, PROTOCOL_CODEX_APP_SERVER, PROTOCOL_PI_RPC)
+        val MANAGED_PROTOCOLS = setOf(
+            PROTOCOL_ACP,
+            PROTOCOL_CODEX_APP_SERVER,
+            PROTOCOL_PI_RPC,
+            PROTOCOL_ZCODE_APP_SERVER,
+            PROTOCOL_ANTIGRAVITY_STREAM_JSON,
+        )
     }
 
     private fun AgentSessionDraftPreferences.toRuntimePreferences(): AgentDraftPersistenceSnapshot =

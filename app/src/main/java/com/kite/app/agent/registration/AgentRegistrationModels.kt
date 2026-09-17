@@ -2,6 +2,7 @@ package com.kite.app.agent.registration
 
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
+import com.kite.app.foundation.runtime.RuntimeHardLinkMode
 
 /** 面向用户的稳定 Agent 身份；显示名称允许改名或重复。 */
 data class AgentDefinition(
@@ -75,6 +76,7 @@ data class AgentOfficialAccountCommand(
     val loggedOutPatterns: List<String> = emptyList(),
     val successPatterns: List<String> = emptyList(),
     val timeoutMs: Long = 30_000L,
+    val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
 )
 
 enum class AgentInstallationStatus {

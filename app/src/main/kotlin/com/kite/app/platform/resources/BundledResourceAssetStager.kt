@@ -1,6 +1,7 @@
 package com.kite.app.platform.resources
 
 import android.content.Context
+import com.kite.app.foundation.storage.AtomicDirectoryPublisher
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.resources.KiteResourceInstallRecipes
 import java.io.File
@@ -14,26 +15,17 @@ internal object BundledResourceAssetStager {
         val workspaceRoot = File(container.workspacePath)
         val resourceCache = File(workspaceRoot, ".kf/cache/resources/$cleanId").also(File::mkdirs)
         val destination = File(resourceCache, BUNDLE_DIR)
-        val pending = File(resourceCache, "$BUNDLE_DIR.pending")
-        val previous = File(resourceCache, "$BUNDLE_DIR.previous")
-
-        pending.deleteRecursively()
-        previous.deleteRecursively()
-        copyAssetTree(context.applicationContext, cleanAssetRoot, pending)
-        check(pending.walkTopDown().any(File::isFile)) {
-            "Bundled resource asset is empty: $cleanAssetRoot"
-        }
-
-        if (destination.exists()) {
-            check(destination.renameTo(previous)) {
-                "Unable to preserve previous bundled resource asset: ${destination.absolutePath}"
+        val revision = bundledRevision(context.applicationContext, cleanAssetRoot)
+        AtomicDirectoryPublisher.publish(
+            destination = destination,
+            isComplete = { candidate -> bundledDirectoryIsComplete(candidate, revision) },
+        ) { pending ->
+            copyAssetTree(context.applicationContext, cleanAssetRoot, pending)
+            check(pending.walkTopDown().any { file -> file.isFile }) {
+                "Bundled resource asset is empty: $cleanAssetRoot"
             }
+            File(pending, REVISION_FILE).writeText(revision)
         }
-        if (!pending.renameTo(destination)) {
-            previous.renameTo(destination)
-            error("Unable to publish bundled resource asset: ${destination.absolutePath}")
-        }
-        previous.deleteRecursively()
         return destination
     }
 
@@ -64,5 +56,16 @@ internal object BundledResourceAssetStager {
         }
     }
 
+    private fun bundledRevision(context: Context, assetRoot: String): String {
+        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        return "${packageInfo.lastUpdateTime}:$assetRoot"
+    }
+
+    private fun bundledDirectoryIsComplete(directory: File, revision: String): Boolean =
+        directory.isDirectory &&
+            File(directory, REVISION_FILE).takeIf(File::isFile)?.readText() == revision &&
+            directory.walkTopDown().any { file -> file.isFile && file.name != REVISION_FILE }
+
     private const val BUNDLE_DIR = "bundle"
+    private const val REVISION_FILE = ".kite-bundle-revision"
 }

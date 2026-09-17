@@ -1,8 +1,6 @@
 package com.kite.app.foundation.bootstrap
 
 import android.app.Activity
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -19,6 +17,9 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.kite.app.R
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class StartupGuardActivity : Activity() {
     private var readyReceiverRegistered = false
@@ -72,10 +73,7 @@ class StartupGuardActivity : Activity() {
 
     private fun showFailureReport() {
         val report = StartupTraceStore.reportText(this)
-        val detailsMarker = "\n\n阶段流水:"
-        val detailsIndex = report.indexOf(detailsMarker)
-        val summary = if (detailsIndex >= 0) report.substring(0, detailsIndex) else report
-        val details = if (detailsIndex >= 0) report.substring(detailsIndex + 2) else ""
+        val failure = StartupTraceStore.readFailure(this)
         val density = resources.displayMetrics.density
         val padding = (20 * density).toInt()
         val spacing = (10 * density).toInt()
@@ -97,8 +95,37 @@ class StartupGuardActivity : Activity() {
             setPadding(0, spacing, 0, spacing)
         })
         content.addView(TextView(this).apply {
-            text = summary
+            text = getString(R.string.startup_report_raw_title)
+            textSize = 17f
+            setTextColor(Color.rgb(24, 28, 36))
+            setPadding(0, spacing, 0, 0)
+        })
+        content.addView(TextView(this).apply {
+            text = getString(R.string.startup_report_raw_summary)
             textSize = 13f
+            setTextColor(Color.rgb(72, 79, 91))
+            setPadding(0, spacing, 0, spacing)
+        })
+        content.addView(actionButton(getString(R.string.startup_report_generate)) {
+            generateReport(report)
+        })
+        content.addView(TextView(this).apply {
+            text = getString(R.string.startup_report_issues_title)
+            textSize = 17f
+            setTextColor(Color.rgb(24, 28, 36))
+            setPadding(0, spacing * 2, 0, 0)
+        })
+        content.addView(TextView(this).apply {
+            text = buildString {
+                append(failure?.stage ?: "unknown")
+                val reason = failure?.exceptionMessage.orEmpty()
+                    .ifBlank { failure?.exceptionClass.orEmpty() }
+                if (reason.isNotBlank()) {
+                    append('\n')
+                    append(reason)
+                }
+            }
+            textSize = 14f
             setTextColor(Color.rgb(34, 39, 47))
             setTextIsSelectable(true)
             setPadding(0, spacing, 0, spacing)
@@ -111,23 +138,12 @@ class StartupGuardActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
         }
-        actions.addView(actionButton(getString(R.string.startup_copy_diagnostics)) { copyReport(report) })
-        actions.addView(actionButton(getString(R.string.startup_share_diagnostics)) { shareReport(report) })
         actions.addView(actionButton(getString(R.string.startup_open_app_settings)) { openAppSettings() })
         actions.addView(actionButton(getString(R.string.startup_retry)) {
             StartupTraceStore.clearFailureForRetry(this)
             launchMainActivity()
         })
         content.addView(actions)
-        if (details.isNotBlank()) {
-            content.addView(TextView(this).apply {
-                text = details
-                textSize = 12f
-                setTextColor(Color.rgb(72, 79, 91))
-                setTextIsSelectable(true)
-                setPadding(0, spacing, 0, 0)
-            })
-        }
 
         setContentView(ScrollView(this).apply { addView(content) })
     }
@@ -143,18 +159,26 @@ class StartupGuardActivity : Activity() {
             )
         }
 
-    private fun copyReport(report: String) {
-        val clipboard = getSystemService(ClipboardManager::class.java)
-        clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.startup_diagnostics_clip_label), report))
-        Toast.makeText(this, getString(R.string.startup_diagnostics_copied), Toast.LENGTH_SHORT).show()
-    }
-
-    private fun shareReport(report: String) {
-        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, getString(R.string.startup_diagnostics_clip_label))
-            putExtra(Intent.EXTRA_TEXT, report)
-        }, getString(R.string.startup_share_chooser)))
+    private fun generateReport(report: String) {
+        val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        runCatching {
+            DiagnosticReportFileWriter.write(
+                context = this,
+                displayName = "kite-startup-failure-$timestamp.txt",
+            ) { writer -> writer.write(report) }
+        }.onSuccess { generated ->
+            Toast.makeText(
+                this,
+                getString(R.string.startup_report_generated_path, generated.displayPath),
+                Toast.LENGTH_LONG,
+            ).show()
+        }.onFailure { error ->
+            Toast.makeText(
+                this,
+                getString(R.string.startup_report_generate_failed, error.message ?: error.javaClass.simpleName),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
     private fun openAppSettings() {

@@ -1,5 +1,6 @@
 package com.kite.app.feature.settings
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -12,11 +13,17 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.application.settings.SettingsFeatureDependenciesOwner
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapDependenciesOwner
 import com.kite.app.R
+import com.kite.app.feature.startupreport.StartupReportActivity
+import com.kite.app.foundation.devicebridge.DeviceBridgeBackendMode
+import com.kite.app.foundation.devicebridge.DeviceBridgeBackendStateOwner
+import com.kite.app.foundation.devicebridge.DeviceBridgeLifecycleStatus
+import com.kite.app.foundation.devicebridge.ShizukuBridgeStateOwner
 import com.kite.app.ui.terminal.TerminalUiPreferences
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import rikka.shizuku.ShizukuProvider
 
 /** 设置二级页骨架。具体偏好迁移按类别分批接入，状态仍来自原 Owner。 */
 internal class SettingsCategoryFragment : Fragment() {
@@ -35,23 +42,20 @@ internal class SettingsCategoryFragment : Fragment() {
             ?: error("Application 必须提供 RuntimeBootstrapGateway")
         owner.runtimeBootstrapGateway
     }
-    private val prootViewInspectionGateway by lazy(LazyThreadSafetyMode.NONE) {
-        val owner = requireContext().applicationContext as? com.kite.app.application.runtimemanagement.ProotViewInspectionDependenciesOwner
-            ?: error("Application 必须提供 ProotViewInspectionGateway")
-        owner.prootViewInspectionGateway
-    }
     private var screen: SettingsCategoryScreen? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?,
-    ): View = SettingsCategoryScreen(
+    ): View {
+        DeviceBridgeBackendStateOwner.start(requireContext())
+        return SettingsCategoryScreen(
         context = requireContext(),
         destination = destination,
         initialState = controller.state.value,
         initialRuntimeSnapshot = runtimeGateway.currentSnapshot(),
-        initialProotViewSnapshot = prootViewInspectionGateway.currentSnapshot(),
+        initialDeviceBridgeSnapshot = DeviceBridgeBackendStateOwner.current(),
         appInfo = readAppInfo(),
         initialTerminalFontSize = TerminalUiPreferences.loadFontSizeDp(requireContext()),
         initialTerminalTheme = TerminalUiPreferences.loadThemeMode(requireContext()),
@@ -63,6 +67,9 @@ internal class SettingsCategoryFragment : Fragment() {
         },
         onSelectBrowserMode = { mode ->
             dispatch(SettingsFeatureAction.SelectBrowserMode(mode))
+        },
+        onSetResourceSourceOrder = { sourceIds ->
+            dispatch(SettingsFeatureAction.SetResourceSourceOrder(sourceIds))
         },
         onSelectTerminalFontSize = { fontSize ->
             TerminalUiPreferences.saveFontSizeDp(requireContext(), fontSize)
@@ -89,36 +96,23 @@ internal class SettingsCategoryFragment : Fragment() {
         },
         onOpenAllFilesSettings = { send(SettingsFeatureRequest.OpenAllFilesSettings) },
         onOpenProcesses = { send(SettingsFeatureRequest.OpenProcesses) },
+        onSelectDeviceBridgeMode = { mode -> selectDeviceBridgeMode(mode) },
+        onManageDeviceBridge = { manageDeviceBridge() },
+        onOpenStartupReport = {
+            startActivity(Intent(requireContext(), StartupReportActivity::class.java))
+        },
         onOpenLogs = { send(SettingsFeatureRequest.OpenLogs) },
         onOpenDropZone = { dispatch(SettingsFeatureAction.OpenDropZone) },
         onOpenAboutPage = { page -> send(SettingsFeatureRequest.OpenAboutPage(page)) },
         onOpenExternal = { url -> send(SettingsFeatureRequest.OpenExternalLink(url)) },
-        onRunViewAcceptance = {
-            if (destination == SettingsCategoryDestination.Engineering) {
-                prootViewInspectionGateway.runAcceptance()
-            }
-        },
-        onRunViewVerification = {
-            if (destination == SettingsCategoryDestination.Engineering) {
-                prootViewInspectionGateway.runVerification()
-            }
-        },
-        onCreateViewEnvironment = {
-            if (destination == SettingsCategoryDestination.Engineering) {
-                prootViewInspectionGateway.createEnvironment()
-            }
-        },
-        onSwitchViewEnvironment = { environmentId ->
-            if (destination == SettingsCategoryDestination.Engineering) {
-                prootViewInspectionGateway.switchEnvironment(environmentId)
-            }
-        },
-        onRunEnvironmentIsolationVerification = {
-            if (destination == SettingsCategoryDestination.Engineering) {
-                prootViewInspectionGateway.runEnvironmentIsolationVerification()
-            }
-        },
-    ).also { screen = it }.root
+        // View 验收台已退役：Engineering 页面相关回调全部置空。
+        onRunViewAcceptance = { },
+        onRunViewVerification = { },
+        onCreateViewEnvironment = { },
+        onSwitchViewEnvironment = { },
+        onRunEnvironmentIsolationVerification = { },
+        ).also { screen = it }.root
+    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -138,26 +132,16 @@ internal class SettingsCategoryFragment : Fragment() {
                 }
             }
         }
-        if (destination == SettingsCategoryDestination.Engineering) {
+        if (destination == SettingsCategoryDestination.RuntimeEnvironment) {
             viewLifecycleOwner.lifecycleScope.launch {
                 viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    prootViewInspectionGateway.snapshots.collect { snapshot ->
-                        screen?.renderProotViewSnapshot(snapshot)
+                    DeviceBridgeBackendStateOwner.state.collect { snapshot ->
+                        screen?.renderDeviceBridgeSnapshot(snapshot)
                     }
                 }
             }
-            viewLifecycleOwner.lifecycleScope.launch {
-                viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    runtimeGateway.snapshots
-                        .map { snapshot -> snapshot.defaultContainerReady }
-                        .distinctUntilChanged()
-                        .filter { ready -> ready }
-                        .collect {
-                            prootViewInspectionGateway.refresh()
-                        }
-                }
-            }
         }
+        // View 验收台已退役：不再收集 ProotView 快照。
     }
 
     override fun onDestroyView() {
@@ -176,9 +160,10 @@ internal class SettingsCategoryFragment : Fragment() {
         ) {
             runtimeGateway.refresh()
         }
-        if (destination == SettingsCategoryDestination.Engineering) {
-            prootViewInspectionGateway.refresh()
+        if (destination == SettingsCategoryDestination.RuntimeEnvironment) {
+            DeviceBridgeBackendStateOwner.refreshSelected()
         }
+        // View 验收台已退役：不再刷新 ProotView 快照。
         lifecycleScope.launch { controller.dispatch(SettingsFeatureAction.Refresh) }
     }
 
@@ -210,6 +195,59 @@ internal class SettingsCategoryFragment : Fragment() {
         SettingsFeatureResultContract.send(this, request)
     }
 
+    private fun selectDeviceBridgeMode(mode: DeviceBridgeBackendMode) {
+        if (!DeviceBridgeBackendStateOwner.select(mode)) {
+            Toast.makeText(
+                requireContext(),
+                R.string.settings_device_bridge_mode_save_failed,
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    private fun manageDeviceBridge() {
+        val snapshot = DeviceBridgeBackendStateOwner.current()
+        when (snapshot.selectedMode) {
+            DeviceBridgeBackendMode.RootExperimental -> DeviceBridgeBackendStateOwner.probeRoot()
+            DeviceBridgeBackendMode.Shizuku -> when {
+                !snapshot.managerInstalled -> openShizukuResource()
+                !snapshot.binderAlive -> openShizukuManagerOrResource()
+                snapshot.lifecycle == DeviceBridgeLifecycleStatus.PermissionRequired ||
+                    snapshot.lifecycle == DeviceBridgeLifecycleStatus.Revoked -> requestShizukuAuthorization()
+                else -> DeviceBridgeBackendStateOwner.refreshSelected()
+            }
+        }
+    }
+
+    private fun requestShizukuAuthorization() {
+        when (ShizukuBridgeStateOwner.requestAuthorization()) {
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.ServiceNotRunning ->
+                openShizukuManagerOrResource()
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.Failed,
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.NotStarted -> Toast.makeText(
+                requireContext(),
+                R.string.settings_device_bridge_authorization_failed,
+                Toast.LENGTH_SHORT,
+            ).show()
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.Requested,
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.AlreadyReady,
+            ShizukuBridgeStateOwner.AuthorizationRequestResult.AlreadyRequesting -> Unit
+        }
+    }
+
+    private fun openShizukuManagerOrResource() {
+        val launchIntent = requireContext().packageManager.getLaunchIntentForPackage(
+            ShizukuProvider.MANAGER_APPLICATION_ID,
+        )
+        if (launchIntent == null || runCatching { startActivity(launchIntent) }.isFailure) {
+            openShizukuResource()
+        }
+    }
+
+    private fun openShizukuResource() {
+        send(SettingsFeatureRequest.OpenResource(SHIZUKU_RESOURCE_ID))
+    }
+
     private fun readAppInfo(): SettingsAppInfo {
         val context = requireContext()
         val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -223,6 +261,7 @@ internal class SettingsCategoryFragment : Fragment() {
 
     companion object {
         private const val ARG_DESTINATION = "settings_category_destination"
+        private const val SHIZUKU_RESOURCE_ID = "kite.shizuku"
 
         fun newInstance(destination: SettingsCategoryDestination): SettingsCategoryFragment =
             SettingsCategoryFragment().apply {

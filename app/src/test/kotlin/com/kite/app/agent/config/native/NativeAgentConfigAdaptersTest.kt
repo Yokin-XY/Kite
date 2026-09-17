@@ -14,6 +14,7 @@ import com.kite.app.agent.config.AgentConfigScope
 import com.kite.app.agent.config.normalizePublishedSessionConfiguration
 import com.kite.app.agent.config.AgentSessionConfigurationApplyResult
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
+import com.kite.app.agent.config.AgentSessionModelSelection
 import com.kite.app.agent.config.AgentCoreDocumentWriteRequest
 import com.kite.app.agent.config.AgentCoreDocumentWriteResult
 import com.kite.app.agent.config.AgentMcpDraft
@@ -30,6 +31,7 @@ import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.SESSION_PERMISSION_CONFIG_ID
+import com.kite.app.agent.sdk.configuration.AgentControlCatalogProjector
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
@@ -45,6 +47,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -242,9 +245,9 @@ class NativeAgentConfigAdaptersTest {
             "---\nname: claude-compat\ntitle: Claude Compatibility\n---\nClaude.",
         )
 
-        val qwen = (QwenCodeAgentConfigAdapter(::container).readLive("qwen-code") as AgentConfigReadResult.Ready)
+        val qwen = (QwenCodeAgentConfigAdapter(context, ::container).readLive("qwen-code") as AgentConfigReadResult.Ready)
             .snapshot
-        val reasonix = (ReasonixAgentConfigAdapter(::container).readLive("reasonix") as AgentConfigReadResult.Ready)
+        val reasonix = (ReasonixAgentConfigAdapter(context, ::container).readLive("reasonix") as AgentConfigReadResult.Ready)
             .snapshot
 
         assertEquals(listOf("duplicate", "shared"), qwen.skills.map { it.id })
@@ -257,6 +260,252 @@ class NativeAgentConfigAdaptersTest {
         )
         assertEquals("Reasonix Duplicate", reasonix.skills.single { it.id == "duplicate" }.displayName)
         assertTrue(AgentSkillOperation.Remove in reasonix.skills.single { it.id == "duplicate" }.allowedOperations)
+    }
+
+    @Test
+    fun standardJsonProtocolAdaptersPreserveUnknownFieldsAndOnlyPersistSecretReferences() = runTest {
+        val geminiFile = nativeFile("root/.gemini/settings.json").apply {
+            writeText(
+                """{
+                  "ui": {"theme": "dark"},
+                  "mcpServers": {
+                    "demo": {
+                      "command": "node",
+                      "args": ["old.js"],
+                      "env": {"DEMO_TOKEN": "${'$'}{DEMO_TOKEN}"},
+                      "vendorField": 7
+                    }
+                  }
+                }""",
+            )
+        }
+        val adapter = GeminiCliAgentConfigAdapter(context, ::container)
+        val before = (adapter.readLive("gemini") as AgentConfigReadResult.Ready).snapshot
+
+        assertEquals("DEMO_TOKEN", before.mcpServers.single().environmentReferences.single().environmentVariable)
+        val applied = adapter.apply(
+            AgentConfigApplyRequest(
+                agentId = "gemini",
+                expectedRevision = before.revision,
+                changes = listOf(
+                    AgentPersistentConfigChange.ConfigureMcpServer(
+                        AgentMcpDraft(
+                            id = "demo",
+                            transport = AgentMcpTransport.Stdio,
+                            command = "node",
+                            arguments = listOf("new.js"),
+                            environmentReferences = listOf(
+                                AgentMcpEnvironmentReference("DEMO_TOKEN", "ROTATED_TOKEN"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ) as AgentConfigApplyResult.Applied
+
+        assertEquals("ROTATED_TOKEN", applied.snapshot.mcpServers.single().environmentReferences.single().environmentVariable)
+        val written = geminiFile.readText()
+        assertTrue(written.contains("\"vendorField\": 7"))
+        assertTrue(written.contains("\"theme\": \"dark\""))
+        assertTrue(written.contains("${'$'}{ROTATED_TOKEN}"))
+        assertFalse(written.contains("secret-never-project"))
+
+        val unsupported = adapter.validate(
+            AgentConfigApplyRequest(
+                agentId = "gemini",
+                expectedRevision = applied.snapshot.revision,
+                changes = listOf(AgentPersistentConfigChange.SetDefaultModel("gemini-guessed-model")),
+            ),
+        )
+        assertTrue(unsupported.any { it.message.contains("当前会话能力或专用 Adapter") })
+    }
+
+    @Test
+    fun qwenAndQoderUseTheirOwnNativeMcpEnablementContracts() = runTest {
+        val qwenFile = nativeFile("root/.qwen/settings.json").apply {
+            writeText(
+                """{
+                  "mcp": {"excluded": ["qwen-demo"]},
+                  "mcpServers": {"qwen-demo": {"command": "node", "args": ["server.js"]}}
+                }""",
+            )
+        }
+        val qwen = QwenCodeAgentConfigAdapter(context, ::container)
+        val qwenBefore = (qwen.readLive("qwen-code") as AgentConfigReadResult.Ready).snapshot
+        assertFalse(qwenBefore.mcpServers.single().enabled)
+        val qwenApplied = qwen.apply(
+            AgentConfigApplyRequest(
+                "qwen-code",
+                qwenBefore.revision,
+                listOf(AgentPersistentConfigChange.SetMcpEnabled("qwen-demo", true)),
+            ),
+        ) as AgentConfigApplyResult.Applied
+        assertTrue(qwenApplied.snapshot.mcpServers.single().enabled)
+        assertTrue(qwenFile.readText().contains("\"excluded\": []"))
+
+        val qoderFile = nativeFile("root/.qoder/settings.json").apply {
+            writeText(
+                """{"mcpServers":{"qoder-demo":{"command":"node","disabled":true,"unknown":"keep"}}}""",
+            )
+        }
+        val qoder = QoderCliAgentConfigAdapter(context, ::container)
+        val qoderBefore = (qoder.readLive("qoder") as AgentConfigReadResult.Ready).snapshot
+        assertFalse(qoderBefore.mcpServers.single().enabled)
+        val qoderApplied = qoder.apply(
+            AgentConfigApplyRequest(
+                "qoder",
+                qoderBefore.revision,
+                listOf(AgentPersistentConfigChange.SetMcpEnabled("qoder-demo", true)),
+            ),
+        ) as AgentConfigApplyResult.Applied
+        assertTrue(qoderApplied.snapshot.mcpServers.single().enabled)
+        assertTrue(qoderFile.readText().contains("\"unknown\": \"keep\""))
+        assertTrue(qoderFile.readText().contains("\"disabled\": false"))
+    }
+
+    @Test
+    fun cursorAndDevinKeepTheirDifferentRemoteMcpShapes() = runTest {
+        val cursorFile = nativeFile("root/.cursor/mcp.json").apply {
+            writeText(
+                """{
+                  "mcpServers": {
+                    "cursor-demo": {
+                      "url": "https://mcp.example.com/mcp",
+                      "headers": {"Authorization": "Bearer ${'$'}{env:CURSOR_TOKEN}"}
+                    }
+                  }
+                }""",
+            )
+        }
+        val cursor = CursorCliAgentConfigAdapter(context, ::container)
+        val cursorBefore = (cursor.readLive("cursor") as AgentConfigReadResult.Ready).snapshot
+        assertEquals(AgentMcpTransport.RemoteHttpOrSse, cursorBefore.mcpServers.single().transport)
+        assertEquals("CURSOR_TOKEN", cursorBefore.mcpServers.single().headerReferences.single().environmentVariable)
+        assertTrue(cursorFile.readText().contains("${'$'}{env:CURSOR_TOKEN}"))
+
+        val devinFile = nativeFile("root/.config/devin/mcp_config.json").apply {
+            writeText(
+                """{
+                  "mcpServers": {
+                    "devin-demo": {
+                      "url": "https://mcp.example.com/sse",
+                      "transport": "sse",
+                      "disabled": true
+                    }
+                  }
+                }""",
+            )
+        }
+        val devin = DevinCliAgentConfigAdapter(context, ::container)
+        val devinBefore = (devin.readLive("devin") as AgentConfigReadResult.Ready).snapshot
+        assertEquals(AgentMcpTransport.Sse, devinBefore.mcpServers.single().transport)
+        assertFalse(devinBefore.mcpServers.single().enabled)
+        val applied = devin.apply(
+            AgentConfigApplyRequest(
+                "devin",
+                devinBefore.revision,
+                listOf(AgentPersistentConfigChange.SetMcpEnabled("devin-demo", true)),
+            ),
+        ) as AgentConfigApplyResult.Applied
+        assertTrue(applied.snapshot.mcpServers.single().enabled)
+        assertTrue(devinFile.readText().contains("\"transport\": \"sse\""))
+    }
+
+    @Test
+    fun codeBuddyUsesOfficialUserMcpPathAndDollarReferences() = runTest {
+        val codeBuddyFile = nativeFile("root/.codebuddy/.mcp.json").apply {
+            writeText(
+                """{
+                  "mcpServers": {
+                    "codebuddy-demo": {
+                      "type": "http",
+                      "url": "https://mcp.example.com/mcp",
+                      "headers": {"Authorization": "Bearer ${'$'}{CODEBUDDY_MCP_TOKEN}"},
+                      "defer_loading": true
+                    }
+                  }
+                }""",
+            )
+        }
+        val adapter = CodeBuddyCodeAgentConfigAdapter(context, ::container)
+
+        val before = (adapter.readLive("codebuddy") as AgentConfigReadResult.Ready).snapshot
+
+        assertEquals(AgentMcpTransport.StreamableHttp, before.mcpServers.single().transport)
+        assertEquals(
+            "CODEBUDDY_MCP_TOKEN",
+            before.mcpServers.single().headerReferences.single().environmentVariable,
+        )
+        val applied = adapter.apply(
+            AgentConfigApplyRequest(
+                "codebuddy",
+                before.revision,
+                listOf(
+                    AgentPersistentConfigChange.ConfigureMcpServer(
+                        AgentMcpDraft(
+                            id = "codebuddy-demo",
+                            transport = AgentMcpTransport.StreamableHttp,
+                            url = "https://mcp.example.com/mcp",
+                            headerReferences = listOf(
+                                AgentMcpEnvironmentReference("Authorization", "ROTATED_CODEBUDDY_TOKEN"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ) as AgentConfigApplyResult.Applied
+        assertEquals(
+            "ROTATED_CODEBUDDY_TOKEN",
+            applied.snapshot.mcpServers.single().headerReferences.single().environmentVariable,
+        )
+        assertTrue(codeBuddyFile.readText().contains("Bearer ${'$'}{ROTATED_CODEBUDDY_TOKEN}"))
+        assertTrue(codeBuddyFile.readText().contains("\"defer_loading\": true"))
+    }
+
+    @Test
+    fun traeCodeUsesNativeTomlMcpAndResourceOwnedHome() = runTest {
+        val configFile = nativeFile(
+            "workspace/.kf/software/kite.trae.code/user-home/.trae/traecli.toml",
+        ).apply {
+            writeText(
+                """
+                [mcp_servers.demo]
+                url = "https://mcp.example.com/mcp"
+                bearer_token_env_var = "TRAE_TOKEN"
+                vendor_extension = "keep"
+                """.trimIndent(),
+            )
+        }
+        val adapter = TraeCodeAgentConfigAdapter(context, ::container)
+        val before = (adapter.readLive("trae") as AgentConfigReadResult.Ready).snapshot
+
+        assertEquals(AgentMcpTransport.StreamableHttp, before.mcpServers.single().transport)
+        assertEquals("TRAE_TOKEN", before.mcpServers.single().headerReferences.single().environmentVariable)
+        val applied = adapter.apply(
+            AgentConfigApplyRequest(
+                "trae",
+                before.revision,
+                listOf(
+                    AgentPersistentConfigChange.ConfigureMcpServer(
+                        AgentMcpDraft(
+                            id = "demo",
+                            transport = AgentMcpTransport.Stdio,
+                            command = "npx",
+                            arguments = listOf("-y", "@example/mcp"),
+                            environmentReferences = listOf(
+                                AgentMcpEnvironmentReference("TOKEN", "TRAE_MCP_TOKEN"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ) as AgentConfigApplyResult.Applied
+
+        assertEquals(AgentMcpTransport.Stdio, applied.snapshot.mcpServers.single().transport)
+        assertEquals("TRAE_MCP_TOKEN", applied.snapshot.mcpServers.single().environmentReferences.single().environmentVariable)
+        assertTrue(configFile.readText().contains("vendor_extension = \"keep\""))
+        assertTrue(configFile.readText().contains("TOKEN = \"${'$'}{TRAE_MCP_TOKEN}\""))
+        assertFalse(configFile.readText().contains("bearer_token_env_var"))
     }
 
     @Test
@@ -566,6 +815,18 @@ class NativeAgentConfigAdaptersTest {
             listOf("只读", "受限", "审批", "宽松", "智能", "完全"),
             permission.choices.map { it.name },
         )
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.ReadOnly,
+                AgentPermissionLevel.Restricted,
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Lenient,
+                AgentPermissionLevel.Smart,
+                AgentPermissionLevel.Full,
+            ),
+            permission.choices.map { it.permission },
+        )
+        assertNotNull(AgentControlCatalogProjector.project(listOf(permission)).permission)
         assertEquals("default", permission.currentValue)
     }
 
@@ -637,7 +898,7 @@ class NativeAgentConfigAdaptersTest {
     }
 
     @Test
-    fun kimiUsesSeparateMcpFileAndSkillFrontmatterWithoutInventingProviderSchema() = runTest {
+    fun kimiUsesSeparateNativeFilesForProviderMcpAndSkill() = runTest {
         val mcp = nativeFile("root/.kimi-code/mcp.json")
         mcp.writeText(
             """
@@ -664,7 +925,7 @@ class NativeAgentConfigAdaptersTest {
         val adapter = KimiCodeAgentConfigAdapter(context, ::container)
         val before = (adapter.readLive("kimi") as AgentConfigReadResult.Ready).snapshot
 
-        assertTrue(AgentPersistentConfigCapability.Provider !in adapter.capabilities().supported)
+        assertTrue(AgentPersistentConfigCapability.Provider in adapter.capabilities().supported)
         assertEquals(AgentMcpTransport.Stdio, before.mcpServers.single().transport)
         assertFalse(before.mcpServers.single().enabled)
         assertEquals(setOf("review", "shared"), before.skills.map { it.id }.toSet())
@@ -1000,6 +1261,15 @@ class NativeAgentConfigAdaptersTest {
         assertEquals("权限", permission.name)
         assertEquals(listOf("read-only", "agent", "agent-full-access"), permission.choices.map { it.value })
         assertEquals(listOf("只读", "审批", "完全"), permission.choices.map { it.name })
+        assertEquals(
+            listOf(
+                AgentPermissionLevel.ReadOnly,
+                AgentPermissionLevel.Approval,
+                AgentPermissionLevel.Full,
+            ),
+            permission.choices.map { it.permission },
+        )
+        assertNotNull(AgentControlCatalogProjector.project(listOf(permission)).permission)
         assertEquals("agent", permission.currentValue)
     }
 
@@ -1391,6 +1661,38 @@ class NativeAgentConfigAdaptersTest {
         assertTrue(Regex("provider:\\s*['\"]?zhipu['\"]?").containsMatchIn(text))
         assertTrue(Regex("default:\\s*['\"]?glm-5-code['\"]?").containsMatchIn(text))
         assertTrue(text.contains("max_turns: 77"))
+    }
+
+    @Test
+    fun hermesMapsConfiguredProviderModelsToItsAcpColonIds() {
+        val adapter = HermesAgentConfigAdapter(context, ::container)
+        val option = AgentConfigOption.Select(
+            id = "acp.session.model",
+            name = "Model",
+            category = AgentConfigCategory.Model,
+            currentValue = "custom:GLM-5.3",
+            choices = listOf(
+                AgentConfigChoice("custom:other:glm-5.2", "Other · glm-5.2"),
+                AgentConfigChoice("zhipu-coding-plan:glm-5.2", "Legacy GLM-5.2"),
+                AgentConfigChoice("custom:zhipu-coding-plan:glm-5.2", "GLM-5.2"),
+                AgentConfigChoice("openrouter:anthropic/claude-sonnet-4", "Claude Sonnet 4"),
+            ),
+        )
+
+        assertEquals(
+            AgentSessionModelSelection("acp.session.model", "custom:zhipu-coding-plan:glm-5.2"),
+            adapter.sessionModelSelection(
+                AgentPersistentConfigChange.SelectProvider("zhipu-coding-plan", "glm-5.2"),
+                listOf(option),
+            ),
+        )
+        assertEquals(
+            AgentSessionModelSelection("acp.session.model", "openrouter:anthropic/claude-sonnet-4"),
+            adapter.sessionModelSelection(
+                AgentPersistentConfigChange.SelectProvider("openrouter", "anthropic/claude-sonnet-4"),
+                listOf(option),
+            ),
+        )
     }
 
     @Test

@@ -9,6 +9,8 @@ interface TerminalPanelActionHost {
     fun adjustFont(step: Int)
     fun pasteClipboard()
     fun showThemeMenu(anchor: View)
+    fun showCustomShortcutEditor()
+    fun showCustomShortcutMenu(shortcutId: String)
     fun themeLabel(): String
 }
 
@@ -24,12 +26,19 @@ fun interface TerminalPanelActionHandler {
 data class TerminalPanelAction(
     val id: String,
     val titleRes: Int,
+    val titleProvider: ((TerminalPanelActionHost) -> String)? = null,
     val subtitleRes: Int? = null,
     val iconRes: Int? = null,
     val subtitleProvider: ((TerminalPanelActionHost) -> String)? = null,
     val composerEffect: TerminalComposerEffect = TerminalComposerEffect.PRESERVE,
-    val handler: TerminalPanelActionHandler
+    val handler: TerminalPanelActionHandler,
+    val longPressHandler: TerminalPanelActionHandler? = null
 ) {
+    fun resolvedTitle(
+        host: TerminalPanelActionHost,
+        resolveString: (Int) -> String
+    ): String = titleProvider?.invoke(host) ?: resolveString(titleRes)
+
     fun resolvedSubtitle(host: TerminalPanelActionHost, resolveString: (Int) -> String): String =
         subtitleProvider?.invoke(host) ?: subtitleRes?.let(resolveString).orEmpty()
 
@@ -46,6 +55,8 @@ data class TerminalPanelPage(
 )
 
 object TerminalPanelActionRegistry {
+    const val CUSTOM_PAGE_ID_PREFIX = "custom-"
+
     private val pages = LinkedHashMap<String, TerminalPanelPage>()
 
     init {
@@ -78,6 +89,39 @@ object TerminalPanelActionRegistry {
     fun unregister(pageId: String, actionId: String) {
         val current = pages[pageId] ?: return
         pages[pageId] = current.copy(actions = current.actions.filterNot { it.id == actionId })
+    }
+
+    @Synchronized
+    fun setCustomPages(pages: List<TerminalPanelPage>) {
+        require(pages.size == pages.map { it.id }.distinct().size) {
+            "custom page ids must be unique"
+        }
+        pages.forEach { page ->
+            require(page.id.startsWith(CUSTOM_PAGE_ID_PREFIX)) {
+                "custom page id must start with $CUSTOM_PAGE_ID_PREFIX"
+            }
+        }
+        this.pages.keys
+            .filter { it.startsWith(CUSTOM_PAGE_ID_PREFIX) }
+            .toList()
+            .forEach { this.pages.remove(it) }
+        pages.forEach { page -> this.pages[page.id] = page }
+    }
+
+    fun customShortcutAction(definition: TerminalShortcutDefinition): TerminalPanelAction {
+        val input = requireNotNull(TerminalShortcutCodec.encode(definition)) {
+            "unsupported terminal shortcut: ${definition.label}"
+        }
+        return TerminalPanelAction(
+            id = definition.id,
+            titleRes = R.string.terminal_custom_shortcut,
+            titleProvider = { _ -> definition.label },
+            subtitleRes = R.string.terminal_action_custom_shortcut,
+            handler = TerminalPanelActionHandler { host, _ -> host.sendInput(input) },
+            longPressHandler = TerminalPanelActionHandler { host, _ ->
+                host.showCustomShortcutMenu(definition.id)
+            },
+        )
     }
 
     @Synchronized

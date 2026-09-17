@@ -1,0 +1,179 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.github.copilot",
+  "base": {
+    "name": "GitHub Copilot CLI",
+    "description": "GitHub 的终端编码 Agent",
+    "version": "npm",
+    "icon": {
+      "type": "asset",
+      "value": "resources/kite.github.copilot/icon.png",
+      "fallbackText": "Co",
+      "fit": "fullBleed"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": [
+      "copilot",
+      "kite-copilot-acp"
+    ],
+    "versionProbe": {
+      "command": "copilot --version",
+      "pattern": "v?([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": [
+      "user-home"
+    ]
+  },
+  "display": {
+    "sections": [
+      "ai-vendor"
+    ],
+    "tabs": [
+      "angel-cli"
+    ],
+    "order": 80,
+    "category": "AI",
+    "accent": "purple",
+    "sizeLabel": "网络包",
+    "longDescription": "GitHub Copilot CLI 是 GitHub 官方终端编码 Agent。Kite 使用官方 npm 包安装 Linux arm64 版本，并通过 Copilot 原生 ACP stdio 服务建立统一会话。它既可使用 GitHub Copilot 账号，也支持通过 COPILOT_PROVIDER_* 环境变量连接 OpenAI-compatible、Azure OpenAI 或 Anthropic 模型供应商。",
+    "recommendations": [
+      {
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.git",
+        "label": "源码工具"
+      },
+      {
+        "resourceId": "kite.codex.cli",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.opencode",
+        "label": "同类 Agent"
+      }
+    ],
+    "tags": [
+      "github",
+      "copilot",
+      "coding-agent",
+      "terminal",
+      "ai",
+      "acp",
+      "byok"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.github.copilot",
+      "agent.github.copilot"
+    ],
+    "base": [
+      "kite.nodejs",
+      "kite.git"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "official_command",
+    "package": "@github/copilot",
+    "command": "npm install -g @github/copilot@latest",
+    "uninstallCommand": "npm uninstall -g @github/copilot",
+    "latestVersion": "1.0.85"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.github.copilot",
+    "installRoot": "/workspace/.kf/software/kite.github.copilot",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot CLI",
+      "description": "GitHub Copilot CLI 原生 ACP 会话",
+      "configuration": {
+        "adapter": "github-copilot",
+        "required": false
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "copilot",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": [
+          "kite-copilot-acp"
+        ],
+        "title": "GitHub Copilot CLI"
+      }
+    }
+  ],
+  "actions": {
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "GitHub Copilot CLI",
+          "description": "启动 GitHub Copilot CLI Agent 会话",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "agent",
+            "agentId": "copilot",
+            "workdir": "/workspace"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": [
+          "copilot",
+          "kite-copilot-acp"
+        ],
+        "npmUninstallPackage": "@github/copilot",
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "GitHub Copilot CLI",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "GitHub Copilot CLI",
+          "description": "启动 GitHub Copilot CLI Agent 会话",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "agent",
+            "agentId": "copilot",
+            "workdir": "/workspace"
+          }
+        ]
+      }
+    }
+  ]
+}

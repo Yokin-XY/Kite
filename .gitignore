@@ -6,6 +6,7 @@
 local.properties
 .externalNativeBuild/
 .cxx/
+**/target/
 captures/
 
 # 本机环境、密钥和临时配置。
@@ -31,3 +32,7 @@ Thumbs.db
 /kite-*.png
 /card-run-*.png
 /terminal-*-check.png
+
+# 设备截屏与诊断输出。
+/.device-screens/
+.autotask/gitcode-api-key.txt

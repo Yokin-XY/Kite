@@ -1,5 +1,10 @@
 package com.kite.app.foundation.runtime
 
+internal fun RuntimeHardLinkMode.applyToProotCommand(command: List<String>): List<String> = when (this) {
+    RuntimeHardLinkMode.EMULATED -> command
+    RuntimeHardLinkMode.NATIVE -> command.filterNot { it == "--link2symlink" }
+}
+
 /** PRoot 是最终兼容 Provider；选择原因由上游 Planner 显式传入，不从命令名反推。 */
 internal data class ProotCompatibilityProviderContext(
     val selectionReason: String,
@@ -22,6 +27,8 @@ internal data class ProotCompatibilityPlan(
     val loginShell: Boolean,
     val requestedProotViewId: String?,
     val requestedProotEnvironmentId: String?,
+    val filesystemBindings: List<RuntimeFilesystemBinding> = emptyList(),
+    val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
 )
 
 internal object ProotCompatibilityRuntimeProvider :
@@ -55,6 +62,8 @@ internal object ProotCompatibilityRuntimeProvider :
                 requestedProotEnvironmentId = request.environment[ProotViewBinding.ENV_ENVIRONMENT_ID]
                     ?.trim()
                     ?.takeIf(String::isNotBlank),
+                filesystemBindings = request.filesystemBindings.toList(),
+                hardLinkMode = request.hardLinkMode,
             ),
             reason = context.selectionReason,
         )

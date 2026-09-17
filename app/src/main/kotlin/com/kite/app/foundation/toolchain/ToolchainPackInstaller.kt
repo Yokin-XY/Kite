@@ -8,6 +8,8 @@ import com.kite.app.foundation.capability.CapabilityGate
 import com.kite.app.foundation.capability.CapabilityOutputLevel
 import com.kite.app.foundation.capability.CapabilityRequest
 import com.kite.app.foundation.logging.Logger
+import com.kite.app.foundation.storage.AtomicDirectoryPublisher
+import com.kite.app.foundation.storage.ImmutableArtifactIntegrity
 import com.kite.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.foundation.workspace.WorkspaceBuildSupport
@@ -115,6 +117,7 @@ object ToolchainPackInstaller {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val running = AtomicBoolean(false)
     private val logLock = Any()
+    private val sharedPackMaintenanceLock = Any()
     private val _state = MutableStateFlow(ToolchainInstallState())
 
     val state: StateFlow<ToolchainInstallState> = _state.asStateFlow()
@@ -178,10 +181,12 @@ object ToolchainPackInstaller {
             workspacePathExists(File(workspaceDir, ".kf/bin/curl"), workspaceDir) &&
             workspacePathExists(File(workspaceDir, ".kf/bin/git"), workspaceDir) &&
             workspacePathExists(File(workspaceDir, ".kf/bin/wget"), workspaceDir) &&
-            workspacePathExists(File(workspaceDir, ".kf/bin/jq"), workspaceDir) &&
-            workspacePathExists(File(workspaceDir, ".kf/bin/rg"), workspaceDir) &&
-            workspacePathExists(File(workspaceDir, ".kf/bin/fd"), workspaceDir) &&
-            workspacePathExists(File(workspaceDir, ".kf/bin/zip"), workspaceDir)
+            workspacePathExists(File(workspaceDir, ".kf/bin/zip"), workspaceDir) &&
+            // v20+: rg/fd/jq 从 rootfs 链接升级为原生预构建二进制。
+            // 检查 native-tools 目录确保升级后重装。
+            workspacePathExists(File(workspaceDir, ".kf/toolchains/native-tools/rg"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/toolchains/native-tools/fd"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/toolchains/native-tools/jq"), workspaceDir)
     }
 
     fun bootstrapResourcesSettled(context: Context): Boolean {
@@ -334,6 +339,7 @@ object ToolchainPackInstaller {
     ): ToolchainInstallState {
         return runCatching {
             val manifest = extractRuntimePack(appContext)
+            val sharedResourcePackDir = mirrorPackIntoSharedResourceCache(appContext, "bootstrap")
             val totalSteps = BOOTSTRAP_RESOURCES.size
             val installRunner = BootstrapInstallRunner(ToolchainResourcePortHost.get())
             val resourcesById = BOOTSTRAP_RESOURCES.associateBy(BootstrapResource::resourceId)
@@ -342,6 +348,7 @@ object ToolchainPackInstaller {
                     DependencyBatchTask(
                         key = resource.resourceId,
                         dependencies = resource.dependencies,
+                        writeScopes = resource.writeScopes,
                     ) {
                         val stepIndex = index + 1
                         if (reportBootstrapProgress) {
@@ -355,11 +362,10 @@ object ToolchainPackInstaller {
                             runId = runId,
                             alreadyReady = isBootstrapResourceReady(appContext, resource)
                         ) {
-                            val resourcePackDir = mirrorPackIntoSharedResourceCache(appContext, resource.resourceId)
                             executeInstallScript(
                                 context = appContext,
                                 mode = resource.mode,
-                                workspacePackDir = resourcePackDir,
+                                workspacePackDir = sharedResourcePackDir,
                                 workspacePackPath = resourcePackWorkspacePath(resource.resourceId),
                                 toolchainDir = "/workspace/.kf/software/${safeResourceId(resource.resourceId)}",
                                 binDir = WorkspaceBuildSupport.CONTAINER_HELPER_BIN_PATH
@@ -505,7 +511,24 @@ object ToolchainPackInstaller {
         val resourceId: String,
         val mode: String,
         val dependencies: Set<String>,
+        val writeScopes: Set<String>,
     )
+
+    /** 首次运行报告读取的稳定组件目录；安装结果仍以资源登记表为事实源。 */
+    internal data class BootstrapResourceDescriptor(
+        val resourceId: String,
+        val label: String,
+        val version: String,
+    )
+
+    internal fun bootstrapResourceDescriptors(): List<BootstrapResourceDescriptor> =
+        BOOTSTRAP_RESOURCES.map { resource ->
+            BootstrapResourceDescriptor(
+                resourceId = resource.resourceId,
+                label = resource.label,
+                version = resource.version,
+            )
+        }
 
     internal fun bootstrapResourceSchedulingContracts(): List<BootstrapResourceSchedulingContract> =
         BOOTSTRAP_RESOURCES.map { resource ->
@@ -513,6 +536,7 @@ object ToolchainPackInstaller {
                 resourceId = resource.resourceId,
                 mode = resource.mode,
                 dependencies = resource.dependencies,
+                writeScopes = resource.writeScopes,
             )
         }
 
@@ -524,7 +548,16 @@ object ToolchainPackInstaller {
         val dependencies: Set<String> = emptySet(),
         val requiredPaths: List<String>,
         val anyRuntimePaths: List<String> = emptyList()
-    )
+    ) {
+        val writeScopes: Set<String> = buildSet {
+            add("resource:$resourceId")
+            requiredPaths
+                .filter { path -> path.startsWith(".kf/bin/") }
+                .map { path -> path.substringAfterLast('/') }
+                .filter(String::isNotBlank)
+                .forEach { command -> add("command:$command") }
+        }
+    }
 
     private fun isBootstrapResourceReady(context: Context, resource: BootstrapResource): Boolean {
         val workspaceDir = workspaceDirOrNull(context) ?: return false
@@ -685,25 +718,25 @@ object ToolchainPackInstaller {
         val expectedManifestText = context.assets.open("$ASSET_ROOT/manifest.json")
             .bufferedReader()
             .use { it.readText() }
+        val integrity = expectedArtifactIntegrity(context)
+        val expectedManifest = ToolchainPackManifest.fromJson(JSONObject(expectedManifestText))
+        check(integrity.packageId == expectedManifest.packId && integrity.version == expectedManifest.version) {
+            "Bundled toolchain identity does not match its integrity manifest"
+        }
         val runtimePackDir = runtimePackDir(context)
-        if (!bundledPackDirectoryIsComplete(runtimePackDir, expectedManifestText)) {
-            val pendingDir = File(runtimePackDir.parentFile, "$PACK_ID.pending")
-            pendingDir.deleteRecursively()
+        AtomicDirectoryPublisher.publish(
+            destination = runtimePackDir,
+            isComplete = integrity::isPublished,
+        ) { pendingDir ->
             pendingDir.mkdirs()
             copyAssetTree(context, ASSET_ROOT, pendingDir)
             normalizeShellScripts(pendingDir)
             cleanupUndeclaredBundledPackageFiles(pendingDir, expectedManifestText)
-            check(bundledPackDirectoryIsComplete(pendingDir, expectedManifestText)) {
-                "Bundled toolchain pack is incomplete after extraction"
-            }
-            runtimePackDir.deleteRecursively()
-            check(pendingDir.renameTo(runtimePackDir)) {
-                "Unable to publish runtime toolchain pack at ${runtimePackDir.absolutePath}"
-            }
+            integrity.validateStageAndSeal(pendingDir)
         }
         val manifestFile = File(runtimePackDir, "manifest.json")
         val manifest = ToolchainPackManifest.fromJson(JSONObject(manifestFile.readText()))
-        appendLog(context, "Prepared ${manifest.packId} v${manifest.version} at ${runtimePackDir.absolutePath}")
+        appendLog(context, "Prepared ${integrity.artifactKey} at ${runtimePackDir.absolutePath}")
         return manifest
     }
 
@@ -712,38 +745,43 @@ object ToolchainPackInstaller {
         val workspaceDir = File(container.workspacePath).also { it.mkdirs() }
         WorkspaceBuildSupport.ensure(workspaceDir)
         val workspacePackDir = File(workspaceDir, ".kf/toolchains/$PACK_ID")
-        if (workspacePackDir.exists()) {
-            workspacePackDir.deleteRecursively()
+        val sourcePackDir = runtimePackDir(context)
+        val integrity = sourceArtifactIntegrity(sourcePackDir)
+        AtomicDirectoryPublisher.publish(
+            destination = workspacePackDir,
+            isComplete = integrity::isPublished,
+        ) { pendingDir ->
+            sourcePackDir.copyRecursively(pendingDir, overwrite = true)
+            normalizeShellScripts(pendingDir)
+            integrity.validateStageAndSeal(pendingDir)
         }
-        runtimePackDir(context).copyRecursively(workspacePackDir, overwrite = true)
-        normalizeShellScripts(workspacePackDir)
         appendLog(context, "Mirrored $PACK_ID to ${workspacePackDir.absolutePath}")
         return workspacePackDir
     }
 
     private fun mirrorPackIntoSharedResourceCache(context: Context, resourceId: String): File {
-        val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(context)
-        val workspaceDir = File(container.workspacePath).also { it.mkdirs() }
-        WorkspaceBuildSupport.ensure(workspaceDir)
-        val sourcePackDir = runtimePackDir(context)
-        val sourceManifest = File(sourcePackDir, "manifest.json").readText()
-        val workspacePackDir = File(workspaceDir, ".kf/cache/shared/$PACK_ID")
-        if (!bundledPackDirectoryIsComplete(workspacePackDir, sourceManifest)) {
-            val pendingDir = File(workspacePackDir.parentFile, "$PACK_ID.pending")
-            pendingDir.deleteRecursively()
-            sourcePackDir.copyRecursively(pendingDir, overwrite = true)
-            normalizeShellScripts(pendingDir)
-            workspacePackDir.deleteRecursively()
-            check(pendingDir.renameTo(workspacePackDir)) {
-                "Unable to publish shared toolchain pack at ${workspacePackDir.absolutePath}"
+        return synchronized(sharedPackMaintenanceLock) {
+            val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(context)
+            val workspaceDir = File(container.workspacePath).also { it.mkdirs() }
+            WorkspaceBuildSupport.ensure(workspaceDir)
+            val sourcePackDir = runtimePackDir(context)
+            val integrity = sourceArtifactIntegrity(sourcePackDir)
+            val workspacePackDir = File(workspaceDir, ".kf/cache/shared/$PACK_ID")
+            AtomicDirectoryPublisher.publish(
+                destination = workspacePackDir,
+                isComplete = integrity::isPublished,
+            ) { pendingDir ->
+                sourcePackDir.copyRecursively(pendingDir, overwrite = true)
+                normalizeShellScripts(pendingDir)
+                integrity.validateStageAndSeal(pendingDir)
             }
+            val reclaimed = cleanupLegacyResourcePackCopies(workspaceDir)
+            appendLog(
+                context,
+                "Staged shared $PACK_ID for ${safeResourceId(resourceId)} at ${workspacePackDir.absolutePath}; reclaimedLegacyBytes=$reclaimed"
+            )
+            workspacePackDir
         }
-        val reclaimed = cleanupLegacyResourcePackCopies(workspaceDir)
-        appendLog(
-            context,
-            "Staged shared $PACK_ID for ${safeResourceId(resourceId)} at ${workspacePackDir.absolutePath}; reclaimedLegacyBytes=$reclaimed"
-        )
-        return workspacePackDir
     }
 
     private fun cleanupLegacyResourcePackCopies(workspaceDir: File): Long {
@@ -793,7 +831,6 @@ object ToolchainPackInstaller {
             export KF_TOOLCHAIN_DIR=$toolchainDir
             export KF_TOOLCHAIN_BIN_DIR=$binDir
             export UV_LINK_MODE=copy
-            chmod +x "$scriptPath" 2>/dev/null || true
             bash "$scriptPath" "$mode"
         """.trimIndent()
         val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
@@ -872,6 +909,14 @@ object ToolchainPackInstaller {
             }
     }
 
+    private fun expectedArtifactIntegrity(context: Context): ImmutableArtifactIntegrity =
+        context.assets.open("$ASSET_ROOT/${ImmutableArtifactIntegrity.INTEGRITY_FILE}")
+            .bufferedReader()
+            .use { reader -> ImmutableArtifactIntegrity.parse(reader.readText()) }
+
+    private fun sourceArtifactIntegrity(root: File): ImmutableArtifactIntegrity =
+        ImmutableArtifactIntegrity.parse(File(root, ImmutableArtifactIntegrity.INTEGRITY_FILE).readText())
+
     private fun runtimePackDir(context: Context): File {
         return File(WorkSurfaceRuntimeBridge.getRuntimeRoot(context), "toolchain-packs/$PACK_ID")
     }
@@ -947,6 +992,7 @@ object ToolchainPackInstaller {
 
     internal fun bootstrapSummaryLine(output: String): String? =
         output.lineSequence().lastOrNull { it.startsWith("FAIL\t") || it.startsWith("FAIL ") }
+            ?: output.lineSequence().lastOrNull { it.startsWith("KITE_RESOURCE_TRANSACTION_FAILED") }
             ?: output.lineSequence().lastOrNull { it.startsWith("SUMMARY ") }
 
     private fun ToolchainCommandResult.toLogBlock(label: String = PACK_ID): String {
@@ -969,31 +1015,6 @@ object ToolchainPackInstaller {
         val durationMs: Long,
         val output: String
     )
-}
-
-internal fun bundledPackDirectoryIsComplete(root: File, expectedManifestText: String): Boolean {
-    if (!root.isDirectory) return false
-    return runCatching {
-        val expected = JSONObject(expectedManifestText)
-        val actual = JSONObject(File(root, "manifest.json").readText())
-        if (expected.optString("packId") != actual.optString("packId") ||
-            expected.optInt("version") != actual.optInt("version")
-        ) {
-            return@runCatching false
-        }
-        val installScript = expected.optString("installScript", "install.sh")
-        if (!File(root, installScript).isFile) return@runCatching false
-        val declaredFiles = declaredBundledPackageFiles(expected)
-        val declaredFilesPresent = declaredFiles.all { relativePath ->
-            File(root, relativePath).let { it.isFile && it.length() > 0L }
-        }
-        val actualPackageFiles = File(root, "packages")
-            .walkTopDown()
-            .filter(File::isFile)
-            .map { file -> file.relativeTo(root).invariantSeparatorsPath }
-            .toSet()
-        declaredFilesPresent && actualPackageFiles.all { it in declaredFiles }
-    }.getOrDefault(false)
 }
 
 internal fun cleanupUndeclaredBundledPackageFiles(root: File, manifestText: String): Long {

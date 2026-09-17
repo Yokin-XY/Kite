@@ -12,8 +12,10 @@ import com.kite.app.foundation.runtime.WarmProotRunnerProcess
 import com.kite.app.foundation.runtime.ProotEnvironmentWorkspace
 import com.kite.app.foundation.runtime.ProotCompatibilityPlan
 import com.kite.app.foundation.runtime.ProotCompatibilityRuntimeProvider
+import com.kite.app.foundation.runtime.ProotBindMount
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.applyToProotCommand
 import com.kite.app.foundation.runtime.ProotViewStore
 import com.kite.app.foundation.contracts.RuntimeActionKind
 import com.kite.app.foundation.runtime.RuntimeBoundary
@@ -287,7 +289,8 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
         payload: String,
         loginShell: Boolean = true,
         requestedProotViewId: String? = null,
-        requestedProotEnvironmentId: String? = null
+        requestedProotEnvironmentId: String? = null,
+        extraBindMounts: List<ProotBindMount> = emptyList(),
     ): ContainerExecConfig {
         return KFContainerManager.buildContainerExecConfig(
             context = context.applicationContext,
@@ -295,7 +298,8 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
             payload = payload,
             loginShell = loginShell,
             requestedProotViewId = requestedProotViewId,
-            requestedProotEnvironmentId = requestedProotEnvironmentId
+            requestedProotEnvironmentId = requestedProotEnvironmentId,
+            extraBindMounts = extraBindMounts,
         )
     }
 
@@ -304,14 +308,16 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
         workingDirectory: String = defaults.workspaceDir,
         argv: List<String>,
         requestedProotViewId: String? = null,
-        requestedProotEnvironmentId: String? = null
+        requestedProotEnvironmentId: String? = null,
+        extraBindMounts: List<ProotBindMount> = emptyList(),
     ): ContainerExecConfig {
         return KFContainerManager.buildContainerArgvExecConfig(
             context = context.applicationContext,
             workingDirectory = workingDirectory,
             argv = argv,
             requestedProotViewId = requestedProotViewId,
-            requestedProotEnvironmentId = requestedProotEnvironmentId
+            requestedProotEnvironmentId = requestedProotEnvironmentId,
+            extraBindMounts = extraBindMounts,
         )
     }
 
@@ -329,6 +335,13 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
                 loginShell = plan.loginShell,
                 requestedProotViewId = plan.requestedProotViewId,
                 requestedProotEnvironmentId = plan.requestedProotEnvironmentId,
+                extraBindMounts = plan.filesystemBindings.map { binding ->
+                    ProotBindMount(
+                        sourcePath = binding.sourcePath,
+                        targetPath = binding.targetPath,
+                        role = binding.role,
+                    )
+                },
             )
             is RuntimeExecutionPayload.Argv -> buildArgvExecConfig(
                 context = context,
@@ -336,10 +349,18 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
                 argv = listOf(payload.executable) + payload.arguments,
                 requestedProotViewId = plan.requestedProotViewId,
                 requestedProotEnvironmentId = plan.requestedProotEnvironmentId,
+                extraBindMounts = plan.filesystemBindings.map { binding ->
+                    ProotBindMount(
+                        sourcePath = binding.sourcePath,
+                        targetPath = binding.targetPath,
+                        role = binding.role,
+                    )
+                },
             )
             is RuntimeExecutionPayload.NativeCapability -> error("proot_native_capability_plan_forbidden")
         }
-        return config.copy(env = config.env + plan.environment)
+        val command = plan.hardLinkMode.applyToProotCommand(config.command)
+        return config.copy(command = command, env = config.env + plan.environment)
     }
 
     /** 显式兼容入口的统一短路径：先经最终 Provider，再交给同一个物理构造器。 */

@@ -14,8 +14,12 @@ data class KiteResourceRemoteVersionProbe(
     val jsonField: String = "",
     val format: String = "json",
     val stripPrefix: String = "",
-    val fallbackUrl: String = ""
-) : KiteResourceLatestVersionProbe
+    val fallbackUrl: String = "",
+    val urls: List<String> = emptyList(),
+) : KiteResourceLatestVersionProbe {
+    val orderedUrls: List<String>
+        get() = urls.ifEmpty { listOf(url) }.filter(String::isNotBlank).distinct()
+}
 
 data class KiteResourceVersionCheckPlan(
     val installed: KiteResourceVersionProbeSpec?,
@@ -44,7 +48,11 @@ data class KiteResourceSourcePlan(
  * 把标准来源声明编译成资源动作。复杂资源仍可提供显式 actions，显式动作优先。
  */
 object KiteResourceSourcePlanFactory {
-    fun plan(manifest: KiteResourceManifest, targetVersion: String? = null): KiteResourceSourcePlan {
+    fun plan(
+        manifest: KiteResourceManifest,
+        targetVersion: String? = null,
+        sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
+    ): KiteResourceSourcePlan {
         if (!manifest.management.userLifecycleEnabled) {
             return KiteResourceSourcePlan(
                 installActions = manifest.installActions,
@@ -61,28 +69,34 @@ object KiteResourceSourcePlanFactory {
         }
 
         val explicitInstall = manifest.installActions.isNotEmpty()
-        val explicitUpdate = manifest.updateActions.isNotEmpty()
+        val reinstallOnUpdate = manifest.updateStrategy == UPDATE_STRATEGY_REINSTALL
+        val explicitUpdate = manifest.updateActions.isNotEmpty() || reinstallOnUpdate
         val explicitUninstall = manifest.uninstallActions.isNotEmpty()
         val generatedInstall = if (explicitInstall || explicitUpdate && targetVersion != null) {
             emptyList()
         } else {
-            generatedInstallActions(manifest, targetVersion)
+            generatedInstallActions(manifest, targetVersion, sourcePreferences)
         }
         val generatedUninstall = if (explicitUninstall) emptyList() else generatedUninstallActions(manifest)
-        val installActions = when {
+        val rawInstallActions = when {
+            targetVersion != null && reinstallOnUpdate -> manifest.installActions
             targetVersion != null && explicitUpdate -> manifest.updateActions
             explicitInstall -> manifest.installActions
             else -> generatedInstall
         }
+        val installActions = attachSourceVersionWindow(manifest, rawInstallActions)
         val uninstallActions = manifest.uninstallActions.ifEmpty { generatedUninstall }
         val versionCheck = versionCheckPlan(manifest)
         val supportsTargetVersion = when {
+            reinstallOnUpdate -> true
             explicitUpdate -> true
             explicitInstall -> false
             manifest.source.type in TARGET_VERSION_SOURCES -> true
             isManagedScriptProfile(manifest) -> true
             manifest.source.type == SOURCE_OFFICIAL_SCRIPT ->
                 manifest.source.versionArguments.any { "{version}" in it }
+            // 官方命令幂等（@latest），目标版本仅作记账提示，命令本身不引用。
+            manifest.source.type == SOURCE_OFFICIAL_COMMAND -> true
             else -> false
         }
 
@@ -93,22 +107,88 @@ object KiteResourceSourcePlanFactory {
             capabilities = KiteResourceSourceCapabilities(
                 install = installActions.isNotEmpty(),
                 checkUpdate = versionCheck.supported,
-                update = versionCheck.supported && supportsTargetVersion,
+                // official_command 的更新就是重跑官方命令：不需要事前探测 latest，
+                // 但更新入口必须可用。
+                update = (versionCheck.supported ||
+                    manifest.source.type == SOURCE_OFFICIAL_COMMAND) && supportsTargetVersion,
                 uninstall = uninstallActions.isNotEmpty()
             ),
             generatedFromSource = !explicitInstall && !explicitUpdate && generatedInstall.isNotEmpty()
         )
     }
 
-    fun versionCheckPlan(manifest: KiteResourceManifest): KiteResourceVersionCheckPlan {
+    private const val UPDATE_STRATEGY_REINSTALL = "reinstall"
+
+    private fun attachSourceVersionWindow(
+        manifest: KiteResourceManifest,
+        actions: List<KiteResourceShellAction>,
+    ): List<KiteResourceShellAction> {
+        val window = manifest.source.latestVersionWindow
+        if (window.isEmpty()) return actions
+        return actions.map { action ->
+            if (action.type != KiteResourceInstallPlanCompiler.ACTION_MANAGED) return@map action
+            action.copy(
+                installSteps = action.installSteps.map { step ->
+                    val matchingStepType = when (manifest.source.type) {
+                        SOURCE_NPM -> KiteResourceInstallPlanCompiler.STEP_NPM
+                        SOURCE_PYPI -> KiteResourceInstallPlanCompiler.STEP_PYPI
+                        else -> KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
+                    }
+                    if (
+                        step.type == matchingStepType &&
+                        step.latestVersionWindow.isEmpty()
+                    ) {
+                        step.copy(
+                            latestVersionWindow = window,
+                            urls = if (
+                                matchingStepType == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD &&
+                                step.urls.isEmpty()
+                            ) {
+                                listOf(manifest.source.latestUrl).filter(String::isNotBlank)
+                            } else {
+                                step.urls
+                            },
+                            latestFormat = if (
+                                matchingStepType == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
+                            ) manifest.source.latestFormat else step.latestFormat,
+                            latestJsonField = if (
+                                matchingStepType == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
+                            ) manifest.source.latestJsonField else step.latestJsonField,
+                            latestRegex = if (
+                                matchingStepType == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
+                            ) manifest.source.latestRegex else step.latestRegex,
+                            latestStripPrefix = if (
+                                matchingStepType == KiteResourceInstallPlanCompiler.STEP_LATEST_DOWNLOAD
+                            ) manifest.source.latestStripPrefix else step.latestStripPrefix,
+                        )
+                    } else {
+                        step
+                    }
+                }
+            )
+        }
+    }
+
+    fun versionCheckPlan(
+        manifest: KiteResourceManifest,
+        sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
+    ): KiteResourceVersionCheckPlan {
         if (!manifest.management.userLifecycleEnabled) return KiteResourceVersionCheckPlan(null, null)
         val latest = manifest.management.latestVersionProbe
             ?.let(::KiteResourceCommandVersionProbe)
             ?: when (manifest.source.type) {
-                SOURCE_NPM -> npmVersionProbe(manifest.source)
+                SOURCE_NPM -> npmVersionProbe(manifest.source, sourcePreferences)
                 SOURCE_GITHUB_RELEASE -> githubVersionProbe(manifest.source)
                 SOURCE_OFFICIAL_SCRIPT -> officialScriptVersionProbe(manifest.source)
                 SOURCE_BUNDLED -> managedScriptProbe(manifest, "latest-version")
+                // official_command：最新版本号随商店清单分发（CI 每日维护），
+                // App 端零网络读取——用 echo 常量当探测器，复用整条检查更新机器。
+                SOURCE_OFFICIAL_COMMAND ->
+                    manifest.source.latestVersion.takeIf { it.isNotBlank() }?.let {
+                        KiteResourceCommandVersionProbe(
+                            KiteResourceVersionProbeSpec(command = "echo '$it'", group = 0)
+                        )
+                    }
                 else -> null
             }
         return KiteResourceVersionCheckPlan(
@@ -136,17 +216,119 @@ object KiteResourceSourcePlanFactory {
 
     private fun generatedInstallActions(
         manifest: KiteResourceManifest,
-        targetVersion: String?
+        targetVersion: String?,
+        sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
     ): List<KiteResourceShellAction> = when (manifest.source.type) {
         SOURCE_NPM -> npmInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
         SOURCE_GITHUB_RELEASE -> githubReleaseInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
         SOURCE_OFFICIAL_SCRIPT -> officialScriptInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
+        SOURCE_OFFICIAL_COMMAND -> officialCommandInstallAction(manifest, sourcePreferences)?.let(::listOf).orEmpty()
         SOURCE_BUNDLED -> managedScriptInstallAction(manifest, targetVersion)?.let(::listOf).orEmpty()
         else -> emptyList()
     }
 
+    /**
+     * official_command：安装与更新都按官方命令原样执行，位置由官方安装器决定。
+     * 镜像策略：npm 系命令自动注入多源循环（华为云→npmmirror→阿里云→官方），
+     * 失败自动换下一个源；非 npm 命令原样执行。
+     */
+    private fun officialCommandInstallAction(
+        manifest: KiteResourceManifest,
+        sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
+    ): KiteResourceShellAction? {
+        val command = manifest.source.command.takeIf(String::isNotBlank) ?: return null
+        val probeCommand = manifest.management.versionProbe?.command
+            ?.takeIf { it.isNotBlank() && "'" !in it }
+            ?: return null
+        val marker = buildString {
+            append("kite_official_version=\"$(")
+            append(probeCommand)
+            append(" 2>/dev/null | head -n 1)\"")
+            append("\n")
+            append("if [ -n \"${'$'}kite_official_version\" ]; then")
+            append("\n")
+            append("  echo \"KITE_RESOURCE_INSTALLED_VERSION ${'$'}kite_official_version\"")
+            append("\n")
+            append("fi")
+        }
+        val isNpm = command.contains("npm install")
+        val fullCmd = if (isNpm) {
+            buildMultiSourceNpmScript(command.trim(), manifest, sourcePreferences, marker)
+        } else {
+            command.trim() + "\n" + marker
+        }
+        return KiteResourceShellAction(
+            type = KiteResourceInstallPlanCompiler.STEP_SHELL,
+            cmd = fullCmd,
+            surfaceMode = "panel",
+            workdir = "/workspace",
+            timeoutMs = 900_000L,
+            managedCommands = emptyList(),
+            cleanInstallRoot = false,
+            npmUninstallPackages = emptyList(),
+            verifications = verificationSteps(manifest)
+        )
+    }
+
+    /**
+     * 为 npm install 生成多源自动切换脚本。
+     * 按用户源偏好顺序循环尝试（华为云→npmmirror→阿里云→官方），
+     * 某个源失败自动换下一个，全部失败才退出。
+     */
+    private fun buildMultiSourceNpmScript(
+        npmCommand: String,
+        manifest: KiteResourceManifest,
+        sourcePreferences: KiteResourceSourcePreferences,
+        versionMarker: String,
+    ): String {
+        val routes = KiteResourceSourcePolicy.npmRoutes(sourcePreferences)
+        val registries = routes.joinToString(" ") { route ->
+            "\"${route.endpoint.trimEnd('/')}\""
+        }
+        val sb = StringBuilder()
+        sb.append("kite_npm_registries=(").append(registries).append(")\n")
+        sb.append("kite_npm_installed=0\n")
+        sb.append("for kite_registry in \"${'$'}{kite_npm_registries[@]}\"; do\n")
+        sb.append("  echo \"KITE_RESOURCE_ROUTE source=mirror registry=\"${'$'}kite_registry\"\"\n")
+        sb.append("  export npm_config_registry=\"${'$'}kite_registry\"\n")
+        sb.append("  set +e\n")
+        sb.append("  ").append(npmCommand).append("\n")
+        sb.append("  kite_npm_status=\"${'$'}?\"\n")
+        sb.append("  set -e\n")
+        sb.append("  if [ \"${'$'}kite_npm_status\" -eq 0 ]; then\n")
+        sb.append("    kite_npm_installed=1\n")
+        sb.append("    break\n")
+        sb.append("  fi\n")
+        sb.append("  echo \"KITE_RESOURCE_RETRY source=mirror registry=\"${'$'}kite_registry\" exit=\"${'$'}kite_npm_status\"\"\n")
+        sb.append("done\n")
+        sb.append("unset npm_config_registry\n")
+        sb.append("if [ \"${'$'}kite_npm_installed\" -ne 1 ]; then\n")
+        sb.append("  echo \"KITE_RESOURCE_FAILURE stage=acquire reason=no-verified-source\"\n")
+        sb.append("  exit 1\n")
+        sb.append("fi\n")
+        sb.append(versionMarker)
+        return sb.toString()
+    }
+
+    private fun officialCommandUninstallAction(manifest: KiteResourceManifest): KiteResourceShellAction? {
+        val command = manifest.source.uninstallCommand.takeIf(String::isNotBlank) ?: return null
+        return KiteResourceShellAction(
+            type = KiteResourceInstallPlanCompiler.STEP_SHELL,
+            cmd = command.trim(),
+            surfaceMode = "panel",
+            workdir = "/workspace",
+            timeoutMs = 300_000L,
+            managedCommands = manifest.management.managedCommands,
+            cleanInstallRoot = false,
+            npmUninstallPackages = emptyList()
+        )
+    }
+
     private fun generatedUninstallActions(manifest: KiteResourceManifest): List<KiteResourceShellAction> {
         managedScriptUninstallAction(manifest)?.let { return listOf(it) }
+        if (manifest.source.type == SOURCE_OFFICIAL_COMMAND) {
+            return officialCommandUninstallAction(manifest)?.let(::listOf).orEmpty()
+        }
         if (manifest.management.managedCommands.isEmpty()) return emptyList()
         val npmPackages = if (manifest.source.type == SOURCE_NPM) {
             npmPackageNames(manifest.source) ?: return emptyList()
@@ -281,15 +463,20 @@ object KiteResourceSourcePlanFactory {
     ): KiteResourceShellAction? {
         val packageNames = npmPackageNames(manifest.source) ?: return null
         val packageName = packageNames.first()
+        val hasSignedLatestWindow = manifest.source.latestVersionWindow.isNotEmpty()
         val selector = targetVersion?.let(::safeVersion) ?: manifest.source.tag.ifBlank { "latest" }
-        val packageSpec = "$packageName@$selector"
-        val companionSpecs = packageNames.drop(1).map { "$it@latest" }
+        val packageSpec = if (hasSignedLatestWindow) packageName else "$packageName@$selector"
+        val companionSpecs = packageNames.drop(1).map { name ->
+            if (hasSignedLatestWindow) name else "$name@latest"
+        }
         return managedAction(
             steps = listOf(
                 KiteResourceInstallStep(
                     id = "install-npm-package",
                     type = KiteResourceInstallPlanCompiler.STEP_NPM,
                     packages = listOf(packageSpec) + companionSpecs,
+                    registries = manifest.source.registries,
+                    latestVersionWindow = manifest.source.latestVersionWindow,
                     arguments = manifest.source.installArguments,
                     retryAttempts = 5,
                     retryDelaySeconds = 3
@@ -459,14 +646,21 @@ object KiteResourceSourcePlanFactory {
         }
     }
 
-    private fun npmVersionProbe(source: KiteResourceSourceSpec): KiteResourceRemoteVersionProbe? {
+    private fun npmVersionProbe(
+        source: KiteResourceSourceSpec,
+        sourcePreferences: KiteResourceSourcePreferences,
+    ): KiteResourceRemoteVersionProbe? {
         val packageName = source.packageName.takeIf(SAFE_NPM_PACKAGE::matches) ?: return null
         val encodedPackage = URLEncoder.encode(packageName, StandardCharsets.UTF_8.name())
             .replace("+", "%20")
         val encodedTag = URLEncoder.encode(source.tag.ifBlank { "latest" }, StandardCharsets.UTF_8.name())
+        val urls = KiteResourceSourcePolicy.npmRoutes(sourcePreferences)
+            .map { route -> "${route.endpoint.trimEnd('/')}/$encodedPackage/$encodedTag" }
+            .distinct()
         return KiteResourceRemoteVersionProbe(
-            url = "https://registry.npmjs.org/$encodedPackage/$encodedTag",
-            jsonField = "version"
+            url = urls.firstOrNull() ?: return null,
+            jsonField = "version",
+            urls = urls,
         )
     }
 
@@ -566,8 +760,10 @@ object KiteResourceSourcePlanFactory {
         "'" + value.replace("'", "'\"'\"'") + "'"
 
     private const val SOURCE_NPM = "npm"
+    private const val SOURCE_PYPI = "pypi"
     private const val SOURCE_GITHUB_RELEASE = "github_release"
     private const val SOURCE_OFFICIAL_SCRIPT = "official_script"
+    private const val SOURCE_OFFICIAL_COMMAND = "official_command"
     private const val SOURCE_BUNDLED = "bundled"
     private const val PROFILE_MANAGED_SCRIPT_V1 = "managed_script_v1"
     private const val MAXIMUM_PACKAGE_METADATA_BYTES = 256L * 1024L

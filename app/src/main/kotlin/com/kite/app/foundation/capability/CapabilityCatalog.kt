@@ -168,6 +168,16 @@ object CapabilityCatalog {
             notes = "只证明已把受控 APK 交给系统安装器，不代表用户已安装成功。",
         ),
         RoutableCapabilityEntry(
+            id = CAPABILITY_AWAIT_ANDROID_PACKAGE,
+            invocation = CapabilityInvocationKind.ANDROID_ACTION,
+            resultOwner = CapabilityResultOwner.CARD_RUN_STORE,
+            completion = CapabilityCompletionKind.RESULT,
+            permissionGates = setOf(CapabilityPermissionGate.USER_CONFIRMATION),
+            fallbackBoundary = CapabilityFallbackBoundary.NEVER_AUTOMATIC,
+            legacyAction = KiteRecipe.ANDROID_ACTION_AWAIT_PACKAGE,
+            notes = "系统安装器交接后，仅以 PackageManager 中的包名和 APK 版本事实确认完成。",
+        ),
+        RoutableCapabilityEntry(
             id = CAPABILITY_DEFAULT_NETWORK_ALIGNMENT,
             invocation = CapabilityInvocationKind.LIFECYCLE_SERVICE,
             resultOwner = CapabilityResultOwner.DEFAULT_NETWORK_ALIGNMENT,
@@ -198,6 +208,7 @@ object CapabilityCatalog {
         routableEntries.firstOrNull { it.legacyAction == action }
 
     const val CAPABILITY_OPEN_APK_INSTALLER = "android.apk.open_installer"
+    const val CAPABILITY_AWAIT_ANDROID_PACKAGE = "android.package.await_install"
     const val CAPABILITY_DEFAULT_NETWORK_ALIGNMENT = "android.network.default_alignment"
     const val CAPABILITY_RUNTIME_PERMISSION_SNAPSHOT = "android.permission.runtime_snapshot"
 }

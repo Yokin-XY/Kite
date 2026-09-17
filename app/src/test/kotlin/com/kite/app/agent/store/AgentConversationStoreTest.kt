@@ -302,6 +302,56 @@ class AgentConversationStoreTest {
     }
 
     @Test
+    fun `原生历史确认本地回合后重复加载不会追加副本`() {
+        AgentConversationStore.bind("run-1", key, AgentSessionPhase.Ready)
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                AgentMessageRole.User,
+                AgentContent.Text("你好你好"),
+                "local-user",
+            ),
+        )
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                AgentMessageRole.Assistant,
+                AgentContent.Text("OK"),
+                "live-answer",
+            ),
+        )
+        AgentConversationStore.applyEvent(key, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready))
+
+        repeat(2) {
+            AgentConversationStore.beginHistoryReplay("run-1", key)
+            AgentConversationStore.applyEvent(
+                key,
+                AgentSessionEvent.MessageChunk(
+                    AgentMessageRole.User,
+                    AgentContent.Text("你好你好"),
+                    "native-user",
+                ),
+            )
+            AgentConversationStore.applyEvent(
+                key,
+                AgentSessionEvent.MessageChunk(
+                    AgentMessageRole.Assistant,
+                    AgentContent.Text("OK"),
+                    "native-answer",
+                ),
+            )
+            AgentConversationStore.completeHistoryReplay(key)
+        }
+
+        assertEquals(
+            listOf("你好你好", "OK"),
+            AgentConversationStore.snapshot(key)!!.timeline
+                .filterIsInstance<AgentConversationItem.Message>()
+                .map { message -> (message.content.single() as AgentContent.Text).text },
+        )
+    }
+
+    @Test
     fun `历史投影按内联媒体预算淘汰最早项目`() {
         val sharedPayload = "A".repeat(2 * 1024 * 1024)
         AgentConversationStore.beginHistoryReplay("run-1", key)
@@ -395,5 +445,77 @@ class AgentConversationStoreTest {
         assertTrue(restored.turns.all { it.state == AgentConversationTurnState.Historical })
         assertTrue(restored.turns.all { it.durationMillis == null })
         assertEquals(listOf(1L, 1L, 2L, 2L), restored.timeline.map { it.turnOrdinal })
+    }
+
+    @Test
+    fun `历史回放只恢复Kite确认过的对应回合用时`() {
+        var now = 1_000L
+        AgentConversationStore.setNowMillisForTest { now }
+        AgentConversationStore.bind("run-1", key, AgentSessionPhase.Ready)
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.User, AgentContent.Text("检查项目"), "local-1"),
+        )
+        AgentConversationStore.applyEvent(key, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting))
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.Assistant, AgentContent.Text("检查完成"), "answer-1"),
+        )
+        now = 4_500L
+        AgentConversationStore.applyEvent(key, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready))
+        val timings = AgentConversationStore.persistedTurnTimings(key)
+        assertEquals(3_500L, timings.single().durationMillis)
+
+        AgentConversationStore.resetForTest()
+        AgentConversationStore.beginHistoryReplay("run-1", key)
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.User, AgentContent.Text("检查项目"), "history-user"),
+        )
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.Assistant, AgentContent.Text("检查完成"), "history-answer"),
+        )
+        AgentConversationStore.completeHistoryReplay(key)
+
+        val restored = AgentConversationStore.restoreTurnTimings(key, timings)!!
+        assertEquals(AgentConversationTurnState.Historical, restored.turns.single().state)
+        assertEquals(3_500L, restored.turns.single().durationMillis)
+    }
+
+    @Test
+    fun `历史回放完成后的新回合恢复实时状态`() {
+        AgentConversationStore.beginHistoryReplay("run-1", key)
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                AgentMessageRole.User,
+                AgentContent.Text("历史问题"),
+                "history-user",
+            )
+        )
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                AgentMessageRole.Assistant,
+                AgentContent.Text("历史回答"),
+                "history-answer",
+            )
+        )
+        AgentConversationStore.completeHistoryReplay(key)
+
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                AgentMessageRole.User,
+                AgentContent.Text("实时问题"),
+                "live-user",
+            )
+        )
+
+        val snapshot = AgentConversationStore.snapshot(key)!!
+        assertEquals(AgentConversationTurnState.Historical, snapshot.turns.first().state)
+        assertEquals(AgentConversationTurnState.Running, snapshot.turns.last().state)
+        assertTrue(snapshot.turns.last().startedAtMillis != null)
     }
 }

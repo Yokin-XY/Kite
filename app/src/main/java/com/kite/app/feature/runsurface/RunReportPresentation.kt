@@ -1,6 +1,7 @@
 package com.kite.app.feature.runsurface
 
 import com.kite.app.recipe.KiteRecipe
+import com.kite.app.resources.KiteResourceInstallOutput
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 
@@ -17,8 +18,6 @@ internal enum class RunReportInsightTone {
 }
 
 internal object RunReportPresenter {
-    private val ansiEscapeRegex = Regex("""\u001B\[[0-9;?]*[ -/]*[@-~]""")
-
     fun project(recipe: KiteRecipe, state: CardRunState): RunSurfaceContent.Report {
         val hint = commandHint(state)
         val output = buildString {
@@ -86,18 +85,7 @@ internal object RunReportPresenter {
             !state.lastError.isNullOrBlank() -> state.lastError
             !state.lastMeaningfulOutput.isNullOrBlank() -> state.lastMeaningfulOutput
             else -> "暂无输出。一次性命令请使用“等待结束”，例如 python3 -V。"
-        }.orEmpty()
-            .replace(ansiEscapeRegex, "")
-            .replace('\r', '\n')
-            .lineSequence()
-            .filterNot { line ->
-                val trimmed = line.trim()
-                trimmed.startsWith("__kite_root_pid:") ||
-                    trimmed.startsWith("__kite_process_group_id:") ||
-                    trimmed.startsWith("__kite_system_session_id:")
-            }
-            .joinToString("\n") { it.trimEnd() }
-            .trim()
+        }.orEmpty().let(KiteResourceInstallOutput::userVisibleReport)
     }
 
     private fun extractShellOutput(report: String): String {
@@ -198,7 +186,7 @@ internal object RunReportPresenter {
         recipe.id.contains("kite.hermes.core") ->
             "Hermes 需要访问官方安装脚本、GitHub、PyPI 和 files.pythonhosted.org。请确认当前网络或代理能访问这些域名。"
         recipe.id.contains("kite.hermes.webui") ->
-            "Hermes WebUI 主要需要访问 registry.npmjs.org；如果安装浏览器工具，还可能访问 GitHub 或 CDN。"
+            "Hermes WebUI 主要需要访问设置中排序靠前的 NPM 下载源；如果安装浏览器工具，还可能访问 GitHub 或 CDN。"
         listOf("kite.git", "kite.curl", "kite.python").any(recipe.id::contains) ->
             "这个资源通过 Ubuntu apt 安装，需要容器能访问当前 apt 软件源。源慢或 DNS 不通时会失败。"
         else -> "请检查代理、DNS、证书和上游下载地址。"

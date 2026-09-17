@@ -5,6 +5,7 @@ import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
+import com.kite.app.foundation.runtime.RuntimeHardLinkMode
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -38,6 +39,7 @@ data class KiteResourceManifest(
     val installActions: List<KiteResourceShellAction>,
     val updateActions: List<KiteResourceShellAction>,
     val uninstallActions: List<KiteResourceShellAction>,
+    val updateStrategy: String = "",
     val agentProfiles: List<KiteResourceAgentProfile> = emptyList(),
     val openRecipe: JSONObject?,
     val homeCards: List<KiteResourceHomeCard>,
@@ -66,6 +68,7 @@ data class KiteResourceAgentProfile(
     val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
     val environmentFiles: Map<String, String> = emptyMap(),
     val runtimeDependencies: List<KiteResourceAgentRuntimeDependency> = emptyList(),
+    val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
     val initializeTimeoutMs: Long = DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
     val connectionReference: String = "",
     val configurationRequired: Boolean = false,
@@ -97,6 +100,7 @@ data class KiteResourceAgentAccountCommand(
     val loggedOutPatterns: List<String> = emptyList(),
     val successPatterns: List<String> = emptyList(),
     val timeoutMs: Long = 30_000L,
+    val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
 )
 
 /**
@@ -134,8 +138,22 @@ data class KiteResourceShellAction(
     val managedCommands: List<String>,
     val cleanInstallRoot: Boolean,
     val npmUninstallPackages: List<String>,
+    val writeScopes: List<String> = emptyList(),
     val installSteps: List<KiteResourceInstallStep> = emptyList(),
-    val verifications: List<KiteResourceInstallVerification> = emptyList()
+    val verifications: List<KiteResourceInstallVerification> = emptyList(),
+    val androidPackageHandoff: KiteResourceAndroidPackageHandoff? = null,
+)
+
+/**
+ * 资源制品交给 Android 系统安装器后的事实确认合同。
+ *
+ * 下载、摘要校验和资源事务仍由统一资源运行通道负责；这里不保存安装状态，只声明交接文件与
+ * PackageManager 应当确认的包身份。
+ */
+data class KiteResourceAndroidPackageHandoff(
+    val path: String,
+    val packageName: String,
+    val waitTimeoutMs: Long = 300_000L,
 )
 
 data class KiteResourceInstallStep(
@@ -150,13 +168,44 @@ data class KiteResourceInstallStep(
     val arguments: List<String> = emptyList(),
     val environment: Map<String, String> = emptyMap(),
     val packages: List<String> = emptyList(),
+    val registries: List<String> = emptyList(),
     val updateIndex: Boolean = false,
     val repository: String = "",
+    val repositories: List<String> = emptyList(),
     val ref: String = "",
+    val commit: String = "",
+    val latestVersionWindow: List<KiteResourceSourceVersion> = emptyList(),
+    val latestFormat: String = "json",
+    val latestJsonField: String = "",
+    val latestRegex: String = "",
+    val latestStripPrefix: String = "",
     val depth: Int = 1,
     val retryAttempts: Int = 4,
     val retryDelaySeconds: Int = 2,
-    val maxBytes: Long = 0L
+    val maxBytes: Long = 0L,
+    val archiveFormat: String = "",
+    val maximumEntries: Int = 0,
+    val maximumTotalBytes: Long = 0L,
+    val maximumFileBytes: Long = 0L,
+    val maximumDepth: Int = 0,
+    val maximumExpansionRatio: Int = 0,
+    val specialEntryPolicy: String = "reject",
+)
+
+/**
+ * 资源来源允许放行的近期版本身份。
+ *
+ * 安装器仍向每个来源请求其最新版本；只有来源返回的最新 ref 和实际检出的提交同时命中这里，
+ * 才能发布到正式安装目录。该窗口来自已签名的资源商店清单，不是运行时自行推断的版本锁。
+ */
+data class KiteResourceSourceVersion(
+    val version: String,
+    val ref: String = "",
+    val commit: String = "",
+    val artifact: String = "",
+    val integrity: String = "",
+    val sha256: String = "",
+    val url: String = "",
 )
 
 data class KiteResourceInstallVerification(
@@ -710,6 +759,7 @@ class KiteResourceManifestLoader private constructor(
             installActions = installActions,
             updateActions = updateActions,
             uninstallActions = uninstallActions,
+            updateStrategy = actions.optString("updateStrategy").trim().lowercase(),
             agentProfiles = agentProfiles,
             openRecipe = openRecipe,
             homeCards = parseHomeCards(json.optJSONArray("homeCards")),
@@ -751,6 +801,9 @@ class KiteResourceManifestLoader private constructor(
         val runtimeDependencies = parseAgentRuntimeDependencies(
             launch.optJSONArray("runtimeDependencies")
         ) ?: return null
+        val hardLinkMode = RuntimeHardLinkMode.fromWireValue(
+            launch.optString("hardLinkMode", RuntimeHardLinkMode.EMULATED.wireValue)
+        ) ?: return null
         val connectionReference = launch.optString("connectionReference").trim()
         val agentId = if (legacy) providerId else json.optString("id").trim()
         val validLaunch = when (launchMode) {
@@ -779,6 +832,7 @@ class KiteResourceManifestLoader private constructor(
             runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
             environmentFiles = launch.optJSONObject("environmentFiles").toStringMap(),
             runtimeDependencies = runtimeDependencies,
+            hardLinkMode = hardLinkMode,
             initializeTimeoutMs = launch.optLong(
                 "initializeTimeoutMs",
                 DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
@@ -823,12 +877,16 @@ class KiteResourceManifestLoader private constructor(
         if (command == null) return null
         val argv = command.optJSONArray("argv").toStringList()
         if (argv.isEmpty()) return null
+        val hardLinkMode = RuntimeHardLinkMode.fromWireValue(
+            command.optString("hardLinkMode", RuntimeHardLinkMode.EMULATED.wireValue)
+        ) ?: return null
         return KiteResourceAgentAccountCommand(
             argv = argv,
             loggedInPatterns = command.optJSONArray("loggedInPatterns").toStringList(),
             loggedOutPatterns = command.optJSONArray("loggedOutPatterns").toStringList(),
             successPatterns = command.optJSONArray("successPatterns").toStringList(),
             timeoutMs = command.optLong("timeoutMs", 30_000L).coerceIn(1_000L, 300_000L),
+            hardLinkMode = hardLinkMode,
         )
     }
 
@@ -926,16 +984,24 @@ class KiteResourceManifestLoader private constructor(
             binaryPath = sourceJson.optString("binaryPath").trim(),
             architectures = sourceJson.optJSONObject("architectures").toStringMap(),
             latestUrl = sourceJson.optString("latestUrl").trim(),
-            latestFormat = sourceJson.optString("latestFormat").trim().ifBlank { "json" },
+            latestFormat = sourceJson.optString("latestFormat").trim().lowercase().ifBlank { "json" },
             latestJsonField = sourceJson.optString("latestJsonField").trim(),
+            latestRegex = sourceJson.optString("latestRegex").trim(),
             latestStripPrefix = sourceJson.optString("latestStripPrefix").trim(),
+            registries = sourceJson.optJSONArray("registries").toStringList(),
+            latestVersionWindow = parseLatestVersionWindow(
+                sourceJson.optJSONArray("latestVersionWindow")
+            ),
             installArguments = sourceJson.optJSONArray("installArguments").toStringList(),
             versionArguments = sourceJson.optJSONArray("versionArguments").toStringList(),
             environment = sourceJson.optJSONObject("environment").toStringMap(),
             profile = sourceJson.optString("profile").trim(),
             interpreter = sourceJson.optString("interpreter").trim(),
             entry = sourceJson.optString("entry").trim(),
-            maxBytes = sourceJson.optLong("maxBytes", 0L).coerceAtLeast(0L)
+            maxBytes = sourceJson.optLong("maxBytes", 0L).coerceAtLeast(0L),
+            command = sourceJson.optString("command").trim(),
+            uninstallCommand = sourceJson.optString("uninstallCommand").trim(),
+            latestVersion = sourceJson.optString("latestVersion").trim()
         )
     }
 
@@ -1076,8 +1142,25 @@ class KiteResourceManifestLoader private constructor(
             managedCommands = managedCommands,
             cleanInstallRoot = action.optBoolean("cleanInstallRoot", false),
             npmUninstallPackages = npmUninstallPackages,
+            writeScopes = action.optJSONArray("writeScopes").toStringList()
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .distinct(),
             installSteps = installSteps,
-            verifications = parseInstallVerifications(action.optJSONArray("verify"))
+            verifications = parseInstallVerifications(action.optJSONArray("verify")),
+            androidPackageHandoff = parseAndroidPackageHandoff(action.optJSONObject("handoff")),
+        )
+    }
+
+    private fun parseAndroidPackageHandoff(json: JSONObject?): KiteResourceAndroidPackageHandoff? {
+        if (json?.optString("type")?.trim() != "android_apk") return null
+        val path = json.optString("path").trim()
+        val packageName = json.optString("packageName").trim()
+        if (path.isBlank() || packageName.isBlank()) return null
+        return KiteResourceAndroidPackageHandoff(
+            path = path,
+            packageName = packageName,
+            waitTimeoutMs = json.optLong("waitTimeoutMs", 300_000L).coerceIn(10_000L, 600_000L),
         )
     }
 
@@ -1092,6 +1175,12 @@ class KiteResourceManifestLoader private constructor(
                     listOf(step.optString("url")).filter { it.isNotBlank() } +
                         step.optJSONArray("urls").toStringList()
                     ).distinct()
+                val repositories = (
+                    listOf(
+                        step.optString("repository").ifBlank { step.optString("url") }
+                    ).filter { it.isNotBlank() } +
+                        step.optJSONArray("repositories").toStringList()
+                    ).distinct()
                 add(
                     KiteResourceInstallStep(
                         id = step.optString("id").trim().ifBlank { "${type}_${index + 1}" },
@@ -1105,13 +1194,57 @@ class KiteResourceManifestLoader private constructor(
                         arguments = step.optJSONArray("args").toStringList(),
                         environment = step.optJSONObject("env").toStringMap(),
                         packages = step.optJSONArray("packages").toStringList(),
+                        registries = step.optJSONArray("registries").toStringList(),
                         updateIndex = step.optBoolean("update", false),
-                        repository = step.optString("repository").ifBlank { step.optString("url") },
+                        repository = repositories.firstOrNull().orEmpty(),
+                        repositories = repositories,
                         ref = step.optString("ref").trim(),
+                        commit = step.optString("commit").trim().lowercase(),
+                        latestVersionWindow = parseLatestVersionWindow(
+                            step.optJSONArray("latestVersionWindow")
+                        ),
+                        latestFormat = step.optString("latestFormat", "json").trim().lowercase(),
+                        latestJsonField = step.optString("latestJsonField").trim(),
+                        latestRegex = step.optString("latestRegex").trim(),
+                        latestStripPrefix = step.optString("latestStripPrefix").trim(),
                         depth = step.optInt("depth", 1).coerceIn(0, 1000),
                         retryAttempts = step.optInt("retryAttempts", 4).coerceIn(1, 10),
                         retryDelaySeconds = step.optInt("retryDelaySeconds", 2).coerceIn(0, 60),
-                        maxBytes = step.optLong("maxBytes", 0L).coerceAtLeast(0L)
+                        maxBytes = step.optLong("maxBytes", 0L).coerceAtLeast(0L),
+                        archiveFormat = step.optString("format").trim().lowercase(),
+                        maximumEntries = step.optInt("maxEntries", 0).coerceAtLeast(0),
+                        maximumTotalBytes = step.optLong("maxOutputBytes", 0L).coerceAtLeast(0L),
+                        maximumFileBytes = step.optLong("maxFileBytes", 0L).coerceAtLeast(0L),
+                        maximumDepth = step.optInt("maxDepth", 0).coerceAtLeast(0),
+                        maximumExpansionRatio = step.optInt("maxExpansionRatio", 0).coerceAtLeast(0),
+                        specialEntryPolicy = step.optString("specialEntryPolicy", "reject").trim().lowercase(),
+                    )
+                )
+            }
+        }
+    }
+
+    private fun parseLatestVersionWindow(windowJson: JSONArray?): List<KiteResourceSourceVersion> {
+        if (windowJson == null) return emptyList()
+        return buildList {
+            for (index in 0 until windowJson.length()) {
+                val candidate = windowJson.optJSONObject(index)
+                if (candidate == null) {
+                    add(KiteResourceSourceVersion(version = ""))
+                    continue
+                }
+                val version = candidate.optString("version").trim()
+                val ref = candidate.optString("ref").trim()
+                val commit = candidate.optString("commit").trim().lowercase()
+                add(
+                    KiteResourceSourceVersion(
+                        version = version,
+                        ref = ref,
+                        commit = commit,
+                        artifact = candidate.optString("artifact").trim(),
+                        integrity = candidate.optString("integrity").trim(),
+                        sha256 = candidate.optString("sha256").trim().lowercase(),
+                        url = candidate.optString("url").trim(),
                     )
                 )
             }

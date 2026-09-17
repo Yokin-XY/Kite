@@ -11,6 +11,9 @@ import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
+import com.kite.app.run.CardRunSurface
+import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -109,5 +112,158 @@ class AndroidResourceFeatureGatewayTest {
         assertEquals(CardRunStatus.Starting, gateway.openRunStatus(resourceId))
         store.activateEnvironment("default")
         assertEquals(CardRunStatus.Running, gateway.openRunStatus(resourceId))
+    }
+
+    @Test
+    fun `进程重建会释放没有当前所有者的修复运行且不依赖版本号`() {
+        val store = KiteResourceInstallStore(context)
+        val resourceId = "test.resource.orphaned.repair.${System.nanoTime()}"
+        store.clear(resourceId)
+        store.markInstalled(resourceId, "", "old-run", "done")
+        store.markInstalling(
+            resourceId,
+            runId = "orphaned-repair",
+            operation = KiteResourceInstallRecipes.OP_REPAIR,
+        )
+        val recipe = KiteRecipe(
+            id = KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_REPAIR),
+            name = "Repair",
+            description = "",
+            type = KiteRecipe.TYPE_START_SERVICE,
+            category = "resource",
+            defaultUrl = "",
+            shortcut = false,
+            icon = KiteRecipeIcon(name = KiteRecipeIcon.ICON_TOOLS),
+            launch = KiteLaunchConfig(openInstance = false),
+            execution = KiteExecution.steps(emptyList()),
+        )
+        CardRunStore.start(recipe, instanceId = "orphaned-repair")
+
+        AndroidResourceFeatureGateway.create(
+            KiteResourceManifestLoader(context),
+            store,
+            nodeRuntimeInstalled = { false },
+            activeResourceRunOwned = { false },
+        )
+
+        val reconciled = store.registryEntry(resourceId)
+        assertTrue(reconciled?.installed == true)
+        assertEquals(KiteResourceInstallStore.UPDATE_STATUS_FAILED, reconciled?.updateStatus)
+        assertEquals(KiteResourceInstallRecipes.OP_REPAIR, reconciled?.operation)
+        assertTrue(reconciled?.summary?.contains("已中断") == true)
+        store.clear(resourceId)
+    }
+
+    @Test
+    fun `当前进程仍持有修复运行时不会被启动投影错误释放`() {
+        val store = KiteResourceInstallStore(context)
+        val resourceId = "test.resource.active.repair.${System.nanoTime()}"
+        store.clear(resourceId)
+        store.markInstalled(resourceId, "1.0.0", "old-run", "done")
+        store.markInstalling(
+            resourceId,
+            runId = "active-repair",
+            operation = KiteResourceInstallRecipes.OP_REPAIR,
+        )
+
+        AndroidResourceFeatureGateway.create(
+            KiteResourceManifestLoader(context),
+            store,
+            nodeRuntimeInstalled = { false },
+            activeResourceRunOwned = { instanceId -> instanceId == "active-repair" },
+        )
+
+        assertTrue(store.registryEntry(resourceId)?.installing == true)
+        store.clear(resourceId)
+    }
+
+    @Test
+    fun `目录合同升级在点击打开前投影为可更新`() = runBlocking {
+        val store = KiteResourceInstallStore(context)
+        val loader = KiteResourceManifestLoader(context)
+        val current = requireNotNull(loader.requestManifest(HERMES_RESOURCE_ID))
+        val oldVersion = "v2026.8.27"
+        val installed = JSONObject(current.rawJson.toString()).apply {
+            getJSONObject("base").put("version", oldVersion)
+            getJSONObject("actions").remove("update")
+        }
+        store.clear(HERMES_RESOURCE_ID)
+        store.markInstalled(HERMES_RESOURCE_ID, oldVersion, "old-run", "done")
+        store.saveInstalledSnapshot(
+            resourceId = HERMES_RESOURCE_ID,
+            name = current.name,
+            iconJson = "{}",
+            version = oldVersion,
+            manifestJson = installed.toString(),
+        )
+        val gateway = AndroidResourceFeatureGateway.create(
+            loader,
+            store,
+            nodeRuntimeInstalled = { false },
+        )
+
+        gateway.loadCatalog(forceRefresh = false)
+
+        val reconciled = store.registryEntry(HERMES_RESOURCE_ID)
+        assertEquals(KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE, reconciled?.updateStatus)
+        assertEquals(current.version, reconciled?.latestVersion)
+        assertEquals(KiteResourceInstallRecipes.OP_UPDATE, reconciled?.operation)
+        store.clear(HERMES_RESOURCE_ID)
+    }
+
+    @Test
+    fun `安装进度优先绑定资源登记指向的向导子实例`() {
+        val store = KiteResourceInstallStore(context)
+        val resourceId = "test.resource.progress.${System.nanoTime()}"
+        val recipe = KiteRecipe(
+            id = KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL),
+            name = "Install",
+            description = "",
+            type = KiteRecipe.TYPE_START_SERVICE,
+            category = "resource",
+            defaultUrl = "",
+            shortcut = false,
+            icon = KiteRecipeIcon(name = KiteRecipeIcon.ICON_TOOLS),
+            launch = KiteLaunchConfig(openInstance = false),
+            execution = KiteExecution.steps(emptyList())
+        )
+        CardRunStore.start(recipe, instanceId = "old-root")
+        CardRunStore.update(
+            recipe,
+            status = CardRunStatus.Failed,
+            instanceId = "old-root",
+            lastError = "old",
+        )
+        CardRunStore.start(recipe, instanceId = "live-child", parentInstanceId = "wizard")
+        CardRunStore.update(
+            recipe,
+            status = CardRunStatus.Running,
+            instanceId = "live-child",
+            parentInstanceId = "wizard",
+            surface = CardRunSurface.Report,
+            lastMeaningfulOutput = "资源仍在下载",
+            shellReportText = "Updating files:  42%",
+        )
+        store.markInstalling(
+            resourceId,
+            runId = "live-child",
+            operation = KiteResourceInstallRecipes.OP_INSTALL,
+        )
+        val gateway = AndroidResourceFeatureGateway.create(
+            KiteResourceManifestLoader(context),
+            store,
+            nodeRuntimeInstalled = { false },
+        )
+
+        val snapshot = gateway.operationRunSnapshot(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
+
+        assertEquals("live-child", snapshot?.instanceId)
+        assertEquals("资源仍在下载", snapshot?.progressText)
+        assertEquals("Updating files:  42%", snapshot?.reportText)
+        store.clear(resourceId)
+    }
+
+    private companion object {
+        const val HERMES_RESOURCE_ID = "kite.hermes.core"
     }
 }

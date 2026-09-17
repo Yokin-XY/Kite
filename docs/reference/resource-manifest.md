@@ -109,6 +109,7 @@ assets/resources/<resource-id>/
     }
   ],
   "managedCommands": ["example"],
+  "writeScopes": ["global:package-index"],
   "cleanInstallRoot": true,
   "verify": [
     {
@@ -120,7 +121,55 @@ assets/resources/<resource-id>/
 }
 ```
 
+`writeScopes` 用于声明安装动作除自身资源目录和 `managedCommands` 之外还会修改的共享事实。
+相同作用域的动作不会并发执行；以 `global:` 开头的作用域跨环境互斥，其他作用域只在同一环境内互斥。
+资源自身目录和已声明命令会自动形成作用域，因此普通独立资源不需要重复填写。
+
 旧 `type: shell` 仍能加载，但新资源不应把下载、安装、验证和成功登记压成一条自由 Shell。
+
+需要兼顾官方 Git 仓库和镜像新鲜度的资源，可以在 `git` 步骤声明由签名商店维护的近期版本窗口：
+
+```json
+{
+  "id": "acquire-example-source",
+  "type": "git",
+  "repositories": [
+    "https://example.cn/example.git",
+    "https://github.com/example/example.git"
+  ],
+  "destination": "$install_root/example",
+  "latestVersionWindow": [
+    {"version": "v3.0.0", "ref": "v3.0.0", "commit": "<40 位提交>"},
+    {"version": "v2.9.0", "ref": "v2.9.0", "commit": "<40 位提交>"},
+    {"version": "v2.8.0", "ref": "v2.8.0", "commit": "<40 位提交>"}
+  ]
+}
+```
+
+窗口最多三个版本，不能与固定 `ref` / `commit` 同时使用。安装器按用户的来源顺序向每个仓库查询最新 tag；只有最新 tag 命中窗口且实际检出的提交也一致才发布，并把选中的版本、ref 和提交写入资源目录的 `.kite-source-selection/`，供后续安装与验证步骤使用。`actions.updateStrategy: "reinstall"` 表示更新时复用同一套完整安装事务，而不是运行一套可能漏掉获取和核验的轻量脚本。
+
+NPM 资源把同类窗口写在 `source.latestVersionWindow`。单包可以省略 `artifact`；多包必须明确包名，每个包各保留最多三个版本：
+
+```json
+{
+  "source": {
+    "type": "npm",
+    "package": "@example/agent",
+    "companionPackages": ["@example/acp"],
+    "latestVersionWindow": [
+      {"artifact": "@example/agent", "version": "3.0.0", "integrity": "sha512-..."},
+      {"artifact": "@example/agent", "version": "2.9.0", "integrity": "sha512-..."},
+      {"artifact": "@example/acp", "version": "8.0.0", "integrity": "sha512-..."}
+    ]
+  }
+}
+```
+
+存在窗口时，`packages` 只能声明裸包名或 `@latest`，不能固定某个版本。运行时对用户排序后的每个注册源查询 `latest` 与 `dist.integrity`，全部包命中窗口后才按查询到的精确版本安装；选中身份写入 `.kite-source-selection/<step>.<package>.version|integrity`，主包同时写入无包名后缀的版本与摘要文件。
+
+PyPI 资源使用同一来源级窗口，但摘要字段为目标 ARM64 Linux wheel 的 `sha256`。安装步骤声明 `type: "pypi"` 和一个裸包名；运行时先读取当前索引的 Simple API，确认该索引公开的最新版本命中窗口，并同时校验索引片段摘要和下载后文件摘要，再把 wheel 交给 `uv tool install`。找不到当前版本的 ARM64/通用 wheel、版本越窗或摘要不一致时只淘汰当前索引，不能退回窗口中的旧版本。
+
+厂商直链或 GitHub Release 可使用 `type: "latest_download"`。来源声明 `latestUrl`、`latestFormat`、可选的 `latestJsonField` / `latestRegex` / `latestStripPrefix`，窗口的每个候选声明 `version + url + sha256`。`json` 读取指定字段，`text` 读取首行，`regex` 只读取第一个捕获组。步骤本身只声明目标路径、重试策略和 `maxBytes`，不得再写死当前制品 URL。运行时先请求来源的最新元数据，只有返回版本命中窗口时才下载该候选 URL；下载摘要不符、版本越窗、元数据超限或制品超限都会淘汰当前来源。动态归档仍先在资源缓存完成这次核验，再交给 Rust 原生解压；Rust 接受的摘要集合只来自同一签名窗口。
 
 ## 成功边界
 

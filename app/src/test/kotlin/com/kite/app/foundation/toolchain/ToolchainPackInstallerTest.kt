@@ -72,6 +72,18 @@ class ToolchainPackInstallerTest {
     }
 
     @Test
+    fun bootstrapSummaryLine_keepsTransactionFailureReason() {
+        val summary = ToolchainPackInstaller.bootstrapSummaryLine(
+            "KITE_RESOURCE_TRANSACTION_FAILED stage=execute reason=Source file wasn't copied completely"
+        )
+
+        assertEquals(
+            "KITE_RESOURCE_TRANSACTION_FAILED stage=execute reason=Source file wasn't copied completely",
+            summary,
+        )
+    }
+
+    @Test
     fun bootstrapResourceStatusSettled_acceptsInstalledAndFailedOnly() {
         assertTrue(ToolchainPackInstaller.bootstrapResourceStatusSettled("installed"))
         assertTrue(ToolchainPackInstaller.bootstrapResourceStatusSettled("failed"))

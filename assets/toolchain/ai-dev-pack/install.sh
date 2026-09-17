@@ -284,9 +284,47 @@ exec \"$real\" \"\$@\"" > "$TOOLCHAIN_DIR/bin/$name"
   emit PASS "$name-install" "$name linked from $real"
 }
 
+install_native_search_tools() {
+  # rg/fd/jq: 预构建 aarch64 linux-gnu 二进制，通过 glibc host 原生执行。
+  # 原生 Node.js (Claude Code/Codex) spawn 子进程时自动继承原生执行上下文，
+  # 跳过 PRoot 翻译层，代码搜索提速 3-10x。
+  local rg_bin="$PACK_DIR/packages/rg-v14.1.1-aarch64"
+  local fd_bin="$PACK_DIR/packages/fd-v10.2.0-aarch64"
+  local jq_bin="$PACK_DIR/packages/jq-v1.7.1-arm64"
+
+  if [ -x "$rg_bin" ]; then
+    mkdir -p "$TOOLCHAIN_DIR/native-tools"
+    cp "$rg_bin" "$TOOLCHAIN_DIR/native-tools/rg"
+    chmod +x "$TOOLCHAIN_DIR/native-tools/rg"
+    ln -sfn "$TOOLCHAIN_DIR/native-tools/rg" "$BIN_DIR/rg"
+    emit PASS rg-native "rg 14.1.1 installed (native aarch64, bypasses PRoot)"
+  else
+    install_rootfs_command rg
+  fi
+
+  if [ -x "$fd_bin" ]; then
+    cp "$fd_bin" "$TOOLCHAIN_DIR/native-tools/fd"
+    chmod +x "$TOOLCHAIN_DIR/native-tools/fd"
+    ln -sfn "$TOOLCHAIN_DIR/native-tools/fd" "$BIN_DIR/fd"
+    emit PASS fd-native "fd 10.2.0 installed (native aarch64, bypasses PRoot)"
+  else
+    install_rootfs_command fd
+  fi
+
+  if [ -x "$jq_bin" ]; then
+    cp "$jq_bin" "$TOOLCHAIN_DIR/native-tools/jq"
+    chmod +x "$TOOLCHAIN_DIR/native-tools/jq"
+    ln -sfn "$TOOLCHAIN_DIR/native-tools/jq" "$BIN_DIR/jq"
+    emit PASS jq-native "jq 1.7.1 installed (static aarch64, bypasses PRoot)"
+  else
+    install_rootfs_command jq
+  fi
+}
+
 install_system_tools() {
   install_pnpm
-  local required_commands="wget jq rg fd zip"
+  install_native_search_tools
+  local required_commands="wget zip"
   local optional_commands="unzip zstd file tar gzip gunzip xz unxz bzip2 bunzip2 ps pgrep pkill pidof top free ip ss netstat ping dig nslookup host update-ca-certificates less tree rsync patch sed awk grep find xargs sort uniq head tail cut tr wc tee env which whoami id uname date sleep timeout kill sha256sum sha1sum md5sum base64 chmod chown chgrp ln readlink realpath mkdir rmdir rm cp mv touch du df stat"
   local command_name
   for command_name in $required_commands; do

@@ -3,6 +3,7 @@ package com.kite.app.feature.runsurface
 import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentMessageRole
 import com.kite.app.agent.contract.AgentPlanEntry
+import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentToolContent
 import com.kite.app.agent.store.AgentConversationItem
 import com.kite.app.agent.store.AgentConversationTurn
@@ -126,6 +127,14 @@ internal sealed interface AgentConversationDisplayItem {
         val userAuthored: Boolean = false,
     ) : AgentConversationDisplayItem
 
+    /** Kite 对当前回合的瞬时投影，不写入 Agent 历史，也不伪装成 Assistant 消息。 */
+    data class TurnStatus(
+        override val id: String,
+        val state: AgentConversationTurnState,
+        val label: String,
+        val detail: String? = null,
+    ) : AgentConversationDisplayItem
+
     data class Attachment(
         override val id: String,
         val title: String,
@@ -134,6 +143,43 @@ internal sealed interface AgentConversationDisplayItem {
         val source: AgentFileSource,
         val userAuthored: Boolean = false,
     ) : AgentConversationDisplayItem
+}
+
+internal object AgentConversationProcessPresentation {
+    fun isExpandedByDefault(state: AgentConversationTurnState): Boolean =
+        state == AgentConversationTurnState.Running
+
+    fun durationLabel(
+        process: AgentConversationDisplayItem.Process,
+        nowMillis: Long,
+    ): String {
+        val elapsedMillis = when {
+            process.state == AgentConversationTurnState.Running && process.startedAtMillis != null ->
+                (nowMillis - process.startedAtMillis).coerceAtLeast(0L)
+            process.durationMillis != null -> process.durationMillis.coerceAtLeast(0L)
+            else -> null
+        }
+        return elapsedMillis?.let(::formatElapsed) ?: if (
+            process.state == AgentConversationTurnState.Running
+        ) {
+            "正在处理"
+        } else {
+            "过程"
+        }
+    }
+
+    private fun formatElapsed(elapsedMillis: Long): String {
+        val totalSeconds = elapsedMillis / 1_000L
+        val hours = totalSeconds / 3_600L
+        val minutes = totalSeconds % 3_600L / 60L
+        val seconds = totalSeconds % 60L
+        return buildString {
+            append("用时 ")
+            if (hours > 0L) append(hours).append("小时 ")
+            if (minutes > 0L) append(minutes).append("分钟 ")
+            append(seconds).append("秒")
+        }
+    }
 }
 
 /**
@@ -155,6 +201,7 @@ internal object AgentConversationPresentation {
     fun composeTurns(
         items: List<AgentConversationItem>,
         turns: List<AgentConversationTurn>,
+        phase: AgentSessionPhase = AgentSessionPhase.Ready,
         blocksForItem: (AgentConversationItem) -> List<AgentConversationDisplayItem> = { project(listOf(it)) },
     ): List<AgentConversationDisplayItem> {
         if (items.isEmpty()) return emptyList()
@@ -195,8 +242,11 @@ internal object AgentConversationPresentation {
                     }
                 }
 
-                val process = processEntries.takeIf { it.isNotEmpty() }?.let { entries ->
-                    val turn = turnsByOrdinal[turnOrdinal]
+                val turn = turnsByOrdinal[turnOrdinal]
+                val shouldShowProcess = processEntries.isNotEmpty() ||
+                    turn?.state == AgentConversationTurnState.Running ||
+                    turn?.durationMillis != null
+                val process = processEntries.takeIf { shouldShowProcess }?.let { entries ->
                     AgentConversationDisplayItem.Process(
                         id = "${turnItems.first().id}:turn:$turnOrdinal:process",
                         turnOrdinal = turnOrdinal,
@@ -215,8 +265,47 @@ internal object AgentConversationPresentation {
                     add(block)
                 }
                 if (!processAdded) process?.let(::add)
+                turn?.toStatus(
+                    phase = phase,
+                    hasAgentContent = processEntries.isNotEmpty() || visibleEntries.any { !it.isUserAuthored() },
+                    itemId = turnItems.first().id,
+                )?.let(::add)
             }
         }
+    }
+
+    private fun AgentConversationTurn.toStatus(
+        phase: AgentSessionPhase,
+        hasAgentContent: Boolean,
+        itemId: String,
+    ): AgentConversationDisplayItem.TurnStatus? = when (state) {
+        AgentConversationTurnState.Running -> if (hasAgentContent) {
+            null
+        } else {
+            AgentConversationDisplayItem.TurnStatus(
+                id = "$itemId:turn:$ordinal:status",
+                state = state,
+                label = when (phase) {
+                    AgentSessionPhase.Preparing -> "正在连接 Agent…"
+                    AgentSessionPhase.WaitingPermission -> "等待权限确认…"
+                    AgentSessionPhase.Cancelling -> "正在停止生成…"
+                    else -> "Agent 正在处理…"
+                },
+            )
+        }
+        AgentConversationTurnState.Failed -> AgentConversationDisplayItem.TurnStatus(
+            id = "$itemId:turn:$ordinal:status",
+            state = state,
+            label = "本轮未完成",
+            detail = errorMessage,
+        )
+        AgentConversationTurnState.Cancelled -> AgentConversationDisplayItem.TurnStatus(
+            id = "$itemId:turn:$ordinal:status",
+            state = state,
+            label = "已停止生成",
+        )
+        AgentConversationTurnState.Completed,
+        AgentConversationTurnState.Historical -> null
     }
 
     private fun isProcessBlock(block: AgentConversationDisplayItem): Boolean =

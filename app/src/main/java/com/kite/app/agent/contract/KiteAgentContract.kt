@@ -572,7 +572,8 @@ sealed interface AgentOperationResult<out T> {
         val message: String,
         val cause: Throwable? = null,
         val code: AgentFailureCode? = null,
-        val extension: AgentProtocolExtension? = null
+        val extension: AgentProtocolExtension? = null,
+        val details: AgentFailureDetails? = null,
     ) : AgentOperationResult<Nothing>
 }
 
@@ -580,6 +581,9 @@ sealed interface AgentOperationResult<out T> {
 value class AgentFailureCode(val value: String) {
     companion object {
         val AuthenticationRequired = AgentFailureCode("authentication_required")
+        val LaunchFailed = AgentFailureCode("agent_launch_failed")
+        val InitializationFailed = AgentFailureCode("agent_initialization_failed")
+        val ProtocolFailure = AgentFailureCode("agent_protocol_failure")
     }
 }
 

@@ -20,7 +20,11 @@ data class KiteResourceRegistryEntry(
     val installedAt: Long = 0L,
     val updatedAt: Long = 0L
 ) {
-    val installed: Boolean get() = status == KiteResourceRegistry.STATUS_INSTALLED
+    /** 维护事务只暂时锁住旧安装，不得把旧安装事实抹成“未安装”。 */
+    val installed: Boolean
+        get() = status == KiteResourceRegistry.STATUS_INSTALLED ||
+            (status == KiteResourceRegistry.STATUS_INSTALLING &&
+                operation in KiteResourceInstallRecipes.MAINTENANCE_OPERATIONS)
     val failed: Boolean get() = status == KiteResourceRegistry.STATUS_FAILED
     val preparing: Boolean get() = status == KiteResourceRegistry.STATUS_PREPARING
     val installing: Boolean get() = status == KiteResourceRegistry.STATUS_INSTALLING
@@ -60,7 +64,7 @@ class KiteResourceRegistry(context: Context) {
         registryString(resourceId, environmentId, COL_STATUS).takeIf { it.isNotBlank() }
 
     fun isInstalled(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): Boolean =
-        status(resourceId, environmentId) == STATUS_INSTALLED
+        entry(resourceId, environmentId)?.installed == true
 
     fun isFailed(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): Boolean =
         status(resourceId, environmentId) == STATUS_FAILED

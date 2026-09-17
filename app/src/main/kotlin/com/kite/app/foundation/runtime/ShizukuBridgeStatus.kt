@@ -2,6 +2,10 @@ package com.kite.app.foundation.runtime
 
 import android.content.Context
 import android.content.pm.PackageManager
+import com.kite.app.foundation.devicebridge.DeviceBridgeLifecycleStatus
+import com.kite.app.foundation.devicebridge.ShizukuBridgeState
+import com.kite.app.foundation.devicebridge.ShizukuBridgeStateOwner
+import com.kite.app.foundation.devicebridge.ShizukuPermissionState
 import rikka.shizuku.Shizuku
 
 /**
@@ -30,12 +34,40 @@ object ShizukuBridgeStatus {
 
     fun snapshot(context: Context): Snapshot {
         val packageName = context.applicationContext.packageName
-        return snapshot(source = "shizuku:$packageName")
+        ShizukuBridgeStateOwner.start(context)
+        return ShizukuBridgeStateOwner.refresh("legacy_snapshot").toLegacySnapshot("shizuku:$packageName")
     }
 
     fun snapshotForExecution(): Snapshot {
+        if (ShizukuBridgeStateOwner.isStarted()) {
+            return ShizukuBridgeStateOwner.current().toLegacySnapshot("shizuku")
+        }
         return snapshot(source = "shizuku")
     }
+
+    private fun ShizukuBridgeState.toLegacySnapshot(source: String): Snapshot = Snapshot(
+        status = when (lifecycle) {
+            DeviceBridgeLifecycleStatus.Ready -> STATUS_READY
+            DeviceBridgeLifecycleStatus.PermissionRequired,
+            DeviceBridgeLifecycleStatus.Connecting,
+            DeviceBridgeLifecycleStatus.Revoked -> STATUS_PERMISSION_REQUIRED
+            DeviceBridgeLifecycleStatus.InstalledButStopped -> STATUS_NOT_RUNNING
+            DeviceBridgeLifecycleStatus.Unavailable,
+            DeviceBridgeLifecycleStatus.Failed -> STATUS_UNAVAILABLE
+        },
+        available = binderAlive,
+        permission = when (permission) {
+            ShizukuPermissionState.Granted -> "granted"
+            ShizukuPermissionState.Required -> "required"
+            ShizukuPermissionState.Requesting -> "requesting"
+            ShizukuPermissionState.Denied -> "denied"
+            ShizukuPermissionState.Unknown -> "unknown"
+        },
+        source = source,
+        uid = uid?.toString().orEmpty(),
+        version = serverVersion?.toString().orEmpty(),
+        error = error
+    )
 
     private fun snapshot(source: String): Snapshot {
         return runCatching {

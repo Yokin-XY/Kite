@@ -1,6 +1,7 @@
 package com.kite.app.application.resources
 
 import com.kite.app.resources.KiteResourcePlanSnapshot
+import com.kite.app.resources.KiteResourceInstallStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -121,4 +122,20 @@ internal object ResourcePlanCancellationPolicy {
         current.targetResourceId == expectedTargetResourceId &&
             current.generation == expectedGeneration &&
             (current.targetResourceId.isBlank() || current.targetResourceId == requestedTargetResourceId)
+
+    /**
+     * 返回键只消费还没有开始执行的计划：准备阶段，或全部步骤仍为 pending 的已就绪计划。
+     * 一旦任何步骤进入 running/done/failed/blocked，就只能隐藏页面或走显式取消。
+     */
+    fun canCancelBeforeFirstStart(
+        current: KiteResourcePlanSnapshot,
+        requestedTargetResourceId: String,
+    ): Boolean {
+        if (current.targetResourceId != requestedTargetResourceId) return false
+        if (current.isPreparing) return true
+        if (!current.isActive || current.resourceIds.isEmpty()) return false
+        return current.resourceIds.all { resourceId ->
+            current.stepStatus(resourceId) == KiteResourceInstallStore.PLAN_STEP_PENDING
+        }
+    }
 }

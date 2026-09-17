@@ -2,8 +2,28 @@ package com.kite.app.feature.runsurface
 
 import android.net.Uri
 import android.text.InputType
+import com.kite.app.agent.config.AgentProviderCatalogSyncMetadata
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderModelSummary
+
+/** 供应商编辑页可安全比较的草稿投影；凭据只记录是否变化，不保存明文。 */
+internal data class AgentProviderEditorDraftSnapshot(
+    val providerId: String,
+    val displayName: String,
+    val baseUrl: String,
+    val models: List<AgentProviderModelSummary>,
+    val groupId: String?,
+    val presetId: String?,
+    val catalogSync: AgentProviderCatalogSyncMetadata?,
+    val credentialChanged: Boolean,
+)
+
+internal object AgentProviderEditorExitPolicy {
+    fun hasUnsavedChanges(
+        baseline: AgentProviderEditorDraftSnapshot,
+        current: AgentProviderEditorDraftSnapshot,
+    ): Boolean = baseline != current
+}
 
 internal object AgentProviderEditorPolicy {
     private val SAFE_PROVIDER_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")

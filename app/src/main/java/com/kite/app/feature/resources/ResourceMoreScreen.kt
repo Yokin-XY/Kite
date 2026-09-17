@@ -95,6 +95,7 @@ internal class ResourceMoreScreen(
             KiteResourceActionIntent.CheckUpdate -> R.string.resource_maintenance_checking
             KiteResourceActionIntent.Update -> R.string.resource_maintenance_updating
             KiteResourceActionIntent.Reinstall -> R.string.resource_maintenance_reinstalling
+            KiteResourceActionIntent.Repair -> R.string.resource_maintenance_repairing
             KiteResourceActionIntent.Uninstall -> R.string.resource_state_uninstalling
             else -> R.string.resource_action_processing
         })
@@ -209,6 +210,10 @@ internal class ResourceMoreScreen(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     dp(44)
                 ).apply { setMargins(0, dp(13), 0, 0) })
+                addView(maintenanceButton(KiteResourceActionIntent.Repair), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(42)
+                ).apply { setMargins(0, dp(9), 0, 0) })
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     addView(maintenanceButton(KiteResourceActionIntent.Reinstall), actionLayoutParams())
@@ -252,6 +257,8 @@ internal class ResourceMoreScreen(
                 context.getString(R.string.resource_maintenance_updating)
             item.phase == ResourceItemPhase.Installing && item.operation == KiteResourceInstallRecipes.OP_REINSTALL ->
                 context.getString(R.string.resource_maintenance_reinstalling)
+            item.phase == ResourceItemPhase.Installing && item.operation == KiteResourceInstallRecipes.OP_REPAIR ->
+                context.getString(R.string.resource_maintenance_repairing)
             item.phase == ResourceItemPhase.Uninstalling -> context.getString(R.string.resource_state_uninstalling)
             state.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_CHECKING ->
                 context.getString(R.string.resource_maintenance_checking)
@@ -269,6 +276,8 @@ internal class ResourceMoreScreen(
                 context.getString(
                     if (item.operation == KiteResourceInstallRecipes.OP_REINSTALL) {
                         R.string.resource_maintenance_reinstall_failed
+                    } else if (item.operation == KiteResourceInstallRecipes.OP_REPAIR) {
+                        R.string.resource_maintenance_repair_required
                     } else {
                         R.string.resource_maintenance_check_failed
                     },
@@ -293,6 +302,9 @@ internal class ResourceMoreScreen(
             alpha = if (enabled) 1f else 0.5f
             setOnClickListener(if (enabled) View.OnClickListener { onMaintenanceAction(primaryIntent) } else null)
         }
+        maintenanceButtons[KiteResourceActionIntent.Repair]?.visibility =
+            if (state.repairEnabled) View.VISIBLE else View.GONE
+        bindMaintenanceButton(KiteResourceActionIntent.Repair, state.repairEnabled, R.string.resource_action_repair)
         bindMaintenanceButton(KiteResourceActionIntent.Reinstall, state.reinstallEnabled, R.string.resource_action_reinstall)
         bindMaintenanceButton(KiteResourceActionIntent.Uninstall, state.uninstallEnabled, R.string.resource_action_uninstall)
     }

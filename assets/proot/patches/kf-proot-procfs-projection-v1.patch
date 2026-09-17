@@ -40,7 +40,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..10084535c6486f2afc17097a912a2d77dd29c35e
 --- /dev/null
 +++ b/src/extension/kf_procfs/kf_procfs.c
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,152 @@
 +#include "extension/extension.h"
 +
 +#include <errno.h>
@@ -89,9 +89,7 @@ index 0000000000000000000000000000000000000000..10084535c6486f2afc17097a912a2d77
 +		strcmp(leaf, "status") == 0 ||
 +		strcmp(leaf, "cmdline") == 0 ||
 +		strcmp(leaf, "comm") == 0 ||
-+		strcmp(leaf, "statm") == 0 ||
-+		strcmp(leaf, "cwd") == 0 ||
-+		strcmp(leaf, "exe") == 0;
++		strcmp(leaf, "statm") == 0;
 +}
 +
 +static bool projection_path_exists(const char *path, bool want_dir)
@@ -160,6 +158,11 @@ index 0000000000000000000000000000000000000000..10084535c6486f2afc17097a912a2d77
 +		return;
 +	}
 +
++	/* /proc/<pid>/exe and /proc/<pid>/cwd have symlink semantics.  They
++	 * deliberately stay outside the regular-file projection so readlink(2),
++	 * current_exe(), and language runtime executable discovery keep using the
++	 * kernel procfs view.
++	 */
 +	if (strchr(leaf, '/') != NULL || !is_supported_leaf(leaf))
 +		return;
 +

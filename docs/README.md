@@ -22,6 +22,7 @@
 ## 使用指南
 
 - [构建与安装](guides/build-and-install.md)：开发环境、Gradle 构建、APK 安装和真机检查。
+- [版本与发布规则](guides/versioning-and-releases.md)：版本号判断、Android 构建序号、预发布和 AI 执行约束。
 - [卡片与资源](guides/cards-and-resources.md)：首页卡片、资源清单、安装流程和状态边界。
 - [浏览器认证](guides/browser-auth.md)：WebView、系统浏览器 handoff 和认证回调。
 - [应用语言](guides/app-localization.md)：资源库架构、语言切换和新增语言流程。

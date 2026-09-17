@@ -87,6 +87,20 @@ class AgentSessionMetadataStoreTest {
     }
 
     @Test
+    fun `回合用时作为Kite会话元数据持久化且不复制消息`() {
+        val timings = listOf(
+            AgentPersistedTurnTiming(1L, "a".repeat(64), 3_500L),
+            AgentPersistedTurnTiming(2L, "b".repeat(64), 12_000L),
+        )
+
+        assertTrue(store.saveTurnTimings("opencode", "session-a", timings))
+
+        val restored = AgentSessionMetadataStore(context)
+        assertEquals(timings, restored.turnTimings("opencode", "session-a"))
+        assertTrue(restored.turnTimings("hermes", "session-a").isEmpty())
+    }
+
+    @Test
     fun `完整源目录只把确实缺失的归档会话标记为已删除`() {
         store.archive("opencode", "session-present", 100L)
         store.archive("opencode", "session-missing", 100L)

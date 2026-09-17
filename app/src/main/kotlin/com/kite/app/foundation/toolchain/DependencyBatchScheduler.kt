@@ -1,5 +1,6 @@
 package com.kite.app.foundation.toolchain
 
+import com.kite.app.foundation.concurrency.WriteScopeLeaseRegistry
 import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -7,6 +8,7 @@ import java.util.concurrent.TimeUnit
 internal data class DependencyBatchTask<K : Any, T : Any>(
     val key: K,
     val dependencies: Set<K> = emptySet(),
+    val writeScopes: Set<String> = emptySet(),
     val execute: () -> T,
 )
 
@@ -64,6 +66,7 @@ internal object DependencyBatchScheduler {
         val outcomes = arrayOfNulls<DependencyBatchTaskOutcome<K, T>>(tasks.size)
         val pending = tasks.indices.toMutableSet()
         val running = linkedSetOf<Int>()
+        val writeScopeLeases = WriteScopeLeaseRegistry()
         val executor = Executors.newFixedThreadPool(maximumConcurrency) { runnable ->
             Thread(runnable, "KiteDependencyBatch").apply { isDaemon = true }
         }
@@ -95,6 +98,9 @@ internal object DependencyBatchScheduler {
                     }
                     if (dependencyOutcomes.any { (_, outcome) -> outcome == null }) return@forEach
 
+                    val scopeOwnerId = scopeOwnerId(index)
+                    if (writeScopeLeases.tryAcquire(scopeOwnerId, task.writeScopes) != null) return@forEach
+
                     completions.submit {
                         IndexedOutcome(index, execute(task, isSuccessful))
                     }
@@ -106,6 +112,7 @@ internal object DependencyBatchScheduler {
 
                 if (running.isNotEmpty()) {
                     val completed = completions.take().get()
+                    writeScopeLeases.release(scopeOwnerId(completed.index))
                     outcomes[completed.index] = completed.outcome
                     running.remove(completed.index)
                     progressed = true
@@ -122,6 +129,7 @@ internal object DependencyBatchScheduler {
             Thread.currentThread().interrupt()
             DependencyBatchDecision.Blocked("dependency_batch_interrupted")
         } finally {
+            running.forEach { index -> writeScopeLeases.release(scopeOwnerId(index)) }
             executor.shutdownNow()
             runCatching { executor.awaitTermination(5L, TimeUnit.SECONDS) }
         }
@@ -195,4 +203,6 @@ internal object DependencyBatchScheduler {
         val index: Int,
         val outcome: DependencyBatchTaskOutcome<K, T>,
     )
+
+    private fun scopeOwnerId(index: Int): String = "dependency-task-$index"
 }

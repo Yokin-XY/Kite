@@ -23,6 +23,7 @@ import com.kite.app.application.runtimebootstrap.RuntimeBootstrapDependenciesOwn
 import com.kite.app.application.runtimemanagement.ProotViewInspectionDependenciesOwner
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapGateway
 import com.kite.app.foundation.logging.Logger
+import com.kite.app.foundation.devicebridge.DeviceBridgeBackendStateOwner
 import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
 import com.kite.app.foundation.runtime.AndroidDefaultNetworkAlignment
 import com.kite.app.foundation.runtime.HostSelfAdbBridgeWorker
@@ -144,6 +145,9 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
         }
         StartupTraceStore.runApplicationStage(this, "application.network_alignment") {
             AndroidDefaultNetworkAlignment.ensureStarted(this)
+        }
+        StartupTraceStore.runApplicationStage(this, "application.shizuku_state") {
+            DeviceBridgeBackendStateOwner.start(this)
         }
         StartupTraceStore.runApplicationStage(this, "application.android_shell_bridge") {
             AndroidShellBridgeWorker.start(this)

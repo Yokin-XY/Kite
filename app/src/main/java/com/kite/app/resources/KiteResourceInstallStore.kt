@@ -106,6 +106,23 @@ class KiteResourceInstallStore(
             snapshotForLocked(normalizeEnvironmentId(environmentId))[KiteResourceInstallRecipes.safeId(resourceId)]
         }
 
+    /** 动作在写入状态前被拒绝时，重新发布现有事实，撤销页面的瞬时确认态。 */
+    fun republish(
+        resourceId: String,
+        reason: String,
+        environmentId: String = currentEnvironmentId(),
+    ) {
+        val entry = refreshRegistryEntry(resourceId, environmentId)
+        emitSignal(
+            reason = reason,
+            resourceId = resourceId,
+            affectedResourceIds = listOf(resourceId),
+            status = entry?.status,
+            operation = entry?.operation.orEmpty(),
+            environmentId = environmentId,
+        )
+    }
+
     fun planSnapshot(environmentId: String = currentEnvironmentId()): KiteResourcePlanSnapshot =
         synchronized(signalLock) {
             sharedPlanSnapshots[normalizeEnvironmentId(environmentId)] ?: KiteResourcePlanSnapshot()
@@ -358,6 +375,45 @@ class KiteResourceInstallStore(
             affectedResourceIds = resourceIds + targetResourceId,
             environmentId = environmentId
         )
+    }
+
+    fun markDefinitionUpdateAvailable(
+        resourceId: String,
+        installedVersion: String,
+        latestVersion: String,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        markVersionCheck(
+            resourceId = resourceId,
+            updateStatus = UPDATE_STATUS_AVAILABLE,
+            installedVersion = installedVersion,
+            latestVersion = latestVersion,
+            summary = "资源定义有可用更新",
+            operation = KiteResourceInstallRecipes.OP_UPDATE,
+            registryStatus = STATUS_INSTALLED,
+            reason = "markDefinitionUpdateAvailable",
+            environmentId = environmentId,
+        )
+    }
+
+    fun markRepairRequired(
+        resourceIds: Collection<String>,
+        explanation: String,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        resourceIds.asSequence()
+            .map(KiteResourceInstallRecipes::safeId)
+            .filter(String::isNotBlank)
+            .distinct()
+            .filter { resourceId -> registry.entry(resourceId, environmentId)?.installed == true }
+            .forEach { resourceId ->
+                markMaintenanceFailed(
+                    resourceId = resourceId,
+                    operation = OP_REPAIR,
+                    explanation = explanation,
+                    environmentId = environmentId,
+                )
+            }
     }
 
     private fun reconcileInterruptedPlan(environmentId: String) {
@@ -684,6 +740,7 @@ class KiteResourceInstallStore(
         const val STATUS_UNINSTALLING = KiteResourceRegistry.STATUS_UNINSTALLING
         const val OP_INSTALL = KiteResourceRegistry.OP_INSTALL
         const val OP_UNINSTALL = KiteResourceRegistry.OP_UNINSTALL
+        const val OP_REPAIR = KiteResourceInstallRecipes.OP_REPAIR
         const val UPDATE_STATUS_CHECKING = "checking"
         const val UPDATE_STATUS_AVAILABLE = "available"
         const val UPDATE_STATUS_CURRENT = "current"

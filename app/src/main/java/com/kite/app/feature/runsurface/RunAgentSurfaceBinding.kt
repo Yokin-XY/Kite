@@ -26,6 +26,7 @@ import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.URLSpan
 import android.util.Base64
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -54,6 +55,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.kite.app.R
 import com.kite.app.agent.contract.AgentContent
+import com.kite.app.agent.contract.AgentAuthenticationMethod
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
@@ -64,6 +66,13 @@ import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSummary
+import com.kite.app.agent.discovery.AcpAgentCatalogSource
+import com.kite.app.agent.discovery.AcpAgentCompatibilityCatalog
+import com.kite.app.agent.discovery.AcpAgentCompatibilityEntry
+import com.kite.app.agent.discovery.AcpAgentCompatibilitySnapshot
+import com.kite.app.agent.discovery.AcpAgentDiscoveryRepository
+import com.kite.app.agent.discovery.AcpAgentDistributionKind
+import com.kite.app.agent.discovery.AcpAgentIntegrationState
 import com.kite.app.agent.config.AgentConfigApplyResult
 import com.kite.app.agent.config.AgentConfigReadResult
 import com.kite.app.agent.config.AgentConfigScope
@@ -79,15 +88,25 @@ import com.kite.app.agent.config.AgentLiveConfigSnapshot
 import com.kite.app.agent.config.AgentMcpConnectionCheckResult
 import com.kite.app.agent.config.AgentMcpConnectionState
 import com.kite.app.agent.config.AgentMcpDraft
+import com.kite.app.agent.config.AgentMcpImportCandidate
+import com.kite.app.agent.config.AgentMcpImportParser
 import com.kite.app.agent.config.AgentMcpOperation
 import com.kite.app.agent.config.AgentMcpSummary
 import com.kite.app.agent.config.AgentMcpTransport
 import com.kite.app.agent.config.AgentPersistentConfigCapability
 import com.kite.app.agent.config.AgentPermissionProfileSummary
 import com.kite.app.agent.config.AgentProviderCredentialChange
+import com.kite.app.agent.config.AgentProviderAccessChannel
+import com.kite.app.agent.config.AgentProviderCatalogMergeResult
+import com.kite.app.agent.config.AgentProviderCatalogSyncMetadata
+import com.kite.app.agent.config.AgentProviderCatalogSyncPolicy
+import com.kite.app.agent.config.AgentProviderCategory
 import com.kite.app.agent.config.AgentProviderDraft
+import com.kite.app.agent.config.AgentProviderMarket
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderPreset
+import com.kite.app.agent.config.AgentProviderPresetRouteSource
+import com.kite.app.agent.config.AgentProviderPresetSource
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillDocumentReadResult
@@ -97,6 +116,11 @@ import com.kite.app.agent.config.AgentSkillDocumentWriteResult
 import com.kite.app.agent.config.AgentSkillImportStager
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentSkillSummary
+import com.kite.app.agent.market.AgentExtensionInstallSpec
+import com.kite.app.agent.market.AgentExtensionMarketItem
+import com.kite.app.agent.market.AgentExtensionMarketKind
+import com.kite.app.agent.market.AgentExtensionMarketRepository
+import com.kite.app.agent.market.AgentExtensionMarketSort
 import com.kite.app.agent.registration.AgentConfigurationStatus
 import com.kite.app.agent.registration.AgentInstallationStatus
 import com.kite.app.agent.registration.AgentLaunchStatus
@@ -116,6 +140,7 @@ import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
 import com.kite.app.agent.sdk.configuration.AgentConfigurationIntent
 import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
 import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
+import com.kite.app.agent.sdk.configuration.recordProtocolOfficialModels
 import com.kite.app.agent.sdk.configuration.toConfigurationProjection
 import com.kite.app.agent.sdk.configuration.AgentSessionControlApi
 import com.kite.app.agent.sdk.configuration.RuntimeBackedAgentSessionControlApi
@@ -127,6 +152,7 @@ import com.kite.app.agent.runtime.AgentRuntimeRegistry
 import com.kite.app.agent.runtime.AgentRuntimeSession
 import com.kite.app.agent.store.AgentConversationItem
 import com.kite.app.agent.store.AgentConversationHistoryStatus
+import com.kite.app.platform.browser.AndroidExternalBrowserLauncher
 import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationSnapshot
 import com.kite.app.agent.store.AgentConversationStore
@@ -168,11 +194,15 @@ internal class RunAgentSurfaceBinding(
     private val onCloseInstance: () -> Unit,
     private val onPickImages: () -> Unit,
     private val onPickFiles: () -> Unit,
+    private val onPickSkillArchive: () -> Unit = {},
+    private val onPickMcpConfig: () -> Unit = {},
     private val agentRegistry: KiteAgentRegistry,
     private val officialAccountManager: AgentOfficialAccountManager,
     private val agentConfigurationApi: AgentConfigurationApi,
     private val agentProviderCatalogApi: AgentProviderCatalogApi,
     private val agentSessionControlApi: AgentSessionControlApi = RuntimeBackedAgentSessionControlApi(),
+    private val acpAgentDiscoveryRepository: AcpAgentDiscoveryRepository =
+        AcpAgentDiscoveryRepository(context),
 ) : RunSurfaceBinding {
     private val isDark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
         Configuration.UI_MODE_NIGHT_YES
@@ -184,6 +214,7 @@ internal class RunAgentSurfaceBinding(
     private val draftCapabilityCacheStore = AgentDraftCapabilityCacheStore(context)
     private val modelLibraryStore = AgentModelLibraryStore(context)
     private val projectStore by lazy(LazyThreadSafetyMode.NONE) { AgentProjectStore(context) }
+    private val extensionMarketRepository = AgentExtensionMarketRepository()
     private val agentPageBackground = this.tokens.pageBackground
     private val agentSurface = this.tokens.surface
     private val agentInputBackground = this.tokens.inputBackground
@@ -251,6 +282,7 @@ internal class RunAgentSurfaceBinding(
     private val settingsPageView: View by lazy(LazyThreadSafetyMode.NONE, ::buildSettingsPage)
     private var observation: Job? = null
     private var officialAccountObservation: Job? = null
+    private var officialModelCatalogRefreshJob: Job? = null
     private var officialAccountObservedAgentId: String? = null
     private var navigationJob: Job? = null
     private var observedKey: AgentConversationKey? = null
@@ -269,12 +301,15 @@ internal class RunAgentSurfaceBinding(
     private var persistentConfigResult: AgentConfigReadResult? = null
     private var defaultPermissionPendingProfileId: String? = null
     private var settingsRegistrySnapshot: AgentRegistrySnapshot? = null
+    private var settingsCompatibilitySnapshot: AcpAgentCompatibilitySnapshot? = null
+    private val acpAgentCompatibilityCatalog = AcpAgentCompatibilityCatalog(context)
     private var settingsLoadRevision: Long = 0L
     private var providerPageAgentId: String? = null
     private var providerPageTarget: AgentConfigurationTarget? = null
     private var providerPageSnapshot: AgentLiveConfigSnapshot? = null
     private var providerCatalogLoadRevision: Long = 0L
     private var providerCatalogRefreshJob: Job? = null
+    private var providerPresetRefreshJob: Job? = null
     private var skillPageAgentId: String? = null
     private var skillPageTarget: AgentConfigurationTarget? = null
     private var skillPageSnapshot: AgentLiveConfigSnapshot? = null
@@ -295,6 +330,16 @@ internal class RunAgentSurfaceBinding(
     private val mcpConnectionMessages = linkedMapOf<String, String>()
     private var mcpEditorStatusText: TextView? = null
     private var mcpEditorSaveAction: TextView? = null
+    private var extensionMarketKind: AgentExtensionMarketKind? = null
+    private var extensionMarketAdapter: AgentExtensionMarketAdapter? = null
+    private var extensionMarketStatusText: TextView? = null
+    private var extensionMarketQueryInput: EditText? = null
+    private var extensionMarketSortContainer: View? = null
+    private var extensionMarketActiveQuery: String = ""
+    private var extensionMarketActiveSort = AgentExtensionMarketSort.Recommended
+    private var extensionMarketNextCursor: String? = null
+    private var extensionMarketLoadingMore: Boolean = false
+    private var extensionMarketLoadRevision: Long = 0L
     private var coreDocumentPageAgentId: String? = null
     private var coreDocumentPageTarget: AgentConfigurationTarget? = null
     private var coreDocumentWorkspacePath: String? = null
@@ -312,6 +357,7 @@ internal class RunAgentSurfaceBinding(
     private var draftModelLoadJob: Job? = null
     private var providerEditorStatusText: TextView? = null
     private var providerEditorSaveAction: TextView? = null
+    private var providerEditorBackHandler: (() -> Unit)? = null
     private var providerLibraryGroupId: String = AgentModelLibraryStore.ALL_GROUP_ID
     private var providerLibraryMode: AgentProviderLibraryMode = AgentProviderLibraryMode.Browse
     private val expandedProviderIds = linkedSetOf<String>()
@@ -345,6 +391,7 @@ internal class RunAgentSurfaceBinding(
     private var drawerExpansionSeeded = false
     private var initialEntryDraftPrepared = false
     private var draftPreparationPending = false
+    private var pendingSessionSwitch: PendingSessionSwitch? = null
     private var projectEditorDialog: AgentProjectEditorDialog? = null
     private var workspaceDirectoryPickerDialog: WorkspaceDirectoryPickerDialog? = null
     private var skillDirectoryPickerDialog: WorkspaceDirectoryPickerDialog? = null
@@ -441,16 +488,39 @@ internal class RunAgentSurfaceBinding(
         agentDisplayName = state.title.ifBlank { content.agentId ?: "Agent" }
         agentTitleText.setTextIfChanged(agentDisplayName)
         providerId = content.providerId
-        sessionId = content.sessionId
+        val pendingSwitch = pendingSessionSwitch
+        if (pendingSwitch != null && content.sessionId != pendingSwitch.targetSessionId) {
+            sessionId = pendingSwitch.targetSessionId
+            statusText.setTextIfChanged("正在连接会话…")
+            subscribe(content.providerId, pendingSwitch.targetSessionId)
+            updateComposer()
+            return
+        }
+        val runtime = AgentRuntimeRegistry.session(instanceId)
+            ?.takeIf { it.generation == generation }
+        val sessionBinding = AgentSurfaceNavigationPolicy.resolveSessionBinding(
+            persistedSessionId = content.sessionId,
+            runtime = runtime?.let { current ->
+                AgentSurfaceRuntimeSessionIdentity(
+                    sessionId = current.sessionId,
+                    isDraft = current.isDraft,
+                    conversationSessionId = AgentRuntimeRegistry.conversationProjectionSessionId(
+                        instanceId,
+                        generation,
+                    ),
+                )
+            },
+        )
+        sessionId = sessionBinding.nativeSessionId
         restoreComposerDraft(
-            ComposerDraftIdentity(instanceId, generation, content.sessionId),
+            ComposerDraftIdentity(instanceId, generation, sessionBinding.nativeSessionId),
         )
         statusText.setTextIfChanged(content.statusMessage
             ?: content.connectionStatus?.let(::connectionStatusLabel)
             ?: state.statusLabel)
         loadDraftModelCatalog()
         if (prepareInitialEntryDraftIfNeeded()) return
-        subscribe(content.providerId, observableSessionId(content.sessionId))
+        subscribe(content.providerId, sessionBinding.conversationSessionId)
         updateComposer()
     }
 
@@ -469,11 +539,15 @@ internal class RunAgentSurfaceBinding(
         observation = null
         officialAccountObservation?.cancel()
         officialAccountObservation = null
+        officialModelCatalogRefreshJob?.cancel()
+        officialModelCatalogRefreshJob = null
         officialAccountObservedAgentId = null
         navigationJob?.cancel()
         navigationJob = null
         providerCatalogRefreshJob?.cancel()
         providerCatalogRefreshJob = null
+        providerPresetRefreshJob?.cancel()
+        providerPresetRefreshJob = null
         draftModelLoadJob?.cancel()
         draftModelLoadJob = null
         composerSkillLoadJob?.cancel()
@@ -498,12 +572,16 @@ internal class RunAgentSurfaceBinding(
         }
         return when (navigationScreen) {
         AgentNavigationScreen.ProviderEditor -> {
-            showCurrentProviderList()
+            requestProviderEditorExit()
             true
         }
         AgentNavigationScreen.ProviderPresetPicker,
         AgentNavigationScreen.ProviderModelEditor -> {
             closeProviderEditorOverlay()
+            true
+        }
+        AgentNavigationScreen.ProviderPresetDetails -> {
+            closeProviderPresetDetails()
             true
         }
         AgentNavigationScreen.ProviderList -> {
@@ -516,6 +594,10 @@ internal class RunAgentSurfaceBinding(
         }
         AgentNavigationScreen.SkillList -> {
             returnToAgentSettings()
+            true
+        }
+        AgentNavigationScreen.ExtensionMarket -> {
+            returnFromExtensionMarket()
             true
         }
         AgentNavigationScreen.SkillDocumentEditor -> {
@@ -550,6 +632,10 @@ internal class RunAgentSurfaceBinding(
             if (settingsReturnsToDrawer) showSessionDrawer() else closeNavigation()
             true
         }
+        AgentNavigationScreen.AgentCatalog -> {
+            returnToAgentSettings()
+            true
+        }
         AgentNavigationScreen.Drawer -> {
             closeNavigation()
             true
@@ -581,6 +667,11 @@ internal class RunAgentSurfaceBinding(
     internal fun refreshSessionControlsForTesting() = renderSessionConfigurationControls()
 
     internal fun composerInputFlagsForTesting(): Pair<Int, Int> = input.inputType to input.imeOptions
+
+    internal fun observeOfficialAccountsForTesting(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+    ) = observeOfficialAccounts(selected.registration.definition.agentId, selected, target)
 
     fun addAttachments(uris: List<Uri>) {
         if (uris.isEmpty()) return
@@ -981,6 +1072,12 @@ internal class RunAgentSurfaceBinding(
             adapter.submitList(emptyList())
             return
         }
+        val cached = AgentConversationStore.snapshot(key)
+        if (cached != null) {
+            renderConversation(cached)
+        } else {
+            adapter.submitList(emptyList())
+        }
         observation = lifecycleOwner.lifecycleScope.launch {
             lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 AgentConversationStore.observe(key).collect { snapshot ->
@@ -994,9 +1091,12 @@ internal class RunAgentSurfaceBinding(
         val nearBottom = !list.canScrollVertically(1)
         val configurationChanged = currentSnapshot?.configuration != snapshot.configuration
         currentSnapshot = snapshot
-        statusText.text = snapshot.lastError
-            ?: phaseLabel(snapshot.phase)
-        adapter.submitConversation(snapshot.timeline, snapshot.turns) {
+        statusText.text = if (pendingSessionSwitch != null) {
+            "正在连接会话…"
+        } else {
+            snapshot.lastError ?: phaseLabel(snapshot.phase)
+        }
+        adapter.submitConversation(snapshot.timeline, snapshot.turns, snapshot.phase) {
             if (nearBottom && adapter.itemCount > 0) list.scrollToPosition(adapter.itemCount - 1)
         }
         renderHistoryStatus(snapshot)
@@ -1279,7 +1379,7 @@ internal class RunAgentSurfaceBinding(
         return true
     }
 
-    private fun composerPhase(): AgentSessionPhase? = if (draftPreparationPending) {
+    private fun composerPhase(): AgentSessionPhase? = if (draftPreparationPending || pendingSessionSwitch != null) {
         AgentSessionPhase.Preparing
     } else currentSnapshot?.phase
         ?: AgentRuntimeRegistry.session(instanceId)
@@ -1773,18 +1873,60 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun loadDrawerSession(session: AgentSessionSummary) {
+        if (pendingSessionSwitch != null) return
+        val runtime = AgentRuntimeRegistry.session(instanceId)
+        if (runtime?.sessionId == session.id) {
+            closeNavigation()
+            return
+        }
         val defaultCwd = AgentRuntimeRegistry.defaultCwd(instanceId, generation)
         if (defaultCwd != null && !AgentSurfaceNavigationPolicy.sameCwd(session.cwd, defaultCwd)) {
             expandedProjectCwds.add(AgentSurfaceNavigationPolicy.normalizeCwd(session.cwd))
         }
+        val pending = PendingSessionSwitch(
+            targetSessionId = session.id,
+            previousSessionId = sessionId,
+        )
+        pendingSessionSwitch = pending
         closeNavigation()
+        sessionId = session.id
+        restoreComposerDraft(ComposerDraftIdentity(instanceId, generation, session.id))
+        subscribe(providerId, session.id)
+        statusText.text = "正在连接会话…"
+        if (currentSnapshot == null) {
+            historyStatusText.text = "正在恢复历史记录…"
+            historyStatusText.visibility = View.VISIBLE
+        }
+        updateComposer()
         lifecycleOwner.lifecycleScope.launch {
-            showOperationResult(
-                AgentRuntimeRegistry.loadSession(instanceId, generation, session.id, session.cwd),
-                "已切换会话"
-            )
+            val result = AgentRuntimeRegistry.loadSession(instanceId, generation, session.id, session.cwd)
+            if (pendingSessionSwitch != pending) return@launch
+            pendingSessionSwitch = null
+            when (result) {
+                is AgentOperationResult.Success -> {
+                    sessionId = result.value.sessionId
+                    subscribe(providerId, result.value.sessionId)
+                    restoreComposerDraft(ComposerDraftIdentity(instanceId, generation, result.value.sessionId))
+                    loadDraftModelCatalog(force = true)
+                    currentSnapshot?.let(::renderConversation)
+                        ?: statusText.setTextIfChanged("准备就绪")
+                }
+                is AgentOperationResult.Failure,
+                is AgentOperationResult.Unsupported -> {
+                    sessionId = pending.previousSessionId
+                    subscribe(providerId, pending.previousSessionId)
+                    restoreComposerDraft(ComposerDraftIdentity(instanceId, generation, pending.previousSessionId))
+                }
+            }
+            updateComposer()
+            showOperationResult(result, "已切换会话")
         }
     }
+
+    private data class PendingSessionSwitch(
+        val targetSessionId: String,
+        val previousSessionId: String?,
+    )
 
     private fun toggleDrawerProject(cwd: String) {
         val normalized = AgentSurfaceNavigationPolicy.normalizeCwd(cwd)
@@ -2067,7 +2209,9 @@ internal class RunAgentSurfaceBinding(
                 gravity = Gravity.CENTER
                 setTextColor(tokens.textPrimary)
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(iconButton(context, R.drawable.ic_refresh_light, "刷新 Agent 状态", ::loadAgentRegistry),
+            addView(iconButton(context, R.drawable.ic_refresh_light, "刷新 Agent 目录与状态") {
+                loadAgentRegistry(refreshPublicCatalog = true)
+            },
                 LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
         addView(ScrollView(context).apply {
@@ -2080,20 +2224,28 @@ internal class RunAgentSurfaceBinding(
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
-    private fun loadAgentRegistry() {
+    private fun loadAgentRegistry(refreshPublicCatalog: Boolean = false) {
         settingsContentHost.removeAllViews()
-        settingsContentHost.addView(settingsMessage("正在读取已登记 Agent…"))
+        settingsContentHost.addView(settingsMessage(
+            if (refreshPublicCatalog) "正在刷新 Agent 公共目录…" else "正在读取已登记 Agent…",
+        ))
         val requestedAgentId = selectedSettingsAgentId ?: agentId
         val requestRevision = ++settingsLoadRevision
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val loaded = withContext(Dispatchers.IO) {
                 val snapshot = agentRegistry.snapshot()
+                val publicCatalog = if (refreshPublicCatalog) {
+                    acpAgentDiscoveryRepository.refresh()
+                } else {
+                    acpAgentDiscoveryRepository.cachedSnapshot()
+                }
+                val compatibility = acpAgentCompatibilityCatalog.resolve(publicCatalog, snapshot)
                 val selected = snapshot.entry(requestedAgentId.orEmpty())
                     ?: snapshot.entry(agentId.orEmpty())
                     ?: snapshot.entries.firstOrNull()
                 val target = selected?.configurationTarget()
                 val configResult = target?.let { agentConfigurationApi.read(it) }
-                AgentSettingsLoad(snapshot, target?.agentId, configResult)
+                AgentSettingsLoad(snapshot, compatibility, target?.agentId, configResult)
             }
             if (
                 navigationScreen == AgentNavigationScreen.Settings &&
@@ -2102,7 +2254,16 @@ internal class RunAgentSurfaceBinding(
                 persistentConfigAgentId = loaded.agentId
                 persistentConfigResult = loaded.configResult
                 settingsRegistrySnapshot = loaded.registry
+                settingsCompatibilitySnapshot = loaded.compatibility
                 renderAgentSettings(loaded.registry)
+                if (refreshPublicCatalog) {
+                    val warning = loaded.compatibility.catalog.warning
+                    Toast.makeText(
+                        context,
+                        warning ?: "Agent 公共目录已刷新",
+                        if (warning == null) Toast.LENGTH_SHORT else Toast.LENGTH_LONG,
+                    ).show()
+                }
                 val migratedSnapshot = (loaded.configResult as? AgentConfigReadResult.Ready)?.snapshot
                 if (migratedSnapshot?.runtimeReloadRequired == true && loaded.agentId != null) {
                     Toast.makeText(
@@ -2127,6 +2288,19 @@ internal class RunAgentSurfaceBinding(
         }
         selectedSettingsAgentId = selected.registration.definition.agentId
         settingsContentHost.addView(buildAgentSelector(selected, snapshot))
+        settingsCompatibilitySnapshot?.let { compatibility ->
+            settingsContentHost.addView(buildSettingsSection(
+                title = "Agent 公共目录",
+                description = "公共目录只负责发现版本；安装、配置和运行仍由 Kite 兼容层验证。",
+                rows = listOf(
+                    SettingsRow(
+                        title = "ACP Agent 目录",
+                        subtitle = compatibility.summaryLabel(),
+                        onClick = { showPublicAgentCatalog(compatibility) },
+                    ),
+                ),
+            ))
+        }
         renderPersistentConfigurationSection(selected)
         settingsContentHost.addView(persistentConfigSettingsHost)
         if (snapshot.conflicts.isNotEmpty()) {
@@ -2220,6 +2394,94 @@ internal class RunAgentSurfaceBinding(
                 selectedSettingsAgentId = snapshot.entries[index].registration.definition.agentId
                 loadAgentRegistry()
         }
+    }
+
+    private fun showPublicAgentCatalog(snapshot: AcpAgentCompatibilitySnapshot) {
+        navigationJob?.cancel()
+        navigationScreen = AgentNavigationScreen.AgentCatalog
+        navigationHost.removeAllViews()
+        navigationHost.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(agentPageBackground)
+            addView(
+                buildAgentSubpageHeader(
+                    title = "ACP Agent 目录",
+                    backDescription = "返回 Agent 设置",
+                    onBack = ::returnToAgentSettings,
+                ),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)),
+            )
+            addView(ScrollView(context).apply {
+                isFillViewport = true
+                overScrollMode = View.OVER_SCROLL_NEVER
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(24))
+                    addView(buildSettingsSection(
+                        title = "目录状态",
+                        description = snapshot.catalog.warning
+                            ?: "候选信息来自 ACP 公共 Registry；它不会绕过 Kite 安装与兼容验证。",
+                        rows = listOf(
+                            SettingsRow(
+                                title = "${snapshot.entries.size} 个 Android 候选",
+                                subtitle = "${snapshot.integratedCount} 个已接入 · ${snapshot.catalog.source.userLabel()} · 目录 ${snapshot.catalog.version}",
+                            ),
+                        ),
+                    ))
+                    val integrated = snapshot.entries.filter {
+                        it.state == AcpAgentIntegrationState.Integrated
+                    }
+                    if (integrated.isNotEmpty()) addView(buildSettingsSection(
+                        title = "已经接入 Kite",
+                        description = "这些 Agent 继续使用现有资源、Adapter 和真实安装状态。",
+                        rows = integrated.map { it.settingsRow() },
+                    ))
+                    val candidates = snapshot.entries.filter {
+                        it.state != AcpAgentIntegrationState.Integrated
+                    }
+                    if (candidates.isNotEmpty()) addView(buildSettingsSection(
+                        title = "待验证候选",
+                        description = "已经发现版本和分发形式，但通过 Android/PRoot 验证前不会显示为可安装。",
+                        rows = candidates.map { it.settingsRow() },
+                    ))
+                }, ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ))
+        navigationHost.visibility = View.VISIBLE
+    }
+
+    private fun AcpAgentCompatibilitySnapshot.summaryLabel(): String =
+        "${entries.size} 个候选 · $integratedCount 个已适配 · ${catalog.source.userLabel()}"
+
+    private fun AcpAgentCompatibilityEntry.settingsRow(): SettingsRow {
+        val distribution = candidate.distributions.joinToString(" / ") { item ->
+            when (item.kind) {
+                AcpAgentDistributionKind.Npx -> "npm"
+                AcpAgentDistributionKind.Uvx -> "Python"
+                AcpAgentDistributionKind.LinuxArm64Binary -> "arm64"
+            }
+        }
+        val stateLabel = when (state) {
+            AcpAgentIntegrationState.Integrated -> "已接入 ${localAgentId.orEmpty()}"
+            AcpAgentIntegrationState.Declared -> "已有兼容声明，当前资源未登记"
+            AcpAgentIntegrationState.Candidate -> "新候选，尚未验证"
+        }
+        return SettingsRow(
+            title = candidate.displayName,
+            subtitle = "v${candidate.version} · $distribution · $stateLabel",
+        )
+    }
+
+    private fun AcpAgentCatalogSource.userLabel(): String = when (this) {
+        AcpAgentCatalogSource.Live -> "在线最新目录"
+        AcpAgentCatalogSource.Cache -> "上次成功目录"
+        AcpAgentCatalogSource.Bundled -> "随应用目录"
     }
 
     private fun showArchivedContentManager(selected: AgentRegistryEntry) {
@@ -3030,12 +3292,30 @@ internal class RunAgentSurfaceBinding(
         val providerSnapshot = agentProviderCatalogApi.snapshot(target).toConfigurationProjection(target)
         val supportsProviders = capabilities.supports(AgentPersistentConfigCapability.Provider)
         val officialAccounts = selected.registration.officialAccounts
-        if (supportsProviders || officialAccounts.isNotEmpty()) {
+        val protocolProviders = AgentModelLibraryPolicy.projectProviders(
+            snapshot = snapshot,
+            modelOption = providerManagerModelOption(selected.registration.definition.agentId),
+            library = modelLibraryStore.snapshot(selected.registration.definition.agentId),
+            officialAccounts = officialAccounts,
+        ).filter { projection ->
+            projection.source != AgentModelSource.UserConfigured && projection.officialAccount == null
+        }
+        val runtimeAuthentication = runtimeAuthentication(selected)
+        if (
+            supportsProviders ||
+            officialAccounts.isNotEmpty() ||
+            protocolProviders.isNotEmpty() ||
+            runtimeAuthentication.methods.isNotEmpty()
+        ) {
             val providerSummary = providerSnapshot.providers.takeIf { it.isNotEmpty() }
                 ?.joinToString("、") { provider ->
                     "${provider.displayName}（${provider.models.size} 个模型）"
                 }
                 ?: providerSnapshot.providerIds.takeIf { it.isNotEmpty() }?.joinToString("、")
+            val protocolSummary = protocolProviders.takeIf { it.isNotEmpty() }
+                ?.joinToString("、") { provider ->
+                    "${provider.name}（${provider.models.size} 个模型）"
+                }
             val accountSummary = officialAccounts.takeIf { it.isNotEmpty() }
                 ?.joinToString("、") { account ->
                     val status = officialAccountManager.state(
@@ -3046,11 +3326,19 @@ internal class RunAgentSurfaceBinding(
                 }
             add(SettingsRow(
                 title = "供应商配置",
-                subtitle = listOfNotNull(providerSummary, accountSummary).joinToString("、")
-                    .ifBlank { "尚未配置供应商" },
+                subtitle = listOfNotNull(providerSummary, protocolSummary, accountSummary).joinToString("、")
+                    .ifBlank {
+                        if (runtimeAuthentication.methods.isNotEmpty()) {
+                            "Agent 提供 ${runtimeAuthentication.methods.size} 种官方认证方式"
+                        } else {
+                            "尚未配置供应商"
+                        }
+                    },
                 onClick = if (
                     capabilities.supports(AgentPersistentConfigCapability.ProviderProfiles) ||
-                    officialAccounts.isNotEmpty()
+                    officialAccounts.isNotEmpty() ||
+                    protocolProviders.isNotEmpty() ||
+                    runtimeAuthentication.methods.isNotEmpty()
                 ) {
                     { openProviderManager(selected, target) }
                 } else null
@@ -3634,6 +3922,33 @@ internal class RunAgentSurfaceBinding(
         }
         showProviderManager(selected, target, projection)
         renderSessionConfigurationControls()
+        val requestRevision = ++providerCatalogLoadRevision
+        providerCatalogRefreshJob?.cancel()
+        providerCatalogRefreshJob = lifecycleOwner.lifecycleScope.launch {
+            val warnings = withContext(Dispatchers.IO) {
+                agentProviderCatalogApi.migrateLegacyUserProviders(target)
+            }
+            if (
+                requestRevision != providerCatalogLoadRevision ||
+                navigationScreen != AgentNavigationScreen.ProviderList ||
+                providerPageAgentId != targetAgentId
+            ) return@launch
+            val migratedCatalog = agentProviderCatalogApi.snapshot(target)
+            if (migratedCatalog != catalog) {
+                val migratedProjection = migratedCatalog.toConfigurationProjection(target)
+                providerPageSnapshot = migratedProjection
+                if (targetAgentId == agentId) {
+                    draftProviderCatalogSnapshot = migratedCatalog
+                    draftModelSnapshot = migratedProjection
+                    applyDraftModelDefault(targetAgentId, migratedProjection)
+                }
+                showProviderManager(selected, target, migratedProjection)
+                renderSessionConfigurationControls()
+            }
+            warnings.firstOrNull()?.let { warning ->
+                Toast.makeText(context, warning, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun refreshProviderCatalog(
@@ -3675,6 +3990,7 @@ internal class RunAgentSurfaceBinding(
         target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot
     ) {
+        providerEditorBackHandler = null
         val targetAgentId = selected.registration.definition.agentId
         if (providerPageAgentId != null && providerPageAgentId != targetAgentId) {
             providerLibraryGroupId = AgentModelLibraryStore.ALL_GROUP_ID
@@ -3724,7 +4040,15 @@ internal class RunAgentSurfaceBinding(
                     }.collect { (relevantStates, relevantSaved, relevantCurrent) ->
                         val relevant = Triple(relevantStates, relevantSaved, relevantCurrent)
                         if (relevant == previous) return@collect
+                        val previousStates = previous.first
                         previous = relevant
+                        val becameLoggedIn = relevantStates.any { (key, state) ->
+                            state.status == AgentOfficialAccountStatus.LoggedIn &&
+                                previousStates[key]?.status != AgentOfficialAccountStatus.LoggedIn
+                        }
+                        if (becameLoggedIn) {
+                            refreshOfficialModelCatalog(targetAgentId, selected, target)
+                        }
                         if (
                             navigationScreen == AgentNavigationScreen.ProviderList &&
                             providerPageAgentId == targetAgentId
@@ -3739,10 +4063,40 @@ internal class RunAgentSurfaceBinding(
                 }
             }
         }
-        officialAccountManager.accounts(targetAgentId).forEach { account ->
-            if (officialAccountManager.state(targetAgentId, account.id).status == AgentOfficialAccountStatus.Unknown) {
-                officialAccountManager.refresh(targetAgentId, account.id)
+        // 页面只观察已知状态。任何官方账号命令都必须来自用户明确点击，避免状态探测触发登录或浏览器。
+    }
+
+    /** 登录完成后从 Adapter 的真实原生配置同步一次；不会在页面绘制或普通刷新时探测账号。 */
+    private fun refreshOfficialModelCatalog(
+        targetAgentId: String,
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+    ) {
+        officialModelCatalogRefreshJob?.cancel()
+        officialModelCatalogRefreshJob = lifecycleOwner.lifecycleScope.launch {
+            val refreshed = withContext(Dispatchers.IO) {
+                val options = agentConfigurationApi.readSessionConfiguration(target)
+                if (options.none { option ->
+                        option is AgentConfigOption.Select &&
+                            option.category == AgentConfigCategory.Model &&
+                            option.choices.any { it.modelSource == AgentModelSource.OfficialLogin }
+                    }
+                ) return@withContext null
+                agentProviderCatalogApi.recordProtocolOfficialModels(target, options)
+                agentProviderCatalogApi.snapshot(target)
+            } ?: return@launch
+            if (providerPageAgentId != targetAgentId) return@launch
+            val projection = refreshed.toConfigurationProjection(target)
+            providerPageSnapshot = projection
+            if (agentId == targetAgentId) {
+                draftProviderCatalogSnapshot = refreshed
+                draftModelSnapshot = projection
+                applyDraftModelDefault(targetAgentId, projection)
             }
+            if (navigationScreen == AgentNavigationScreen.ProviderList) {
+                showProviderManager(selected, target, projection)
+            }
+            renderSessionConfigurationControls()
         }
     }
 
@@ -3858,9 +4212,9 @@ internal class RunAgentSurfaceBinding(
                 backDescription = "返回 Agent 设置",
                 onBack = ::returnToAgentSettings,
                 actionIcon = R.drawable.ic_add_light.takeIf { canCreate },
-                actionDescription = "新建 MCP",
+                actionDescription = "添加 MCP",
                 onAction = if (canCreate) {
-                    { mcpPageSnapshot?.let { current -> showMcpEditor(selected, target, current, null) } }
+                    { showMcpAddChoices(selected, target) }
                 } else null,
             ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
             addView(LinearLayout(context).apply {
@@ -3912,6 +4266,33 @@ internal class RunAgentSurfaceBinding(
             text = message ?: "尚未配置 MCP"
             visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
         }
+    }
+
+    private fun showMcpAddChoices(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+    ) {
+        showAgentChoiceCard(
+            title = "添加 MCP",
+            message = "从公共目录选择，或使用本地配置。市场内容会先进入编辑页确认，不会直接执行。",
+            actions = listOf(
+                AgentChoiceAction("从市场添加") {
+                    showExtensionMarket(selected, target, AgentExtensionMarketKind.Mcp)
+                },
+                AgentChoiceAction("本地添加") {
+                    showAgentChoiceCard(
+                        title = "本地添加 MCP",
+                        message = "可以导入 server.json、mcpServers JSON，或者继续手动填写。",
+                        actions = listOf(
+                            AgentChoiceAction("导入配置文件", onClick = onPickMcpConfig),
+                            AgentChoiceAction("手动配置") {
+                                mcpPageSnapshot?.let { current -> showMcpEditor(selected, target, current, null) }
+                            },
+                        ),
+                    )
+                },
+            ),
+        )
     }
 
     private fun showMcpActions(
@@ -4097,6 +4478,7 @@ internal class RunAgentSurfaceBinding(
         target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         existing: AgentMcpSummary?,
+        prefill: AgentMcpSummary? = null,
     ) {
         mcpPageAgentId = selected.registration.definition.agentId
         mcpPageTarget = target
@@ -4104,7 +4486,7 @@ internal class RunAgentSurfaceBinding(
         navigationScreen = AgentNavigationScreen.McpEditor
         navigationHost.removeAllViews()
         navigationHost.addView(
-            buildMcpEditorPage(selected, target, existing),
+            buildMcpEditorPage(selected, target, existing, prefill),
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -4117,9 +4499,16 @@ internal class RunAgentSurfaceBinding(
         selected: AgentRegistryEntry,
         target: AgentConfigurationTarget,
         existing: AgentMcpSummary?,
+        prefill: AgentMcpSummary?,
     ): View {
+        val seed = existing ?: prefill
         val supportedTransports = agentConfigurationApi.capabilities(target)?.mcpTransports.orEmpty()
-        var transport = existing?.transport?.takeIf(supportedTransports::contains)
+        var transport = seed?.transport?.takeIf(supportedTransports::contains)
+            ?: seed?.transport?.takeIf { it != AgentMcpTransport.Stdio && it != AgentMcpTransport.Unknown }?.let {
+                supportedTransports.firstOrNull { candidate ->
+                    candidate != AgentMcpTransport.Stdio && candidate != AgentMcpTransport.Unknown
+                }
+            }
             ?: supportedTransports.firstOrNull()
             ?: AgentMcpTransport.Unknown
         val content = LinearLayout(context).apply {
@@ -4171,27 +4560,27 @@ internal class RunAgentSurfaceBinding(
             content,
             label = "MCP ID",
             hintText = "例如 github",
-            value = existing?.id.orEmpty(),
+            value = seed?.id.orEmpty(),
         ).apply { isEnabled = existing == null }
         val localFields = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         val commandInput = providerEditorField(
             localFields,
             label = "命令",
             hintText = "例如 npx",
-            value = existing?.command.orEmpty(),
+            value = seed?.command.orEmpty(),
         )
         val argumentsInput = mcpEditorMultilineField(
             localFields,
             label = "参数",
             hintText = "每行一个参数",
-            value = existing?.arguments.orEmpty().joinToString("\n"),
+            value = seed?.arguments.orEmpty().joinToString("\n"),
         )
         val remoteFields = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         val urlInput = providerEditorField(
             remoteFields,
             label = "请求地址",
             hintText = "https://example.com/mcp",
-            value = existing?.url.orEmpty(),
+            value = seed?.url.orEmpty(),
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
         )
         content.addView(localFields)
@@ -4205,13 +4594,13 @@ internal class RunAgentSurfaceBinding(
             advancedContent,
             label = "环境变量引用",
             hintText = "名称=环境变量名，每行一项",
-            value = AgentMcpEditorPolicy.referencesText(existing?.environmentReferences.orEmpty()),
+            value = AgentMcpEditorPolicy.referencesText(seed?.environmentReferences.orEmpty()),
         )
         val remoteReferences = mcpEditorMultilineField(
             advancedContent,
             label = "Header 引用",
             hintText = "Header名称=环境变量名，每行一项",
-            value = AgentMcpEditorPolicy.referencesText(existing?.headerReferences.orEmpty()),
+            value = AgentMcpEditorPolicy.referencesText(seed?.headerReferences.orEmpty()),
         )
         advancedContent.addView(TextView(context).apply {
             text = "这里只保存环境变量名称，不读取或显示 Header 与环境变量真值。未在此页面管理的 Agent 原生字段会保持不变。"
@@ -4279,7 +4668,7 @@ internal class RunAgentSurfaceBinding(
                 val result = AgentMcpEditorPolicy.buildDraft(
                     id = idInput.text?.toString().orEmpty(),
                     transport = transport,
-                    enabled = existing?.enabled ?: true,
+                    enabled = seed?.enabled ?: true,
                     command = commandInput.text?.toString().orEmpty(),
                     argumentsText = argumentsInput.text?.toString().orEmpty(),
                     url = urlInput.text?.toString().orEmpty(),
@@ -4497,9 +4886,9 @@ internal class RunAgentSurfaceBinding(
                 actionIcon = R.drawable.ic_add_light.takeIf {
                     AgentSkillOperation.Import in agentConfigurationApi.capabilities(target)?.skillOperations.orEmpty()
                 },
-                actionDescription = "导入 Skill",
+                actionDescription = "添加 Skill",
                 onAction = if (AgentSkillOperation.Import in agentConfigurationApi.capabilities(target)?.skillOperations.orEmpty()) {
-                    { showSkillImportPicker(selected, target) }
+                    { showSkillAddChoices(selected, target) }
                 } else null,
             ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
             addView(TextView(context).apply {
@@ -4536,6 +4925,31 @@ internal class RunAgentSurfaceBinding(
             text = message ?: "尚未安装 Skill"
             visibility = if (snapshot.skills.isEmpty()) View.VISIBLE else View.GONE
         }
+    }
+
+    private fun showSkillAddChoices(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+    ) {
+        showAgentChoiceCard(
+            title = "添加 Skill",
+            message = "从市场安装，或者导入自己准备的 Skill 文件夹和 ZIP。",
+            actions = listOf(
+                AgentChoiceAction("从市场添加") {
+                    showExtensionMarket(selected, target, AgentExtensionMarketKind.Skill)
+                },
+                AgentChoiceAction("本地导入") {
+                    showAgentChoiceCard(
+                        title = "本地导入 Skill",
+                        message = "文件夹从 Kite 工作区选择；ZIP 可以从系统文件中选择。",
+                        actions = listOf(
+                            AgentChoiceAction("工作区文件夹") { showSkillImportPicker(selected, target) },
+                            AgentChoiceAction("ZIP 文件", onClick = onPickSkillArchive),
+                        ),
+                    )
+                },
+            ),
+        )
     }
 
     private fun toggleSkillBatchSelection(
@@ -4908,6 +5322,472 @@ internal class RunAgentSurfaceBinding(
         }
     }
 
+    private fun showExtensionMarket(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        kind: AgentExtensionMarketKind,
+    ) {
+        extensionMarketKind = kind
+        navigationScreen = AgentNavigationScreen.ExtensionMarket
+        navigationHost.removeAllViews()
+        navigationHost.addView(
+            buildExtensionMarketPage(selected, target, kind),
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        navigationHost.visibility = View.VISIBLE
+    }
+
+    private fun buildExtensionMarketPage(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        kind: AgentExtensionMarketKind,
+    ): View {
+        var selectedSort = AgentExtensionMarketSort.Recommended
+        val adapter = AgentExtensionMarketAdapter(context, tokens) { item ->
+            showExtensionMarketItem(selected, target, item)
+        }.also { extensionMarketAdapter = it }
+        val status = TextView(context).apply {
+            text = if (kind == AgentExtensionMarketKind.Skill) {
+                "正在加载推荐 Skill…"
+            } else {
+                "输入关键词搜索 MCP 官方目录"
+            }
+            textSize = 13.5f
+            gravity = Gravity.CENTER
+            setTextColor(tokens.textSecondary)
+            setPadding(ui.dp(24), ui.dp(40), ui.dp(24), ui.dp(40))
+        }.also { extensionMarketStatusText = it }
+        val list = RecyclerView(context).apply {
+            layoutManager = LinearLayoutManager(context)
+            this.adapter = adapter
+            itemAnimator = null
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            clipToPadding = false
+            setPadding(ui.dp(14), ui.dp(2), ui.dp(14), ui.dp(18))
+            visibility = View.GONE
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    if (dy <= 0 || kind != AgentExtensionMarketKind.Skill) return
+                    val manager = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                    val total = adapter.itemCount
+                    if (total > 0 && manager.findLastVisibleItemPosition() >= total - MARKET_LOAD_MORE_THRESHOLD) {
+                        loadMoreExtensionMarketSkills(recyclerView)
+                    }
+                }
+            })
+        }
+        val input = EditText(context).apply {
+            hint = if (kind == AgentExtensionMarketKind.Skill) "例如 GitHub、PDF" else "例如 GitHub、浏览器"
+            textSize = 14f
+            maxLines = 1
+            setSingleLine(true)
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            inputType = InputType.TYPE_CLASS_TEXT
+            setTextColor(tokens.textPrimary)
+            setHintTextColor(tokens.textTertiary)
+            background = ui.roundedBox(
+                agentInputBackground,
+                android.graphics.Color.TRANSPARENT,
+                ui.dp(18).toFloat(),
+            )
+            setPadding(ui.dp(15), 0, ui.dp(15), 0)
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                    searchExtensionMarket(kind, text?.toString().orEmpty(), list, selectedSort)
+                    true
+                } else false
+            }
+        }.also { extensionMarketQueryInput = it }
+        val searchAction = TextView(context).apply {
+            text = "搜索"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.textPrimary)
+            background = ui.roundedBox(
+                agentSettingsSurface,
+                android.graphics.Color.TRANSPARENT,
+                ui.dp(18).toFloat(),
+            )
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                searchExtensionMarket(kind, input.text?.toString().orEmpty(), list, selectedSort)
+            }
+        }
+        val sortRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }.also { extensionMarketSortContainer = it }
+        val sortActions = linkedMapOf<AgentExtensionMarketSort, TextView>()
+        fun renderSortActions() {
+            sortActions.forEach { (sort, action) ->
+                val selectedAction = sort == selectedSort
+                action.setTextColor(if (selectedAction) tokens.textPrimary else tokens.textSecondary)
+                action.typeface = if (selectedAction) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                action.background = ui.roundedBox(
+                    if (selectedAction) agentSettingsSurface else android.graphics.Color.TRANSPARENT,
+                    android.graphics.Color.TRANSPARENT,
+                    ui.dp(16).toFloat(),
+                )
+            }
+        }
+        if (kind == AgentExtensionMarketKind.Skill) {
+            AgentExtensionMarketSort.entries.forEach { sort ->
+                val action = TextView(context).apply {
+                    text = sort.displayName
+                    textSize = 13f
+                    gravity = Gravity.CENTER
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        if (selectedSort == sort && input.text.isNullOrBlank()) return@setOnClickListener
+                        selectedSort = sort
+                        input.text?.clear()
+                        renderSortActions()
+                        searchExtensionMarket(kind, "", list, selectedSort)
+                    }
+                }
+                sortActions[sort] = action
+                sortRow.addView(action, LinearLayout.LayoutParams(0, ui.dp(36), 1f).apply {
+                    marginStart = if (sort == AgentExtensionMarketSort.Recommended) 0 else ui.dp(4)
+                })
+            }
+            renderSortActions()
+        }
+        val viewport = FrameLayout(context).apply {
+            addView(list, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+            addView(status, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ))
+        }
+        val page = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(agentPageBackground)
+            addView(buildAgentSubpageHeader(
+                title = if (kind == AgentExtensionMarketKind.Skill) "Skill 市场" else "MCP 市场",
+                backDescription = if (kind == AgentExtensionMarketKind.Skill) "返回 Skill" else "返回 MCP",
+                onBack = ::returnFromExtensionMarket,
+            ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(ui.dp(18), ui.dp(4), ui.dp(18), ui.dp(10))
+                addView(input, LinearLayout.LayoutParams(0, ui.dp(48), 1f))
+                addView(searchAction, LinearLayout.LayoutParams(ui.dp(72), ui.dp(48)).apply {
+                    marginStart = ui.dp(8)
+                })
+            })
+            addView(TextView(context).apply {
+                text = if (kind == AgentExtensionMarketKind.Skill) {
+                    "当前来源：ClawHub · 安装前仍会经过 Kite 文件校验"
+                } else {
+                    "当前来源：MCP 官方目录（预览）· 添加前需要确认连接参数"
+                }
+                textSize = 11.5f
+                setTextColor(tokens.textTertiary)
+                setPadding(ui.dp(22), 0, ui.dp(22), ui.dp(10))
+            })
+            if (kind == AgentExtensionMarketKind.Skill) {
+                addView(sortRow, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ui.dp(40),
+                ).apply {
+                    marginStart = ui.dp(18)
+                    marginEnd = ui.dp(18)
+                    bottomMargin = ui.dp(6)
+                })
+            }
+            addView(viewport, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            ))
+        }
+        if (kind == AgentExtensionMarketKind.Skill) {
+            list.post {
+                if (
+                    navigationScreen == AgentNavigationScreen.ExtensionMarket &&
+                    extensionMarketKind == AgentExtensionMarketKind.Skill
+                ) {
+                    searchExtensionMarket(kind, "", list, selectedSort)
+                }
+            }
+        }
+        return page
+    }
+
+    private fun searchExtensionMarket(
+        kind: AgentExtensionMarketKind,
+        query: String,
+        list: RecyclerView,
+        sort: AgentExtensionMarketSort = AgentExtensionMarketSort.Recommended,
+    ) {
+        val normalized = query.trim()
+        extensionMarketSortContainer?.visibility = if (
+            kind == AgentExtensionMarketKind.Skill && normalized.isEmpty()
+        ) View.VISIBLE else View.GONE
+        if (normalized.isEmpty() && kind != AgentExtensionMarketKind.Skill) {
+            extensionMarketStatusText?.apply { text = "请输入搜索关键词"; visibility = View.VISIBLE }
+            list.visibility = View.GONE
+            return
+        }
+        val revision = ++extensionMarketLoadRevision
+        extensionMarketActiveQuery = normalized
+        extensionMarketActiveSort = sort
+        extensionMarketNextCursor = null
+        extensionMarketLoadingMore = false
+        extensionMarketStatusText?.apply {
+            text = if (normalized.isEmpty()) "正在加载${sort.displayName} Skill…" else "正在搜索…"
+            visibility = View.VISIBLE
+        }
+        list.visibility = View.GONE
+        extensionMarketAdapter?.submitList(emptyList())
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (normalized.isEmpty()) {
+                        extensionMarketRepository.browseSkills(sort)
+                    } else {
+                        extensionMarketRepository.search(kind, normalized)
+                    }
+                }
+            }
+            if (
+                revision != extensionMarketLoadRevision ||
+                navigationScreen != AgentNavigationScreen.ExtensionMarket ||
+                extensionMarketKind != kind
+            ) return@launch
+            result.onSuccess { snapshot ->
+                extensionMarketNextCursor = snapshot.nextCursor
+                extensionMarketAdapter?.submitList(snapshot.items)
+                list.visibility = if (snapshot.items.isEmpty()) View.GONE else View.VISIBLE
+                extensionMarketStatusText?.apply {
+                    text = if (snapshot.items.isEmpty()) "没有找到可在当前结构中添加的结果" else ""
+                    visibility = if (snapshot.items.isEmpty()) View.VISIBLE else View.GONE
+                }
+            }.onFailure { error ->
+                Log.w("AgentExtensionMarket", "${kind.name} market search failed", error)
+                extensionMarketStatusText?.apply {
+                    text = error.message?.let { "市场暂时无法访问：$it" }
+                        ?: "市场暂时无法访问：${error.javaClass.simpleName}"
+                    visibility = View.VISIBLE
+                }
+            }
+        }
+    }
+
+    private fun loadMoreExtensionMarketSkills(list: RecyclerView) {
+        if (
+            navigationScreen != AgentNavigationScreen.ExtensionMarket ||
+            extensionMarketKind != AgentExtensionMarketKind.Skill ||
+            extensionMarketActiveQuery.isNotEmpty() ||
+            extensionMarketLoadingMore
+        ) return
+        val cursor = extensionMarketNextCursor ?: return
+        val revision = extensionMarketLoadRevision
+        val sort = extensionMarketActiveSort
+        extensionMarketLoadingMore = true
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { extensionMarketRepository.browseSkills(sort, cursor) }
+            }
+            if (
+                revision != extensionMarketLoadRevision ||
+                navigationScreen != AgentNavigationScreen.ExtensionMarket ||
+                extensionMarketKind != AgentExtensionMarketKind.Skill ||
+                extensionMarketActiveQuery.isNotEmpty() ||
+                extensionMarketActiveSort != sort ||
+                extensionMarketNextCursor != cursor
+            ) return@launch
+            extensionMarketLoadingMore = false
+            result.onSuccess { snapshot ->
+                val current = extensionMarketAdapter?.currentList.orEmpty()
+                val merged = (current + snapshot.items).distinctBy(AgentExtensionMarketItem::id)
+                extensionMarketAdapter?.submitList(merged)
+                list.visibility = if (merged.isEmpty()) View.GONE else View.VISIBLE
+                extensionMarketNextCursor = snapshot.nextCursor?.takeUnless { it == cursor }
+            }.onFailure { error ->
+                Log.w("AgentExtensionMarket", "Skill market pagination failed", error)
+                Toast.makeText(
+                    context,
+                    error.message?.let { "继续加载失败：$it" } ?: "继续加载失败",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+
+    private fun showExtensionMarketItem(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        item: AgentExtensionMarketItem,
+    ) {
+        when (val spec = item.installSpec) {
+            is AgentExtensionInstallSpec.Skill -> {
+                if (spec.ownerHandle.isNullOrBlank()) {
+                    resolveMarketSkillItem(selected, target, item)
+                } else {
+                    showResolvedMarketSkill(selected, target, item, spec)
+                }
+            }
+            is AgentExtensionInstallSpec.Mcp -> {
+                val compatible = compatibleMcpCandidate(target, spec.server)
+                if (compatible == null) {
+                    showAgentDialogCard(
+                        title = item.title,
+                        message = "这个 MCP 的连接方式不受当前 Agent 支持。",
+                        actions = listOf(
+                            AgentDialogAction("知道了", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
+                        ),
+                    )
+                } else {
+                    showAgentChoiceCard(
+                        title = item.title,
+                        message = "${item.description.ifBlank { "没有提供说明" }}\n\n下一步会进入编辑页确认，不会直接执行市场命令。",
+                        actions = listOf(
+                            AgentChoiceAction("使用此配置") {
+                                mcpPageSnapshot?.let { snapshot ->
+                                    showMcpEditor(selected, target, snapshot, existing = null, prefill = compatible)
+                                }
+                            },
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun resolveMarketSkillItem(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        item: AgentExtensionMarketItem,
+    ) {
+        val revision = ++extensionMarketLoadRevision
+        extensionMarketStatusText?.apply {
+            text = "正在确认 Skill 发布者…"
+            visibility = View.VISIBLE
+        }
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { extensionMarketRepository.resolveSkill(item) }
+            }
+            if (
+                revision != extensionMarketLoadRevision ||
+                navigationScreen != AgentNavigationScreen.ExtensionMarket ||
+                extensionMarketKind != AgentExtensionMarketKind.Skill
+            ) return@launch
+            result.onSuccess { candidates ->
+                extensionMarketStatusText?.visibility = View.GONE
+                val exactMetricMatch = item.downloads?.let { downloads ->
+                    candidates.filter { it.downloads == downloads }.singleOrNull()
+                }
+                val resolved = exactMetricMatch ?: candidates.singleOrNull()
+                if (resolved != null) {
+                    val spec = resolved.installSpec as AgentExtensionInstallSpec.Skill
+                    showResolvedMarketSkill(selected, target, resolved, spec)
+                } else if (candidates.isNotEmpty()) {
+                    showAgentChoiceCard(
+                        title = item.title,
+                        message = "ClawHub 中有多个同名 Skill，请按发布者选择。",
+                        actions = candidates.take(MAX_MARKET_OWNER_CHOICES).map { candidate ->
+                            val spec = candidate.installSpec as AgentExtensionInstallSpec.Skill
+                            AgentChoiceAction("选择 @${spec.ownerHandle}") {
+                                showResolvedMarketSkill(selected, target, candidate, spec)
+                            }
+                        },
+                    )
+                } else {
+                    extensionMarketStatusText?.apply {
+                        text = "这个 Skill 当前无法确认发布者，请尝试按名称搜索"
+                        visibility = View.VISIBLE
+                    }
+                }
+            }.onFailure { error ->
+                Log.w("AgentExtensionMarket", "Skill publisher resolution failed", error)
+                extensionMarketStatusText?.apply {
+                    text = error.message?.let { "无法确认发布者：$it" } ?: "无法确认 Skill 发布者"
+                    visibility = View.VISIBLE
+                }
+            }
+        }
+    }
+
+    private fun showResolvedMarketSkill(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        item: AgentExtensionMarketItem,
+        spec: AgentExtensionInstallSpec.Skill,
+    ) {
+        val owner = requireNotNull(spec.ownerHandle)
+        showAgentChoiceCard(
+            title = item.title,
+            message = "${item.description.ifBlank { "没有提供说明" }}\n\n来源：${item.sourceLabel}",
+            actions = listOf(
+                AgentChoiceAction("安装到 ${selected.registration.definition.displayName}") {
+                    installMarketSkill(selected, target, item, spec)
+                },
+                AgentChoiceAction("在 ClawHub 查看") {
+                    AndroidExternalBrowserLauncher.open(
+                        context,
+                        "https://clawhub.ai/$owner/skills/${spec.slug}",
+                    )
+                },
+            ),
+        )
+    }
+
+    private fun compatibleMcpCandidate(
+        target: AgentConfigurationTarget,
+        server: AgentMcpSummary,
+    ): AgentMcpSummary? {
+        val supported = agentConfigurationApi.capabilities(target)?.mcpTransports.orEmpty()
+        if (server.transport in supported) return server
+        val remote = server.transport != AgentMcpTransport.Stdio && server.transport != AgentMcpTransport.Unknown
+        if (!remote) return null
+        val fallback = supported.firstOrNull { candidate ->
+            candidate != AgentMcpTransport.Stdio && candidate != AgentMcpTransport.Unknown
+        } ?: return null
+        return server.copy(transport = fallback)
+    }
+
+    private fun returnFromExtensionMarket() {
+        extensionMarketLoadRevision++
+        navigationJob?.cancel()
+        when (extensionMarketKind) {
+            AgentExtensionMarketKind.Skill -> {
+                val agentId = skillPageAgentId ?: selectedSettingsAgentId
+                val selected = settingsRegistrySnapshot?.entry(agentId.orEmpty())
+                val target = skillPageTarget
+                val snapshot = skillPageSnapshot
+                if (selected != null && target != null && snapshot != null) {
+                    renderSkillManagerPage(selected, target, snapshot)
+                } else returnToAgentSettings()
+            }
+            AgentExtensionMarketKind.Mcp -> showCurrentMcpList()
+            null -> returnToAgentSettings()
+        }
+        extensionMarketKind = null
+        extensionMarketAdapter = null
+        extensionMarketStatusText = null
+        extensionMarketQueryInput = null
+        extensionMarketSortContainer = null
+        extensionMarketActiveQuery = ""
+        extensionMarketActiveSort = AgentExtensionMarketSort.Recommended
+        extensionMarketNextCursor = null
+        extensionMarketLoadingMore = false
+    }
+
     private fun showSkillImportPicker(
         selected: AgentRegistryEntry,
         target: AgentConfigurationTarget,
@@ -4983,6 +5863,184 @@ internal class RunAgentSurfaceBinding(
         }
     }
 
+    internal fun importSkillArchive(uri: Uri) {
+        val agentId = skillPageAgentId ?: selectedSettingsAgentId ?: return
+        val selected = settingsRegistrySnapshot?.entry(agentId) ?: return
+        val target = skillPageTarget ?: return
+        installSkillArchive(
+            selected = selected,
+            target = target,
+            loadingMessage = "正在检查 Skill ZIP…",
+            successMessage = "Skill ZIP 已导入",
+        ) {
+            readDocumentBytes(uri, MAX_SKILL_ARCHIVE_BYTES)
+        }
+    }
+
+    private fun installMarketSkill(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        item: AgentExtensionMarketItem,
+        spec: AgentExtensionInstallSpec.Skill,
+    ) {
+        installSkillArchive(
+            selected = selected,
+            target = target,
+            loadingMessage = "正在从 ${item.sourceLabel} 下载并检查…",
+            successMessage = "${item.title} 已安装",
+        ) {
+            extensionMarketRepository.downloadSkill(spec)
+        }
+    }
+
+    private fun installSkillArchive(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        loadingMessage: String,
+        successMessage: String,
+        archiveProvider: () -> ByteArray,
+    ) {
+        val snapshot = skillPageSnapshot ?: return
+        val targetAgentId = selected.registration.definition.agentId
+        val requestRevision = ++settingsLoadRevision
+        val startedInMarket = navigationScreen == AgentNavigationScreen.ExtensionMarket
+        (if (startedInMarket) extensionMarketStatusText else skillPageStatusText)?.apply {
+            text = loadingMessage
+            visibility = View.VISIBLE
+        }
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching {
+                    val stage = AgentSkillImportStager(
+                        KFContainerManager.resolveWorkspaceDirectory(context),
+                    ).stageArchive(java.io.ByteArrayInputStream(archiveProvider()))
+                    try {
+                        val mutation = agentConfigurationApi.apply(
+                            target,
+                            snapshot.revision,
+                            listOf(AgentConfigurationIntent.InstallSkill(stage.skillId, stage.sourceReference)),
+                        )
+                        SkillImportOutcome(mutation.result, mutation.current, null)
+                    } finally {
+                        stage.discard()
+                    }
+                }.getOrElse { error ->
+                    SkillImportOutcome(null, null, error.message ?: "无法导入这个 Skill")
+                }
+            }
+            if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
+            val applyResult = outcome.applyResult
+            val refreshed = outcome.refreshed
+            if (applyResult is AgentConfigApplyResult.Applied && refreshed != null) {
+                persistentConfigAgentId = targetAgentId
+                persistentConfigResult = refreshed
+                val visible = (refreshed as? AgentConfigReadResult.Ready)?.snapshot ?: applyResult.snapshot
+                skillPageSnapshot = visible
+                renderSkillManagerPage(selected, target, visible)
+                Toast.makeText(context, successMessage, Toast.LENGTH_SHORT).show()
+            } else {
+                val message = outcome.errorMessage ?: applyResult?.userMessage("无法导入这个 Skill")
+                    ?: "无法导入这个 Skill"
+                if (startedInMarket && navigationScreen == AgentNavigationScreen.ExtensionMarket) {
+                    extensionMarketStatusText?.apply { text = message; visibility = View.VISIBLE }
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                } else {
+                    renderSkillSnapshot(snapshot, message = message)
+                    if (snapshot.skills.isNotEmpty()) Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    internal fun importMcpConfig(uri: Uri) {
+        val agentId = mcpPageAgentId ?: selectedSettingsAgentId ?: return
+        val selected = settingsRegistrySnapshot?.entry(agentId) ?: return
+        val target = mcpPageTarget ?: return
+        val snapshot = mcpPageSnapshot ?: return
+        val requestRevision = ++settingsLoadRevision
+        mcpPageStatusText?.apply { text = "正在读取 MCP 配置…"; visibility = View.VISIBLE }
+        mcpPageListView?.visibility = View.GONE
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val parsed = withContext(Dispatchers.IO) {
+                runCatching {
+                    val payload = readDocumentBytes(uri, MAX_MCP_IMPORT_BYTES).toString(Charsets.UTF_8)
+                    AgentMcpImportParser.parse(payload)
+                }
+            }
+            if (
+                requestRevision != settingsLoadRevision ||
+                navigationScreen != AgentNavigationScreen.McpList ||
+                mcpPageAgentId != agentId
+            ) return@launch
+            parsed.onSuccess { candidates ->
+                renderMcpSnapshot(snapshot)
+                showMcpImportCandidates(selected, target, snapshot, candidates)
+            }.onFailure { error ->
+                renderMcpSnapshot(snapshot, message = error.message ?: "无法读取 MCP 配置")
+                if (snapshot.mcpServers.isNotEmpty()) {
+                    Toast.makeText(context, error.message ?: "无法读取 MCP 配置", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun showMcpImportCandidates(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        snapshot: AgentLiveConfigSnapshot,
+        candidates: List<AgentMcpImportCandidate>,
+    ) {
+        fun open(candidate: AgentMcpImportCandidate) {
+            val compatible = compatibleMcpCandidate(target, candidate.server)
+            if (compatible == null) {
+                Toast.makeText(context, "${candidate.title} 的连接方式不受当前 Agent 支持", Toast.LENGTH_LONG).show()
+            } else {
+                showMcpEditor(selected, target, snapshot, existing = null, prefill = compatible)
+            }
+        }
+        if (candidates.size == 1) {
+            open(candidates.single())
+        } else {
+            showAgentChoiceCard(
+                title = "选择要导入的 MCP",
+                message = "文件中包含 ${candidates.size} 个服务。每次导入一个，确认后可以继续导入文件。",
+                actions = candidates.take(12).map { candidate ->
+                    AgentChoiceAction(candidate.title) { open(candidate) }
+                },
+            )
+        }
+    }
+
+    private fun readDocumentBytes(uri: Uri, maxBytes: Int): ByteArray {
+        val declaredSize = context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.SIZE),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (!cursor.moveToFirst()) null else cursor.getColumnIndex(OpenableColumns.SIZE)
+                .takeIf { it >= 0 && !cursor.isNull(it) }
+                ?.let(cursor::getLong)
+        }
+        require(declaredSize == null || declaredSize <= maxBytes) { "所选文件超过大小限制" }
+        val input = context.contentResolver.openInputStream(uri)
+            ?: throw IllegalArgumentException("无法读取所选文件")
+        return input.use { stream ->
+            val output = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = stream.read(buffer)
+                if (count < 0) break
+                require(output.size() + count <= maxBytes) { "所选文件超过大小限制" }
+                output.write(buffer, 0, count)
+            }
+            output.toByteArray()
+        }
+    }
+
     private fun showCurrentProviderList() {
         val targetAgentId = providerPageAgentId ?: selectedSettingsAgentId
         val selected = settingsRegistrySnapshot?.entry(targetAgentId.orEmpty())
@@ -4993,6 +6051,10 @@ internal class RunAgentSurfaceBinding(
             return
         }
         showProviderManager(selected, target, snapshot)
+    }
+
+    private fun requestProviderEditorExit() {
+        providerEditorBackHandler?.invoke() ?: showCurrentProviderList()
     }
 
     private fun buildAgentSubpageHeader(
@@ -5136,10 +6198,14 @@ internal class RunAgentSurfaceBinding(
         target: AgentConfigurationTarget,
         onSelected: (AgentProviderPreset?) -> Unit,
     ) {
-        val grid = GridLayout(context).apply {
-            columnCount = 2
-            alignmentMode = GridLayout.ALIGN_BOUNDS
-            useDefaultMargins = false
+        providerPresetRefreshJob?.cancel()
+        var presets = agentConfigurationApi.providerPresets(target)
+        val catalogHost = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        val status = TextView(context).apply {
+            text = "正在从 models.dev 获取最新供应商目录…"
+            textSize = 12.5f
+            setTextColor(tokens.textSecondary)
+            setPadding(ui.dp(2), 0, ui.dp(2), ui.dp(8))
         }
         val search = EditText(context).apply {
             hint = "搜索供应商"
@@ -5154,48 +6220,38 @@ internal class RunAgentSurfaceBinding(
             background = ui.roundedBox(agentSettingsSurface, android.graphics.Color.TRANSPARENT, ui.dp(18).toFloat())
         }
         fun render(query: String) {
-            grid.removeAllViews()
+            catalogHost.removeAllViews()
             val normalized = query.trim().lowercase()
-            val entries = buildList<AgentProviderPreset?> {
-                add(null)
-                addAll(agentConfigurationApi.providerPresets(target))
-            }.filter { preset ->
-                normalized.isEmpty() || preset == null && "自定义".contains(normalized) ||
-                    preset?.displayName?.lowercase()?.contains(normalized) == true ||
-                    preset?.providerId?.lowercase()?.contains(normalized) == true
+            val matchingPresets = presets.filter { preset ->
+                normalized.isEmpty() ||
+                    preset.displayName.lowercase().contains(normalized) ||
+                    preset.vendorDisplayName.lowercase().contains(normalized) ||
+                    preset.providerId.lowercase().contains(normalized) ||
+                    preset.vendorId.lowercase().contains(normalized) ||
+                    providerPresetRouteLabel(preset).lowercase().contains(normalized) ||
+                    preset.models.any { model ->
+                        model.id.lowercase().contains(normalized) ||
+                            model.displayName.lowercase().contains(normalized)
+                    }
             }
-            entries.forEachIndexed { index, preset ->
-                val row = index / 2
-                val column = index % 2
-                val card = providerPresetCard(
-                    title = preset?.displayName ?: "自定义",
-                    icon = if (preset == null) R.drawable.ic_material_settings else R.drawable.ic_bridge
-                ) {
-                    onSelected(preset)
-                    closeProviderEditorOverlay()
+            val customMatches = normalized.isEmpty() || "自定义 custom".contains(normalized)
+            val groupedEntries = AgentProviderCategory.entries.mapNotNull { category ->
+                val entries = when (category) {
+                    AgentProviderCategory.Custom -> emptyList()
+                    else -> matchingPresets.filter { it.category == category }
                 }
-                grid.addView(card, GridLayout.LayoutParams(
-                    GridLayout.spec(row, 1f),
-                    GridLayout.spec(column, 1f)
-                ).apply {
-                    width = 0
-                    height = ui.dp(68)
-                    setMargins(
-                        if (column == 0) 0 else ui.dp(5),
-                        ui.dp(5),
-                        if (column == 0) ui.dp(5) else 0,
-                        ui.dp(5)
-                    )
-                })
+                if (entries.isEmpty()) null else category to entries
             }
-            if (entries.isEmpty()) {
-                grid.addView(settingsMessage("没有匹配的供应商预设"), GridLayout.LayoutParams(
-                    GridLayout.spec(0),
-                    GridLayout.spec(0, 2)
-                ).apply {
-                    width = 0
-                    columnSpec = GridLayout.spec(0, 2, 1f)
-                })
+            if (customMatches) {
+                catalogHost.addView(providerPresetCategoryTitle(AgentProviderCategory.Custom))
+                catalogHost.addView(providerPresetGrid(listOf(null), onSelected))
+            }
+            groupedEntries.forEach { (category, entries) ->
+                catalogHost.addView(providerPresetCategoryTitle(category))
+                catalogHost.addView(providerPresetGrid(entries, onSelected))
+            }
+            if (!customMatches && groupedEntries.isEmpty()) {
+                catalogHost.addView(settingsMessage("没有匹配的供应商或模型"))
             }
         }
         search.addTextChangedListener(simpleTextWatcher { render(search.text?.toString().orEmpty()) })
@@ -5222,38 +6278,297 @@ internal class RunAgentSurfaceBinding(
                         setTextColor(tokens.textSecondary)
                         setPadding(ui.dp(2), 0, ui.dp(2), ui.dp(8))
                     })
-                    addView(grid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                    addView(status)
+                    addView(catalogHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 }, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         pushProviderEditorOverlay(page, AgentNavigationScreen.ProviderPresetPicker)
+        providerPresetRefreshJob = lifecycleOwner.lifecycleScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) { agentConfigurationApi.refreshProviderPresets(target) }
+            }.getOrNull()
+            if (
+                navigationScreen !in setOf(
+                    AgentNavigationScreen.ProviderPresetPicker,
+                    AgentNavigationScreen.ProviderPresetDetails,
+                ) ||
+                page.parent !== navigationHost
+            ) return@launch
+            if (result == null) {
+                status.text = "在线目录暂时不可用，当前仍可使用随应用目录"
+                return@launch
+            }
+            presets = result.presets
+            status.text = result.warning ?: when (result.source) {
+                AgentProviderPresetSource.ModelsDev -> "已从 models.dev 获取最新供应商目录"
+                AgentProviderPresetSource.ModelsDevCache -> "正在使用上次成功获取的供应商目录"
+                AgentProviderPresetSource.Bundled -> "正在使用随应用供应商目录"
+            }
+            render(search.text?.toString().orEmpty())
+        }
     }
 
-    private fun providerPresetCard(title: String, icon: Int, onClick: () -> Unit): View =
+    private fun providerPresetCategoryTitle(category: AgentProviderCategory): View = TextView(context).apply {
+        text = when (category) {
+            AgentProviderCategory.Official -> "官方供应商"
+            AgentProviderCategory.ChinaOfficial -> "国内官方"
+            AgentProviderCategory.CloudProvider -> "云平台"
+            AgentProviderCategory.Aggregator -> "聚合平台"
+            AgentProviderCategory.ThirdParty -> "第三方渠道"
+            AgentProviderCategory.Custom -> "自定义"
+        }
+        textSize = 13f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(tokens.textSecondary)
+        setPadding(ui.dp(2), ui.dp(12), ui.dp(2), ui.dp(4))
+    }
+
+    private fun providerPresetGrid(
+        entries: List<AgentProviderPreset?>,
+        onSelected: (AgentProviderPreset?) -> Unit,
+    ): View = GridLayout(context).apply {
+        val columns = if (context.resources.configuration.fontScale >= 1.15f) 1 else 2
+        columnCount = columns
+        alignmentMode = GridLayout.ALIGN_BOUNDS
+        useDefaultMargins = false
+        entries.forEachIndexed { index, preset ->
+            val row = index / columns
+            val column = index % columns
+            val title = preset?.vendorDisplayName ?: "自定义"
+            val route = preset?.let(::providerPresetRouteLabel) ?: "手动填写"
+            val modelCount = preset?.let(::providerPresetModelCountLabel) ?: "名称、地址和模型"
+            addView(
+                providerPresetCard(
+                    title = title,
+                    route = route,
+                    modelCount = modelCount,
+                    description = preset?.let {
+                        "查看 ${it.displayName} 详情，${providerPresetRouteLabel(it)}，${providerPresetModelCountLabel(it)}"
+                    } ?: "使用自定义供应商配置",
+                ) {
+                    if (preset == null) {
+                        onSelected(null)
+                        closeProviderEditorOverlay()
+                    } else {
+                        showProviderPresetDetails(preset, onSelected)
+                    }
+                },
+                GridLayout.LayoutParams(
+                    GridLayout.spec(row, 1f),
+                    GridLayout.spec(column, 1f),
+                ).apply {
+                    width = 0
+                    height = ui.dp(82)
+                    setMargins(
+                        if (columns == 1 || column == 0) 0 else ui.dp(5),
+                        ui.dp(5),
+                        if (columns == 1 || column != 0) 0 else ui.dp(5),
+                        ui.dp(5),
+                    )
+                },
+            )
+        }
+    }
+
+    private fun providerPresetRouteLabel(preset: AgentProviderPreset): String {
+        val market = when (preset.market) {
+            AgentProviderMarket.China -> "国内"
+            AgentProviderMarket.Global -> "国际"
+            AgentProviderMarket.Unspecified -> null
+        }
+        val channel = when (preset.accessChannel) {
+            AgentProviderAccessChannel.Api -> "API"
+            AgentProviderAccessChannel.CodingPlan -> "Coding Plan"
+            AgentProviderAccessChannel.TokenPlan -> "Token Plan"
+            AgentProviderAccessChannel.OfficialLogin -> "官方登录"
+            AgentProviderAccessChannel.Custom -> "自定义"
+        }
+        return listOfNotNull(market, channel).joinToString(" · ")
+    }
+
+    private fun providerPresetModelCountLabel(preset: AgentProviderPreset): String =
+        "${preset.catalogModelCount} 个模型"
+
+    private fun providerPresetDetailedModelCountLabel(preset: AgentProviderPreset): String {
+        val visibleCount = preset.models.size
+        return if (preset.catalogModelCount > visibleCount) {
+            "目录共 ${preset.catalogModelCount} 个，将预填近期 $visibleCount 个"
+        } else {
+            "目录共 ${preset.catalogModelCount} 个"
+        }
+    }
+
+    private fun providerPresetCard(
+        title: String,
+        route: String,
+        modelCount: String,
+        description: String,
+        onClick: () -> Unit,
+    ): View =
         LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(12), ui.dp(8), ui.dp(10), ui.dp(8))
+            setPadding(ui.dp(14), ui.dp(8), ui.dp(12), ui.dp(8))
             background = ui.roundedBox(agentSettingsSurface, android.graphics.Color.TRANSPARENT, ui.dp(18).toFloat())
-            addView(ImageView(context).apply {
-                setImageResource(icon)
-                imageTintList = ColorStateList.valueOf(tokens.textPrimary)
-                setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6))
-            }, LinearLayout.LayoutParams(ui.dp(34), ui.dp(34)))
             addView(TextView(context).apply {
                 text = title
-                textSize = 13.5f
+                textSize = 14f
                 typeface = Typeface.DEFAULT_BOLD
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setTextColor(tokens.textPrimary)
-                setPadding(ui.dp(7), 0, 0, 0)
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            contentDescription = "使用 $title 预设"
+            })
+            addView(TextView(context).apply {
+                text = route
+                textSize = 11.5f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(tokens.textSecondary)
+                setPadding(0, ui.dp(3), 0, 0)
+            })
+            addView(TextView(context).apply {
+                text = modelCount
+                textSize = 10.5f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(tokens.textTertiary)
+                setPadding(0, ui.dp(2), 0, 0)
+            })
+            contentDescription = description
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
         }
+
+    private fun showProviderPresetDetails(
+        preset: AgentProviderPreset,
+        onSelected: (AgentProviderPreset?) -> Unit,
+    ) {
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(16), ui.dp(12), ui.dp(16), ui.dp(28))
+            addView(TextView(context).apply {
+                text = preset.vendorDisplayName
+                textSize = 22f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            if (preset.displayName != preset.vendorDisplayName) {
+                addView(TextView(context).apply {
+                    text = preset.displayName
+                    textSize = 13f
+                    setTextColor(tokens.textSecondary)
+                    setPadding(0, ui.dp(4), 0, 0)
+                })
+            }
+            addView(TextView(context).apply {
+                text = providerPresetRouteLabel(preset)
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+                setPadding(0, ui.dp(12), 0, ui.dp(12))
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(ui.dp(15), ui.dp(4), ui.dp(15), ui.dp(4))
+                background = ui.roundedBox(
+                    agentSettingsSurface,
+                    android.graphics.Color.TRANSPARENT,
+                    ui.dp(20).toFloat(),
+                )
+                addView(providerPresetDetailRow("完整名称", preset.displayName))
+                addView(providerPresetDetailRow("请求地址", preset.baseUrl, selectable = true))
+                addView(providerPresetDetailRow("模型目录", providerPresetDetailedModelCountLabel(preset)))
+                addView(providerPresetDetailRow("模型目录来源", providerPresetSourceLabel(preset.source)))
+                addView(providerPresetDetailRow("请求路线来源", providerPresetRouteSourceLabel(preset.routeSource)))
+                preset.documentationUrl?.let { url ->
+                    addView(providerPresetDetailRow("官方文档", url, selectable = true))
+                }
+            })
+            if (preset.models.isNotEmpty()) {
+                addView(sectionTitle(
+                    "近期模型",
+                    "选择后会写入新供应商表单，保存前仍可增删。",
+                ), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { setMargins(0, ui.dp(22), 0, ui.dp(8)) })
+                addView(TextView(context).apply {
+                    val visibleModels = preset.models.take(8)
+                    text = buildString {
+                        append(visibleModels.joinToString("\n") { it.displayName })
+                        if (preset.models.size > visibleModels.size) {
+                            append("\n…另有 ${preset.models.size - visibleModels.size} 个近期模型")
+                        }
+                    }
+                    textSize = 13f
+                    setTextColor(tokens.textPrimary)
+                    setLineSpacing(ui.dp(3).toFloat(), 1f)
+                    setPadding(ui.dp(15), ui.dp(13), ui.dp(15), ui.dp(13))
+                    background = ui.roundedBox(
+                        agentSettingsSurface,
+                        android.graphics.Color.TRANSPARENT,
+                        ui.dp(20).toFloat(),
+                    )
+                })
+            }
+        }
+        val page = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(agentPageBackground)
+            addView(buildAgentSubpageHeader(
+                title = "供应商详情",
+                backDescription = "返回供应商预设",
+                onBack = ::closeProviderPresetDetails,
+            ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
+            addView(ScrollView(context).apply {
+                overScrollMode = View.OVER_SCROLL_NEVER
+                addView(content, ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(actionTextButton("使用此预设") {
+                completeProviderPresetSelection(preset, onSelected)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(54)).apply {
+                setMargins(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(16))
+            })
+        }
+        pushProviderEditorOverlay(page, AgentNavigationScreen.ProviderPresetDetails)
+    }
+
+    private fun providerPresetDetailRow(
+        label: String,
+        value: String,
+        selectable: Boolean = false,
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, ui.dp(11), 0, ui.dp(11))
+        addView(TextView(context).apply {
+            text = label
+            textSize = 11.5f
+            setTextColor(tokens.textSecondary)
+        })
+        addView(TextView(context).apply {
+            text = value
+            textSize = 13.5f
+            setTextColor(tokens.textPrimary)
+            setPadding(0, ui.dp(3), 0, 0)
+            setTextIsSelectable(selectable)
+        })
+    }
+
+    private fun providerPresetSourceLabel(source: AgentProviderPresetSource): String = when (source) {
+        AgentProviderPresetSource.ModelsDev -> "models.dev 最新目录"
+        AgentProviderPresetSource.ModelsDevCache -> "上次成功获取的 models.dev 目录"
+        AgentProviderPresetSource.Bundled -> "随应用目录"
+    }
+
+    private fun providerPresetRouteSourceLabel(source: AgentProviderPresetRouteSource): String = when (source) {
+        AgentProviderPresetRouteSource.ModelsDev -> "models.dev 声明路线"
+        AgentProviderPresetRouteSource.AdapterCatalog -> "当前 Agent 适配路线"
+    }
 
     private fun pushProviderEditorOverlay(view: View, screen: AgentNavigationScreen) {
         navigationScreen = screen
@@ -5263,7 +6578,31 @@ internal class RunAgentSurfaceBinding(
         ))
     }
 
+    private fun closeProviderPresetDetails() {
+        if (navigationHost.childCount > 1) {
+            navigationHost.removeViewAt(navigationHost.childCount - 1)
+        }
+        navigationScreen = AgentNavigationScreen.ProviderPresetPicker
+    }
+
+    private fun completeProviderPresetSelection(
+        preset: AgentProviderPreset,
+        onSelected: (AgentProviderPreset?) -> Unit,
+    ) {
+        providerPresetRefreshJob?.cancel()
+        providerPresetRefreshJob = null
+        while (navigationHost.childCount > 1) {
+            navigationHost.removeViewAt(navigationHost.childCount - 1)
+        }
+        navigationScreen = AgentNavigationScreen.ProviderEditor
+        onSelected(preset)
+    }
+
     private fun closeProviderEditorOverlay() {
+        if (navigationScreen == AgentNavigationScreen.ProviderPresetPicker) {
+            providerPresetRefreshJob?.cancel()
+            providerPresetRefreshJob = null
+        }
         if (navigationHost.childCount > 1) {
             navigationHost.removeViewAt(navigationHost.childCount - 1)
         }
@@ -5680,6 +7019,17 @@ internal class RunAgentSurfaceBinding(
                         hasOfficialProviders = officialProviders.isNotEmpty(),
                         hasFreeProviders = freeProviders.isNotEmpty(),
                     ))
+                    runtimeAuthentication(selected).takeIf { authentication ->
+                        authentication.methods.isNotEmpty() || authentication.logout
+                    }?.let { authentication ->
+                        addView(
+                            buildRuntimeAuthenticationSection(authentication.methods, authentication.logout),
+                            LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ).apply { setMargins(0, 0, 0, ui.dp(14)) },
+                        )
+                    }
                 }
                 if (visibleProviders.isEmpty()) {
                     addView(LinearLayout(context).apply {
@@ -5757,6 +7107,138 @@ internal class RunAgentSurfaceBinding(
             ?.configuration
             ?.filterIsInstance<AgentConfigOption.Select>()
             ?.firstOrNull { it.category == AgentConfigCategory.Model }
+    }
+
+    private fun runtimeAuthentication(selected: AgentRegistryEntry) =
+        AgentRuntimeRegistry.session(instanceId)
+            ?.takeIf { runtime ->
+                runtime.generation == generation &&
+                    runtime.providerId == selected.registration.launch.providerId
+            }
+            ?.capabilities
+            ?.authentication
+            ?: com.kite.app.agent.contract.AgentAuthenticationCapabilities()
+
+    private fun buildRuntimeAuthenticationSection(
+        methods: List<AgentAuthenticationMethod>,
+        logoutSupported: Boolean,
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(ui.dp(15), ui.dp(13), ui.dp(15), ui.dp(13))
+        background = ui.roundedBox(agentSettingsSurface, android.graphics.Color.TRANSPARENT, ui.dp(22).toFloat())
+        addView(TextView(context).apply {
+            text = "Agent 官方认证"
+            textSize = 15.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(tokens.textPrimary)
+        })
+        addView(TextView(context).apply {
+            text = "认证方式来自当前 Agent 的协议握手；只有点击后才会启动登录。"
+            textSize = 12.5f
+            setTextColor(tokens.textSecondary)
+            setPadding(0, ui.dp(4), 0, ui.dp(9))
+        })
+        methods.forEach { method ->
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = ui.dp(48)
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(TextView(context).apply {
+                        text = method.name
+                        textSize = 14f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(tokens.textPrimary)
+                    })
+                    method.description?.takeIf(String::isNotBlank)?.let { description ->
+                        addView(TextView(context).apply {
+                            text = description
+                            textSize = 11.5f
+                            maxLines = 2
+                            ellipsize = TextUtils.TruncateAt.END
+                            setTextColor(tokens.textSecondary)
+                        })
+                    }
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                val executable = method is AgentAuthenticationMethod.AgentManaged
+                addView(TextView(context).apply {
+                    text = when (method) {
+                        is AgentAuthenticationMethod.AgentManaged -> "登录"
+                        is AgentAuthenticationMethod.Terminal -> "需终端"
+                        is AgentAuthenticationMethod.EnvironmentVariables -> "需密钥"
+                        is AgentAuthenticationMethod.Extension -> "暂不支持"
+                    }
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setTextColor(tokens.textPrimary)
+                    setPadding(ui.dp(13), 0, ui.dp(13), 0)
+                    background = ui.roundedBox(agentSurface, tokens.border, ui.dp(17).toFloat(), ui.dp(1))
+                    isEnabled = executable
+                    isClickable = executable
+                    isFocusable = executable
+                    alpha = if (executable) 1f else 0.5f
+                    setOnClickListener { button ->
+                        if (!executable) return@setOnClickListener
+                        val label = text
+                        isEnabled = false
+                        alpha = 0.55f
+                        text = "登录中…"
+                        lifecycleOwner.lifecycleScope.launch {
+                            val result = AgentRuntimeRegistry.authenticate(
+                                instanceId,
+                                generation,
+                                method.id,
+                            )
+                            button.isEnabled = true
+                            button.alpha = 1f
+                            (button as TextView).text = label
+                            Toast.makeText(
+                                context,
+                                when (result) {
+                                    is AgentOperationResult.Success -> "认证已完成，可以继续使用 Agent"
+                                    is AgentOperationResult.Failure -> result.message
+                                    is AgentOperationResult.Unsupported -> "当前 Agent 不支持这种认证方式"
+                                },
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(34)))
+            })
+        }
+        if (logoutSupported) {
+            addView(TextView(context).apply {
+                text = "退出当前官方账号"
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.danger)
+                setPadding(ui.dp(13), 0, ui.dp(13), 0)
+                background = ui.roundedBox(agentSurface, tokens.border, ui.dp(17).toFloat(), ui.dp(1))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { button ->
+                    button.isEnabled = false
+                    lifecycleOwner.lifecycleScope.launch {
+                        val result = AgentRuntimeRegistry.logout(instanceId, generation)
+                        button.isEnabled = true
+                        Toast.makeText(
+                            context,
+                            when (result) {
+                                is AgentOperationResult.Success -> "已退出当前官方账号"
+                                is AgentOperationResult.Failure -> result.message
+                                is AgentOperationResult.Unsupported -> "当前 Agent 不支持退出登录"
+                            },
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(34)).apply {
+                topMargin = ui.dp(8)
+            })
+        }
     }
 
     private fun buildProviderGroupStrip(
@@ -6398,6 +7880,17 @@ internal class RunAgentSurfaceBinding(
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36)),
         )
 
+        if (account.status != null && !pending && status != AgentOfficialAccountStatus.SigningIn) {
+            addView(
+                actionButton(if (status == AgentOfficialAccountStatus.LoggedIn) "刷新" else "检查") {
+                    officialAccountManager.refresh(agentId, account.id)
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36)).apply {
+                    marginStart = ui.dp(6)
+                },
+            )
+        }
+
         val capabilities = officialAccountManager.accountCapabilities(agentId)
         val savedAccounts = officialAccountManager.savedAccounts(agentId)
         if (status == AgentOfficialAccountStatus.LoggedIn &&
@@ -6856,6 +8349,7 @@ internal class RunAgentSurfaceBinding(
         existing: AgentProviderSummary?,
         preset: AgentProviderPreset?
     ) {
+        providerEditorBackHandler = null
         providerPageAgentId = selected.registration.definition.agentId
         providerPageTarget = target
         providerPageSnapshot = snapshot
@@ -6879,6 +8373,14 @@ internal class RunAgentSurfaceBinding(
         val modelLibrary = modelLibraryStore.snapshot(targetAgentId)
         var selectedGroupId = existing?.id?.let(modelLibrary::providerGroupId)
         val initialModels = existing?.models ?: initialPreset?.models.orEmpty()
+        val storedCatalogProvider = existing?.id?.let { providerId ->
+            agentProviderCatalogApi.snapshot(target).providers.firstOrNull { it.id == providerId }
+        }
+        var catalogSync = storedCatalogProvider?.catalogSync
+            ?: initialPreset?.let { AgentProviderCatalogSyncPolicy.metadataForPreset(it, initialModels) }
+        var selectedPreset = initialPreset ?: catalogSync?.presetId?.let { presetId ->
+            agentConfigurationApi.providerPresets(target).firstOrNull { it.id == presetId }
+        }
         val modelDrafts = mutableListOf<AgentProviderModelSummary>()
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -6996,12 +8498,16 @@ internal class RunAgentSurfaceBinding(
             content.addView(providerPresetSelectionRow(presetValue) {
                 showProviderPresetPicker(target) { preset ->
                     if (preset == null) {
+                        selectedPreset = null
+                        catalogSync = null
                         presetValue.text = "自定义配置"
                         idInput.setText("")
                         nameInput.setText("")
                         urlInput.setText("")
                         replaceModels(emptyList())
                     } else {
+                        selectedPreset = preset
+                        catalogSync = AgentProviderCatalogSyncPolicy.metadataForPreset(preset, preset.models)
                         presetValue.text = preset.displayName
                         idInput.setText(preset.providerId)
                         nameInput.setText(preset.displayName)
@@ -7039,7 +8545,14 @@ internal class RunAgentSurfaceBinding(
             setMargins(0, 0, 0, ui.dp(20))
         })
 
-        content.addView(sectionTitle("可用模型", "配置此供应商可以提供的模型；会话中再选择实际使用哪一个。"))
+        content.addView(sectionTitle(
+            "可用模型",
+            if (existing == null) {
+                "配置此供应商可以提供的模型；会话中再选择实际使用哪一个。"
+            } else {
+                "下拉此页可检查最新目录；刷新只更新草稿，点击保存后才生效。"
+            },
+        ))
         content.addView(modelsHost)
         content.addView(actionOutlineButton("＋  添加模型") {
             showProviderModelEditor(
@@ -7124,6 +8637,19 @@ internal class RunAgentSurfaceBinding(
         }
 
         replaceModels(initialModels)
+        fun currentDraftSnapshot() = AgentProviderEditorDraftSnapshot(
+            providerId = idInput.text?.toString()?.trim().orEmpty(),
+            displayName = nameInput.text?.toString()?.trim().orEmpty(),
+            baseUrl = urlInput.text?.toString()?.trim().orEmpty(),
+            models = modelDrafts.map { model ->
+                model.copy(id = model.id.trim(), displayName = model.displayName.trim())
+            },
+            groupId = selectedGroupId,
+            presetId = selectedPreset?.id,
+            catalogSync = catalogSync,
+            credentialChanged = credentialInput.hasPendingChange(),
+        )
+        val baselineDraft = currentDraftSnapshot()
         val saveAction = TextView(context).apply {
             text = "保存"
             textSize = 15f
@@ -7152,6 +8678,17 @@ internal class RunAgentSurfaceBinding(
                 alpha = 0.45f
                 providerEditorSaveAction = this
                 val credential = credentialInput.credentialChange()
+                val routePreset = selectedPreset?.takeIf { preset ->
+                    AgentProviderCatalogSyncPolicy.matchingPresets(id, url, listOf(preset)).isNotEmpty()
+                }
+                val syncForSave = when {
+                    routePreset != null -> AgentProviderCatalogSyncPolicy.metadataAfterUserEdit(
+                        catalogSync ?: AgentProviderCatalogSyncPolicy.metadataForPreset(routePreset, models),
+                        models,
+                    )
+                    selectedPreset != null -> null
+                    else -> AgentProviderCatalogSyncPolicy.metadataAfterUserEdit(catalogSync, models)
+                }
                 keyInput.setText("")
                 saveCatalogProvider(
                     selected = selected,
@@ -7163,6 +8700,7 @@ internal class RunAgentSurfaceBinding(
                         models = models,
                     ),
                     credential = credential,
+                    catalogSync = syncForSave,
                     successMessage = "供应商资料已更新",
                     onApplied = { appliedProviderId ->
                         modelLibraryStore.assignProviderGroup(targetAgentId, appliedProviderId, selectedGroupId)
@@ -7176,23 +8714,161 @@ internal class RunAgentSurfaceBinding(
             }
         }
         providerEditorSaveAction = saveAction
+        providerEditorBackHandler = {
+            if (!saveAction.isEnabled) {
+                Toast.makeText(context, "正在保存供应商，请稍候", Toast.LENGTH_SHORT).show()
+            } else if (!AgentProviderEditorExitPolicy.hasUnsavedChanges(
+                    baselineDraft,
+                    currentDraftSnapshot(),
+                )) {
+                showCurrentProviderList()
+            } else {
+                ui.showChoiceDialog(
+                    context = context,
+                    title = "保存对供应商的修改？",
+                    options = listOf("保存更改", "放弃更改"),
+                    selectedIndex = -1,
+                    dismissLabel = "继续编辑",
+                ) { selectedIndex ->
+                    if (selectedIndex == 0) {
+                        saveAction.performClick()
+                    } else {
+                        showCurrentProviderList()
+                    }
+                }
+            }
+        }
+        val editorScroll = ScrollView(context).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(content, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        val editorBody: View = if (existing == null) {
+            editorScroll
+        } else {
+            SwipeRefreshLayout(context).apply {
+                setColorSchemeColors(tokens.textPrimary)
+                setProgressBackgroundColorSchemeColor(agentSettingsSurface)
+                addView(editorScroll, ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ))
+                setOnRefreshListener {
+                    refreshConfiguredProviderCatalog(
+                        target = target,
+                        providerId = idInput.text?.toString().orEmpty(),
+                        baseUrl = urlInput.text?.toString().orEmpty(),
+                        currentModels = { modelDrafts.toList() },
+                        currentMetadata = { catalogSync },
+                        onMerged = { preset, merge, sourceMessage ->
+                            selectedPreset = preset
+                            catalogSync = merge.metadata
+                            replaceModels(merge.models)
+                            status.setTextColor(tokens.textSecondary)
+                            status.text = buildString {
+                                append(sourceMessage)
+                                append("：新增 ${merge.addedCount} 个，下架 ${merge.removedCount} 个")
+                                append("；保留 ${merge.customCount} 个自定义模型")
+                                append("，忽略 ${merge.suppressedCount} 个已排除模型。保存后生效")
+                            }
+                            status.visibility = View.VISIBLE
+                        },
+                        onMessage = { message, error ->
+                            status.setTextColor(if (error) tokens.danger else tokens.textSecondary)
+                            status.text = message
+                            status.visibility = View.VISIBLE
+                        },
+                        refresh = this,
+                    )
+                }
+            }
+        }
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(agentPageBackground)
             addView(buildAgentSubpageHeader(
                 title = if (existing == null) "新建供应商" else "编辑供应商",
                 backDescription = "返回供应商配置",
-                onBack = ::showCurrentProviderList,
+                onBack = ::requestProviderEditorExit,
                 trailingView = saveAction
             ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
-            addView(ScrollView(context).apply {
-                isFillViewport = true
-                overScrollMode = View.OVER_SCROLL_NEVER
-                addView(content, ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(editorBody, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+    }
+
+    private fun refreshConfiguredProviderCatalog(
+        target: AgentConfigurationTarget,
+        providerId: String,
+        baseUrl: String,
+        currentModels: () -> List<AgentProviderModelSummary>,
+        currentMetadata: () -> AgentProviderCatalogSyncMetadata?,
+        onMerged: (AgentProviderPreset, AgentProviderCatalogMergeResult, String) -> Unit,
+        onMessage: (String, Boolean) -> Unit,
+        refresh: SwipeRefreshLayout,
+    ) {
+        providerPresetRefreshJob?.cancel()
+        providerPresetRefreshJob = lifecycleOwner.lifecycleScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) { agentConfigurationApi.refreshProviderPresets(target) }
+            }.getOrNull()
+            if (navigationScreen != AgentNavigationScreen.ProviderEditor || !refresh.isAttachedToWindow) {
+                return@launch
+            }
+            refresh.isRefreshing = false
+            if (result == null) {
+                onMessage("供应商目录暂时不可用，当前草稿没有变化", true)
+                return@launch
+            }
+
+            val metadata = currentMetadata()
+            val boundPreset = metadata?.presetId?.let { presetId ->
+                result.presets.firstOrNull { it.id == presetId }
+            }?.takeIf { preset ->
+                AgentProviderCatalogSyncPolicy.matchingPresets(providerId, baseUrl, listOf(preset)).isNotEmpty()
+            }
+            val routeMatches = boundPreset?.let(::listOf)
+                ?: AgentProviderCatalogSyncPolicy.matchingPresets(providerId, baseUrl, result.presets)
+            if (routeMatches.isEmpty()) {
+                onMessage("当前请求地址没有匹配到可同步的供应商渠道，草稿没有变化", true)
+                return@launch
+            }
+
+            val sourceMessage = result.warning ?: when (result.source) {
+                AgentProviderPresetSource.ModelsDev -> "已获取最新目录"
+                AgentProviderPresetSource.ModelsDevCache -> "已读取上次成功目录"
+                AgentProviderPresetSource.Bundled -> "已读取随应用目录"
+            }
+            fun applyPreset(preset: AgentProviderPreset) {
+                val baseMetadata = metadata
+                    ?.takeIf { it.presetId == preset.id }
+                    ?: AgentProviderCatalogSyncMetadata(
+                        presetId = preset.id,
+                        catalogModelIds = emptySet(),
+                    )
+                onMerged(
+                    preset,
+                    AgentProviderCatalogSyncPolicy.merge(currentModels(), baseMetadata, preset),
+                    sourceMessage,
+                )
+            }
+
+            if (routeMatches.size == 1) {
+                applyPreset(routeMatches.single())
+            } else {
+                showAgentChoiceCard(
+                    title = "选择目录来源",
+                    message = "这个地址对应多个访问渠道，选择一次后以后会继续跟随该目录。",
+                    actions = routeMatches.map { preset ->
+                        AgentChoiceAction(
+                            label = "${preset.displayName} · ${providerPresetRouteLabel(preset)}",
+                            onClick = { applyPreset(preset) },
+                        )
+                    },
+                )
+            }
         }
     }
 
@@ -7257,6 +8933,7 @@ internal class RunAgentSurfaceBinding(
         target: AgentConfigurationTarget,
         provider: AgentProviderDraft,
         credential: AgentProviderCredentialChange,
+        catalogSync: AgentProviderCatalogSyncMetadata? = null,
         successMessage: String,
         onApplied: ((String) -> Unit)? = null
     ) {
@@ -7264,7 +8941,7 @@ internal class RunAgentSurfaceBinding(
         val requestRevision = ++settingsLoadRevision
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val saved = withContext(Dispatchers.IO) {
-                agentProviderCatalogApi.saveUserProvider(target, provider, credential)
+                agentProviderCatalogApi.saveUserProvider(target, provider, credential, catalogSync)
             }
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
             if (saved != null) {
@@ -7524,15 +9201,10 @@ internal class RunAgentSurfaceBinding(
             ?.configuration
             .orEmpty()
             .map { option -> option.withDraftValue(preferences?.configuration?.get(option.id)) }
-        val runtimeCategories = runtimeOptions.mapNotNullTo(hashSetOf(), AgentConfigOption::category).apply {
-            addAll(runtimeCatalog?.resolvedConfigurationCategories.orEmpty())
-        }
         val storedControls = draftProviderCatalogSnapshot
             ?.controls
             .orEmpty()
-            .filterNot { it.category in runtimeCategories }
             .map { option -> option.withDraftValue(preferences?.configuration?.get(option.id)) }
-        val cached = storedControls + runtimeOptions
         val persistentModel = draftModelSnapshot?.let { snapshot ->
             AgentDraftModelPolicy.option(
                 snapshot,
@@ -7543,11 +9215,12 @@ internal class RunAgentSurfaceBinding(
                 modelLibraryOfficialAccounts(agentId),
             )
         }
-        return if (persistentModel == null) {
-            cached
-        } else {
-            listOf(persistentModel) + cached.filterNot { it.category == AgentConfigCategory.Model }
-        }
+        return AgentDraftSessionConfigurationPolicy.merge(
+            storedControls = storedControls,
+            runtimeOptions = runtimeOptions,
+            runtimeResolvedCategories = runtimeCatalog?.resolvedConfigurationCategories.orEmpty(),
+            persistentModel = persistentModel,
+        )
     }
 
     private fun modelLibraryOfficialAccounts(targetAgentId: String?): List<AgentOfficialAccountSpec> {
@@ -8314,6 +9987,7 @@ internal class RunAgentSurfaceBinding(
 
     private data class AgentSettingsLoad(
         val registry: AgentRegistrySnapshot,
+        val compatibility: AcpAgentCompatibilitySnapshot,
         val agentId: String?,
         val configResult: AgentConfigReadResult?
     )
@@ -8363,6 +10037,10 @@ internal class RunAgentSurfaceBinding(
     )
 
     private companion object {
+        const val MAX_SKILL_ARCHIVE_BYTES = 10 * 1024 * 1024
+        const val MAX_MARKET_OWNER_CHOICES = 8
+        const val MARKET_LOAD_MORE_THRESHOLD = 6
+        const val MAX_MCP_IMPORT_BYTES = 2 * 1024 * 1024
         const val SESSION_SEARCH_WATCHER_TAG = "agent-session-search-watcher"
         const val COPY_BUFFER_SIZE = 8 * 1024
         const val MAX_INLINE_IMAGE_BYTES = 12 * 1024 * 1024

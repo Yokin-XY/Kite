@@ -24,8 +24,8 @@
 
 | 编号 | 当前未放行能力 | 已确认原因 | 当前兼容路线 | 未来候选，不代表承诺 |
 | --- | --- | --- | --- | --- |
-| NATIVE-ARCHIVE-01 | 将资源 ZIP 默认迁到 Android 安全解包 | 正确性通过，但 OnePlus 8T 固定矩阵比 PRoot 慢约 202.8% | 资源安装继续现有 PRoot/事务链；原生 ZIP 只供显式受控调用 | 更换实现或平台能力后重跑同一固定矩阵 |
-| NATIVE-ARCHIVE-02 | tar、tar.gz、xz 等任意归档原生化 | 尚无统一安全解析、权限/链接语义和性能证据 | 继续 PRoot 工具链 | 仅在多个正式调用方和固定安全合同出现后立项 |
+| NATIVE-ARCHIVE-01 | 将声明式资源 ZIP 迁到 Android 安全解包 | 已完成：生产 JNI、实时取消、有界进度、内容键复用、安全反例和资源事务内导入均已接入 | 显式 `archive` 步骤使用 Rust；动态 shell ZIP 保持 PRoot | 已关闭；新增格式仍须先声明限制与事务边界 |
+| NATIVE-ARCHIVE-02 | 将 rootfs 与声明式 `tar.gz`/`tar.xz` 迁到 Android 原生事务 | 已完成：rootfs、Cursor CLI、Devin CLI 使用 Rust；设备节点与硬链接继续采用既有显式降级语义 | Rust 持有校验、受限解包和原子发布；Kotlin 继续持有锁、状态、验证、回滚、进度和取消 | 已关闭；当前只支持 ARM64 的 ZIP/tar/gzip/xz |
 | NATIVE-SHELL-01 | 把任意 shell 文本编译为 Android 原生动作 | shell 展开、管道、重定向、环境和副作用无法靠轻量解析等价复制 | 任意 shell 继续 PRoot | 只增加枚举化、结构化的单项原生能力 |
 | NATIVE-VERSION-01 | 显式 `命令 --version` 与任意版本输出原生化 | 启动前不能完整证明可执行文件、Linux ELF、解释器、子进程、环境和输出语义 | 无结构化元数据合同的探针继续 PRoot | 调用方直接声明受控文件/字段或完整 argv 与执行闭包后另立专项 |
 | NATIVE-VERSION-02 | 仅凭结构化声明把批量版本检查直接放入原生并发 | 声明不能证明当前文件、权限、大小、JSON 字段已 Ready，内部回退可能同时启动多个 PRoot | 先做无业务进程的物理预检；Ready 进入 3 槽原生/远端，Unsupported 整项进入 1 槽兼容，Blocked 失败关闭 | 只有 Provider 语义或固定真实负载变化后重跑 RF1700 矩阵 |

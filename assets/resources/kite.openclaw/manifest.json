@@ -13,13 +13,21 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["openclaw"]
+    "managedCommands": [
+      "openclaw"
+    ],
+    "versionProbe": {
+      "command": "openclaw --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    }
   },
   "display": {
     "sections": [
       "ai-community"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 20,
     "category": "AI",
     "accent": "mint",
@@ -60,9 +68,11 @@
     "extensions": []
   },
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "openclaw",
-    "repository": "https://github.com/openclaw/openclaw"
+    "command": "npm install -g openclaw@latest",
+    "uninstallCommand": "npm uninstall -g openclaw",
+    "latestVersion": "2026.9.4"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.openclaw",
@@ -83,7 +93,10 @@
         "providerId": "openclaw",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["openclaw", "acp"],
+        "argv": [
+          "openclaw",
+          "acp"
+        ],
         "environmentFiles": {
           "OPENCLAW_GATEWAY_TOKEN": "/workspace/.kf/secrets/kite.openclaw-gateway-token"
         },
@@ -124,36 +137,6 @@
     }
   ],
   "actions": {
-    "install": [
-      {
-        "type": "managed",
-        "steps": [
-          {
-            "id": "install-openclaw-package",
-            "type": "npm",
-            "packages": [
-              "openclaw@latest"
-            ]
-          },
-          {
-            "id": "prepare-openclaw-gateway-token",
-            "type": "shell",
-            "cmd": "umask 077 && mkdir -p /workspace/.kf/secrets && token_file=/workspace/.kf/secrets/kite.openclaw-gateway-token && if [ ! -s \"$token_file\" ]; then { cat /proc/sys/kernel/random/uuid; cat /proc/sys/kernel/random/uuid; } | tr -d '\\n-' > \"$token_file\"; fi && chmod 600 \"$token_file\" && test -s \"$token_file\""
-          }
-        ],
-        "managedCommands": [
-          "openclaw"
-        ],
-        "cleanInstallRoot": true,
-        "verify": [
-          {
-            "id": "openclaw-command",
-            "cmd": "command -v openclaw >/dev/null 2>&1"
-          }
-        ],
-        "timeoutMs": 600000
-      }
-    ],
     "open": {
       "runtime": "kite_recipe",
       "recipe": {

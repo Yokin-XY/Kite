@@ -104,4 +104,17 @@ class SettingsFeatureResultContractTest {
             SettingsFeatureResultContract.parse(bundle),
         )
     }
+
+    @Test
+    fun `资源入口通过稳定资源 ID 解析`() {
+        val bundle = Bundle().apply {
+            putString("kind", "resource")
+            putString("resource_id", "kite.shizuku")
+        }
+
+        assertEquals(
+            SettingsFeatureRequest.OpenResource("kite.shizuku"),
+            SettingsFeatureResultContract.parse(bundle),
+        )
+    }
 }

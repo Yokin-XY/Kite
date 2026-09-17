@@ -6,12 +6,14 @@ import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunLifecycleSink
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartRequest
+import com.kite.app.foundation.concurrency.WriteScopeLeaseRegistry
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.UUID
 
 internal enum class ResourceRunContinuation {
     None,
@@ -40,6 +42,8 @@ internal sealed interface ResourceRunLaunchResult {
 internal interface ResourceRunGateway {
     fun recipe(resourceId: String, operation: String, targetVersion: String? = null): KiteRecipe?
     fun isBundled(resourceId: String): Boolean
+    fun writeScopes(request: ResourceRunLaunchRequest): Set<String> =
+        setOf("resource:${request.resourceId}")
     fun currentEnvironmentId(): String
     fun beginRun(request: ResourceRunLaunchRequest): CardRunState
     fun prepare(
@@ -49,12 +53,21 @@ internal interface ResourceRunGateway {
     )
     fun commitMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
         Result.success(Unit)
+    fun markMutationInstalling(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        Result.success(Unit)
+    fun markMutationVerified(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        Result.success(Unit)
     fun finalizeMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
         Result.success(Unit)
     fun rollbackMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
         Result.success(Unit)
     fun failRunPreparation(request: ResourceRunLaunchRequest, instanceId: String, message: String)
-    fun markOperationStarted(resourceId: String, operation: String, environmentId: String)
+    fun markOperationStarted(
+        resourceId: String,
+        operation: String,
+        instanceId: String,
+        environmentId: String,
+    )
     fun markInstalled(
         resourceId: String,
         versionHint: String?,
@@ -86,6 +99,7 @@ internal class ResourceRunCoordinator(
 ) : RunLifecycleSink {
     private data class ActiveRun(
         val request: ResourceRunLaunchRequest,
+        val writeScopeOwnerId: String,
         @Volatile var lastRunId: String? = null
     )
 
@@ -94,6 +108,7 @@ internal class ResourceRunCoordinator(
     }
     private val activeRuns = ConcurrentHashMap<String, ActiveRun>()
     private val settledGenerations = ConcurrentHashMap.newKeySet<String>()
+    private val writeScopeLeases = WriteScopeLeaseRegistry()
 
     init {
         lifecycleHub.register(this)
@@ -115,35 +130,74 @@ internal class ResourceRunCoordinator(
         val boundRequest = request.copy(
             environmentId = request.environmentId.ifBlank(gateway::currentEnvironmentId)
         )
-        gateway.markOperationStarted(boundRequest.resourceId, boundRequest.operation, boundRequest.environmentId)
-        val state = gateway.beginRun(boundRequest)
-        activeRuns[state.instanceId] = ActiveRun(boundRequest)
-        gateway.prepare(boundRequest, state.instanceId) { result ->
-            serialExecutor.execute {
-                result.onSuccess {
-                    val current = activeRuns[state.instanceId] ?: return@onSuccess
-                    val startResult = runOrchestrator.start(
-                        RunStartRequest(
-                            recipe = current.request.recipe,
-                            instanceId = state.instanceId,
-                            parentInstanceId = current.request.parentInstanceId,
-                            ownerKind = CardRunState.OWNER_KIND_RESOURCE,
-                            stepId = current.request.resourceId,
-                            environmentId = current.request.environmentId
+        val writeScopeOwnerId = "resource-launch-${UUID.randomUUID()}"
+        val writeScopes = environmentWriteScopes(boundRequest)
+        writeScopeLeases.tryAcquire(writeScopeOwnerId, writeScopes)?.let { conflict ->
+            return ResourceRunLaunchResult.Rejected("resource_write_conflict:${conflict.scope}")
+        }
+        val state = try {
+            gateway.beginRun(boundRequest)
+        } catch (error: Throwable) {
+            writeScopeLeases.release(writeScopeOwnerId)
+            throw error
+        }
+        val active = ActiveRun(boundRequest, writeScopeOwnerId)
+        activeRuns[state.instanceId] = active
+        try {
+            gateway.markOperationStarted(
+                resourceId = boundRequest.resourceId,
+                operation = boundRequest.operation,
+                instanceId = state.instanceId,
+                environmentId = boundRequest.environmentId,
+            )
+        } catch (error: Throwable) {
+            activeRuns.remove(state.instanceId, active)
+            releaseWriteScopes(active)
+            throw error
+        }
+        runCatching {
+            gateway.prepare(boundRequest, state.instanceId) { result ->
+                serialExecutor.execute {
+                    result.onSuccess {
+                        val current = activeRuns[state.instanceId] ?: return@onSuccess
+                        val installing = gateway.markMutationInstalling(current.request, state.instanceId)
+                        if (installing.isFailure) {
+                            settlePreparationFailure(
+                                current,
+                                state.instanceId,
+                                "资源安装状态落盘失败：${installing.exceptionOrNull()?.message ?: "未知错误"}",
+                            )
+                            return@onSuccess
+                        }
+                        val startResult = runOrchestrator.start(
+                            RunStartRequest(
+                                recipe = current.request.recipe,
+                                instanceId = state.instanceId,
+                                parentInstanceId = current.request.parentInstanceId,
+                                ownerKind = CardRunState.OWNER_KIND_RESOURCE,
+                                stepId = current.request.resourceId,
+                                environmentId = current.request.environmentId
+                            )
                         )
-                    )
-                    if (startResult is RunCommandResult.Ignored && startResult.reason != "instance_already_active") {
-                        settlePreparationFailure(current, state.instanceId, "运行启动失败：${startResult.reason}")
+                        if (startResult is RunCommandResult.Ignored && startResult.reason != "instance_already_active") {
+                            settlePreparationFailure(current, state.instanceId, "运行启动失败：${startResult.reason}")
+                        }
+                    }.onFailure { error ->
+                        val current = activeRuns[state.instanceId] ?: return@onFailure
+                        settlePreparationFailure(
+                            current,
+                            state.instanceId,
+                            "资源准备失败：${error.message ?: error.javaClass.simpleName}"
+                        )
                     }
-                }.onFailure { error ->
-                    val current = activeRuns[state.instanceId] ?: return@onFailure
-                    settlePreparationFailure(
-                        current,
-                        state.instanceId,
-                        "资源准备失败：${error.message ?: error.javaClass.simpleName}"
-                    )
                 }
             }
+        }.onFailure { error ->
+            settlePreparationFailure(
+                active,
+                state.instanceId,
+                "资源准备失败：${error.message ?: error.javaClass.simpleName}"
+            )
         }
         return ResourceRunLaunchResult.Accepted(state)
     }
@@ -159,7 +213,11 @@ internal class ResourceRunCoordinator(
                 .filter { (_, active) -> active.request.environmentId == target }
                 .forEach { (instanceId, active) ->
                     if (activeRuns.remove(instanceId, active)) {
-                        settleFailure(active, instanceId, "环境已切换，原环境资源任务已结束")
+                        try {
+                            settleFailure(active, instanceId, "环境已切换，原环境资源任务已结束")
+                        } finally {
+                            releaseWriteScopes(active)
+                        }
                     }
                 }
         }
@@ -185,42 +243,60 @@ internal class ResourceRunCoordinator(
 
     private fun settlePreparationFailure(active: ActiveRun, instanceId: String, message: String) {
         if (activeRuns.remove(instanceId, active)) {
-            val finalMessage = rollbackFailureMessage(active.request, instanceId, message)
-            gateway.failRunPreparation(active.request, instanceId, finalMessage)
-            gateway.markFailed(
-                active.request.resourceId,
-                active.request.operation,
-                active.lastRunId,
-                finalMessage,
-                active.request.environmentId
-            )
-            if (active.request.operation == KiteResourceInstallRecipes.OP_INSTALL) {
-                gateway.failPlanAt(active.request.resourceId, active.request.environmentId)
+            try {
+                val finalMessage = rollbackFailureMessage(active.request, instanceId, message)
+                gateway.failRunPreparation(active.request, instanceId, finalMessage)
+                gateway.markFailed(
+                    active.request.resourceId,
+                    active.request.operation,
+                    active.lastRunId,
+                    finalMessage,
+                    active.request.environmentId
+                )
+                if (active.request.operation == KiteResourceInstallRecipes.OP_INSTALL) {
+                    gateway.failPlanAt(active.request.resourceId, active.request.environmentId)
+                }
+            } finally {
+                releaseWriteScopes(active)
             }
         }
     }
 
     private fun settle(active: ActiveRun, state: CardRunState) {
         if (!activeRuns.remove(state.instanceId, active)) return
-        when (state.status) {
-            CardRunStatus.Completed -> settleSuccess(active, state)
-            CardRunStatus.Stopped -> settleFailure(
-                active,
-                state.instanceId,
-                "${operationLabel(active.request.operation)}已取消"
-            )
-            CardRunStatus.BridgeUnavailable,
-            CardRunStatus.Failed -> settleFailure(
-                active,
-                state.instanceId,
-                state.lastError ?: state.lastMeaningfulOutput ?: "${operationLabel(active.request.operation)}失败"
-            )
-            else -> Unit
+        try {
+            when (state.status) {
+                CardRunStatus.Completed -> settleSuccess(active, state)
+                CardRunStatus.Stopped -> settleFailure(
+                    active,
+                    state.instanceId,
+                    "${operationLabel(active.request.operation)}已取消"
+                )
+                CardRunStatus.BridgeUnavailable,
+                CardRunStatus.Failed -> settleFailure(
+                    active,
+                    state.instanceId,
+                    state.lastError ?: state.lastMeaningfulOutput ?: "${operationLabel(active.request.operation)}失败"
+                )
+                else -> Unit
+            }
+        } finally {
+            releaseWriteScopes(active)
         }
     }
 
     private fun settleSuccess(active: ActiveRun, state: CardRunState) {
         val request = active.request
+        val verified = gateway.markMutationVerified(request, state.instanceId)
+        if (verified.isFailure) {
+            settleFailure(
+                active,
+                state.instanceId,
+                "${operationLabel(request.operation)}验证状态落盘失败：" +
+                    (verified.exceptionOrNull()?.message ?: "未知错误"),
+            )
+            return
+        }
         val commit = gateway.commitMutation(request, state.instanceId)
         if (commit.isFailure) {
             settleFailure(
@@ -233,7 +309,8 @@ internal class ResourceRunCoordinator(
         when (request.operation) {
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
-            KiteResourceInstallRecipes.OP_REINSTALL -> {
+            KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR -> {
                 gateway.markInstalled(
                     request.resourceId,
                     request.targetVersion,
@@ -247,6 +324,7 @@ internal class ResourceRunCoordinator(
                 // 不能把已成功的更新重新解释成失败并触发回滚。
                 gateway.finalizeMutation(request, state.instanceId)
                 if (request.operation == KiteResourceInstallRecipes.OP_INSTALL) {
+                    releaseWriteScopes(active)
                     startNextPlannedInstall(
                         gateway.advancePlanAfter(request.resourceId, request.environmentId),
                         request.parentInstanceId,
@@ -259,6 +337,7 @@ internal class ResourceRunCoordinator(
                 // 卸载也在独立 View 中提交。先收尾释放 writer，再续接重新安装，
                 // 否则下一次资源变更会被仍处于 VIEW_COMMITTED 的事务正确拒绝。
                 gateway.finalizeMutation(request, state.instanceId)
+                releaseWriteScopes(active)
                 when (request.continuation) {
                     ResourceRunContinuation.Reinstall -> {
                         gateway.plannedInstall(
@@ -315,6 +394,21 @@ internal class ResourceRunCoordinator(
         } ?: reason
     }
 
+    private fun releaseWriteScopes(active: ActiveRun) {
+        writeScopeLeases.release(active.writeScopeOwnerId)
+    }
+
+    private fun environmentWriteScopes(request: ResourceRunLaunchRequest): Set<String> {
+        val environment = request.environmentId.trim().ifBlank { "default" }
+        return gateway.writeScopes(request)
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .mapTo(linkedSetOf()) { scope ->
+                if (scope.startsWith("global:")) scope else "environment:$environment:$scope"
+            }
+            .ifEmpty { setOf("environment:$environment:resource:${request.resourceId}") }
+    }
+
     private fun startNextPlannedInstall(
         resourceIds: List<String>,
         parentInstanceId: String?,
@@ -341,8 +435,20 @@ internal class ResourceRunCoordinator(
                 return false
             }
             if (!gateway.markPlanStepRunning(resourceId, environmentId)) return false
-            start(request)
-            return true
+            return when (val result = start(request)) {
+                is ResourceRunLaunchResult.Accepted -> true
+                is ResourceRunLaunchResult.Rejected -> {
+                    gateway.markFailed(
+                        resourceId = resourceId,
+                        operation = KiteResourceInstallRecipes.OP_INSTALL,
+                        runId = null,
+                        reason = "资源运行未启动：${result.reason}",
+                        environmentId = environmentId,
+                    )
+                    gateway.failPlanAt(resourceId, environmentId)
+                    false
+                }
+            }
         }
         return false
     }
@@ -351,6 +457,7 @@ internal class ResourceRunCoordinator(
         KiteResourceInstallRecipes.OP_UNINSTALL -> "卸载"
         KiteResourceInstallRecipes.OP_UPDATE -> "更新"
         KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装"
+        KiteResourceInstallRecipes.OP_REPAIR -> "修复"
         else -> "获取"
     }
 
@@ -359,6 +466,7 @@ internal class ResourceRunCoordinator(
             KiteResourceInstallRecipes.OP_INSTALL,
             KiteResourceInstallRecipes.OP_UPDATE,
             KiteResourceInstallRecipes.OP_REINSTALL,
+            KiteResourceInstallRecipes.OP_REPAIR,
             KiteResourceInstallRecipes.OP_UNINSTALL
         )
         private val TERMINAL_STATUSES = setOf(

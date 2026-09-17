@@ -2571,8 +2571,6 @@ object RuntimeHealthStore {
                 0L,
                 0L
             ).joinToString(" ") + "\n"
-            files["$pid/cwd"] = entry.cwd.ifBlank { "/" } + "\n"
-            files["$pid/exe"] = entry.executable.ifBlank { comm } + "\n"
         }
         return files
     }
@@ -2680,7 +2678,8 @@ object RuntimeHealthStore {
         builder.appendLine("ubuntu_procfs_projection_source=proot_telemetry_live_table")
         builder.appendLine("ubuntu_procfs_projection_root=${WorkspaceBuildSupport.CONTAINER_HELPER_SYSTEM_PROC_PATH}")
         builder.appendLine("ubuntu_procfs_projection_mode=proot_path_projection")
-        builder.appendLine("ubuntu_procfs_projection_files=stat_status_cmdline_comm_statm_cwd_exe_text")
+        builder.appendLine("ubuntu_procfs_projection_files=stat_status_cmdline_comm_statm_text")
+        builder.appendLine("ubuntu_procfs_symlink_passthrough=exe_cwd")
         builder.appendLine("ubuntu_procfs_projection_argv_scope=argv_preview_not_full_argv")
         builder.appendLine("ubuntu_procfs_projection_default_scope=running_plus_recent_terminal")
         builder.appendLine("ubuntu_procfs_projection_retention_mode=$PROCFS_PROJECTION_RETENTION_MODE")

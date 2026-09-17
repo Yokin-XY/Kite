@@ -29,11 +29,14 @@ import com.kite.app.agent.config.AgentReasoningControl
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
+import com.kite.app.agent.config.AgentSessionModelSelection
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
 import com.kite.app.agent.config.NativeAgentManagedOutputFormat
 import com.kite.app.agent.config.mediatedSessionPermissionControl
 import com.kite.app.agent.config.native.hermes.hermesReasoningControl
+import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import org.yaml.snakeyaml.DumperOptions
@@ -99,6 +102,26 @@ internal class HermesAgentConfigAdapter(
 
     override fun normalizeSessionModes(modes: List<com.kite.app.agent.contract.AgentMode>) =
         modes.filterNot { it.id in HERMES_PERMISSION_MODE_IDS }
+
+    override fun sessionModelSelection(
+        selection: AgentPersistentConfigChange.SelectProvider,
+        options: List<AgentConfigOption>,
+    ): AgentSessionModelSelection? {
+        super.sessionModelSelection(selection, options)?.let { return it }
+        val modelOption = options
+            .filterIsInstance<AgentConfigOption.Select>()
+            .firstOrNull { it.category == AgentConfigCategory.Model }
+            ?: return null
+        val providerId = selection.providerId.removePrefix(HERMES_CUSTOM_PROVIDER_PREFIX)
+        val nativeValues = listOf(
+            "$HERMES_CUSTOM_PROVIDER_PREFIX$providerId:${selection.modelId}",
+            "${selection.providerId}:${selection.modelId}",
+        )
+        val choice = nativeValues.firstNotNullOfOrNull { nativeValue ->
+            modelOption.choices.firstOrNull { it.value == nativeValue }
+        } ?: return null
+        return AgentSessionModelSelection(modelOption.id, choice.value)
+    }
 
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = buildList {
         add(NativeAgentCoreDocumentSpec(
@@ -648,6 +671,7 @@ internal class HermesAgentConfigAdapter(
 
     companion object {
         const val ADAPTER_ID = "hermes"
+        private const val HERMES_CUSTOM_PROVIDER_PREFIX = "custom:"
         private const val CONFIG_KEY = "config"
         private const val HERMES_HOME_PATH = "/workspace/.kf/software/kite.hermes.core/home"
         private const val CONFIG_PATH = "$HERMES_HOME_PATH/config.yaml"

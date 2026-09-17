@@ -250,12 +250,14 @@ internal class ResourceFeatureViewFactory(
     fun acknowledgementLabel(intent: KiteResourceActionIntent): String = context.getString(when (intent) {
         KiteResourceActionIntent.Install,
         KiteResourceActionIntent.ReopenInstall -> R.string.resource_state_preparing
+        KiteResourceActionIntent.ReopenOperation -> R.string.resource_action_view_progress
         KiteResourceActionIntent.Open -> R.string.resource_state_starting
         KiteResourceActionIntent.Stop -> R.string.resource_state_stopping
         KiteResourceActionIntent.Uninstall -> R.string.resource_state_uninstalling
         KiteResourceActionIntent.CheckUpdate -> R.string.resource_state_checking_update
         KiteResourceActionIntent.Update -> R.string.resource_state_updating
         KiteResourceActionIntent.Reinstall -> R.string.resource_state_preparing
+        KiteResourceActionIntent.Repair -> R.string.resource_state_repairing
         KiteResourceActionIntent.CancelInstall,
         KiteResourceActionIntent.CancelFailedInstall -> R.string.resource_action_cancel
         KiteResourceActionIntent.BusyStatus,
@@ -278,12 +280,14 @@ internal class ResourceFeatureViewFactory(
     fun actionLabel(intent: KiteResourceActionIntent): String = context.getString(when (intent) {
         KiteResourceActionIntent.Install -> R.string.resource_action_install
         KiteResourceActionIntent.ReopenInstall -> R.string.resource_action_view_progress
+        KiteResourceActionIntent.ReopenOperation -> R.string.resource_action_view_progress
         KiteResourceActionIntent.Open -> R.string.resource_action_open
         KiteResourceActionIntent.Stop -> R.string.resource_action_stop
         KiteResourceActionIntent.Uninstall -> R.string.resource_action_uninstall
         KiteResourceActionIntent.CheckUpdate -> R.string.resource_action_check_update
         KiteResourceActionIntent.Update -> R.string.resource_action_update
         KiteResourceActionIntent.Reinstall -> R.string.resource_action_reinstall
+        KiteResourceActionIntent.Repair -> R.string.resource_action_repair
         KiteResourceActionIntent.CancelInstall,
         KiteResourceActionIntent.CancelFailedInstall -> R.string.resource_action_cancel
         KiteResourceActionIntent.BusyStatus -> R.string.resource_action_processing

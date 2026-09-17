@@ -16,11 +16,62 @@ class AgentProviderPresetCatalogContractTest {
         assertNotEquals(general.providerId, coding.providerId)
         assertNotEquals(general.baseUrl.trimEnd('/'), coding.baseUrl.trimEnd('/'))
         assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", coding.baseUrl)
+        assertEquals("zhipu", general.vendorId)
+        assertEquals(general.vendorId, coding.vendorId)
+        assertEquals("智谱 GLM", coding.vendorDisplayName)
+        assertEquals(AgentProviderCategory.ChinaOfficial, coding.category)
+        assertEquals(AgentProviderMarket.China, coding.market)
+        assertEquals(AgentProviderAccessChannel.Api, general.accessChannel)
+        assertEquals(AgentProviderAccessChannel.CodingPlan, coding.accessChannel)
         assertEquals(
-            listOf("glm-5.2", "glm-5-turbo", "glm-4.7"),
+            listOf(
+                "glm-5.2",
+                "glm-5.1",
+                "glm-5-turbo",
+                "glm-5",
+                "glm-4.7",
+                "glm-4.7-flash",
+                "glm-4.7-flashx",
+                "glm-4.6",
+                "glm-4.5-air",
+                "glm-4.5-airx",
+                "glm-4.5-flash",
+                "glm-4-flash-250414",
+                "glm-4-flashx-250414",
+            ),
+            general.models.map { it.id },
+        )
+        assertEquals(
+            listOf(
+                "glm-5.3-flash",
+                "glm-5.3",
+                "glm-5.2",
+                "glm-5.1",
+                "glm-5",
+                "glm-5-turbo",
+                "glm-4.7",
+                "glm-4.6",
+                "glm-4.5",
+                "glm-4.5-air",
+            ),
             coding.models.map { it.id },
         )
         assertUniqueAndComplete(presets)
+    }
+
+    @Test
+    fun domesticAndInternationalRoutesShareBrandButKeepExplicitMarkets() {
+        val presets = AgentProviderPresetCatalog.presetsFor("hermes")
+        val china = presets.single { it.id == "minimax" }
+        val global = presets.single { it.id == "minimax-global" }
+
+        assertEquals("MiniMax", china.vendorDisplayName)
+        assertEquals(china.vendorDisplayName, global.vendorDisplayName)
+        assertEquals(AgentProviderMarket.China, china.market)
+        assertEquals(AgentProviderMarket.Global, global.market)
+        assertEquals(7, china.models.size)
+        assertEquals("MiniMax-M3", china.models.first().id)
+        assertEquals(china.models.map { it.id }, global.models.map { it.id })
     }
 
     @Test
@@ -52,6 +103,30 @@ class AgentProviderPresetCatalogContractTest {
         assertTrue(AgentProviderPresetCatalog.presetsFor("gemini-cli").isEmpty())
         assertTrue(AgentProviderPresetCatalog.presetsFor("unknown").isEmpty())
         assertTrue(AgentProviderPresetCatalog.presetsFor(null).isEmpty())
+    }
+
+    @Test
+    fun everyVerifiedOpenAiCompatibleAdapterReceivesTheZhipuCodingPlanRoute() {
+        val adapters = listOf(
+            "opencode",
+            "openclaw",
+            "hermes",
+            "mimo-code",
+            "kimi-code",
+            "pi-coding-agent",
+            "qwen-code",
+            "reasonix",
+            "github-copilot",
+            "deepseek-harness",
+            "zcode",
+        )
+
+        adapters.forEach { adapterId ->
+            val codingPlan = AgentProviderPresetCatalog.presetsFor(adapterId)
+                .single { it.id == "zhipu-coding-plan" }
+            assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", codingPlan.baseUrl)
+            assertTrue(codingPlan.models.any { it.id == "glm-5.3-flash" })
+        }
     }
 
     private fun assertUniqueAndComplete(presets: List<AgentProviderPreset>) {

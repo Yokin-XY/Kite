@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 2,
+  "revision": 8,
+  "taskKey": "resource-network-routing",
+  "objective": "统一资源安装报告与下载源路由，消除重复计时和心跳污染，并让所有资源复用可配置的全局源策略",
+  "status": "active",
+  "activeTasks": [
+    {
+      "id": "T002",
+      "title": "建立全局资源源策略",
+      "status": "in_progress",
+      "objective": "在设置中提供自动、国内优先和官方优先模式，并由统一事实源持久化",
+      "dependsOn": [
+        "T001"
+      ],
+      "acceptance": [
+        "设置可切换并持久化；默认自动；UI 不持有第二份事实"
+      ],
+      "invariants": [
+        "不把具体资源或当前设备写死在设置层"
+      ],
+      "nextAction": "接入 SettingsGateway 与设置页",
+      "owner": "coordinator"
+    }
+  ],
+  "ready": [],
+  "blocked": [],
+  "phaseGates": [],
+  "boundaries": [
+    "不改 Agent 会话协议；不发布、不推送；保留官方上游为权威源和现有摘要校验；仅做目标测试、Debug 构建与真机崩溃检查"
+  ],
+  "nextAction": "接入 SettingsGateway 与设置页",
+  "lastValidation": {
+    "taskId": "T001",
+    "name": "目标单元测试",
+    "status": "passed",
+    "summary": "报告投影、安装向导和运行报告共24项目标测试通过",
+    "evidenceRefs": [
+      "gradle:testDebugUnitTest:KiteResourceInstallOutputTest,ResourceInstallWizardScreenTest,RunSurfaceReportOwnershipTest"
+    ],
+    "at": "2026-08-30T16:15:21Z"
+  },
+  "lastBatch": null,
+  "ledgerCursor": 8,
+  "legacyRefs": [],
+  "updatedAt": "2026-08-30T16:15:22Z"
+}

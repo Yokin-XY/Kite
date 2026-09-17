@@ -9,6 +9,7 @@ import com.kite.app.foundation.service.KFShellService
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.toolchain.ToolchainInstallPhase
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
+import com.kite.app.foundation.toolchain.ToolchainResourcePortHost
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +78,17 @@ object BootstrapCoordinator {
                         KFWorkspaceManager.ensureActiveSpace(appContext)
                     }
                     _snapshot.value = _snapshot.value.copy(stage = BootstrapStage.SPACE_READY)
+                    withContext(Dispatchers.IO) {
+                        val recovery = ToolchainResourcePortHost.get().recoverInterruptedInstalls(appContext)
+                        if (recovery.examined > 0) {
+                            Logger.i(
+                                LOG_TAG,
+                                "资源事务恢复完成: restored=${recovery.restored} " +
+                                    "committed=${recovery.committed} active=${recovery.active} failed=${recovery.failed}",
+                            )
+                        }
+                    }
+                    KFApplication.markLaunchStage(LOG_TAG, "资源安装中断状态已核对")
                     KFShellService.start(appContext)
                     Logger.i(LOG_TAG, "Host service start requested after workspace became ready")
                     KFApplication.markLaunchStage(LOG_TAG, "当前环境空间已预热")
@@ -117,7 +129,13 @@ object BootstrapCoordinator {
                     Logger.i(LOG_TAG, "启动协调完成")
                 }.onFailure { error ->
                     Logger.e(LOG_TAG, "启动协调失败: ${error.message}")
-                    RuntimeBootstrapProgress.failed(error.message ?: error.javaClass.simpleName)
+                    val reason = error.message ?: error.javaClass.simpleName
+                    StartupTraceStore.recordSetupFailure(
+                        appContext,
+                        "runtime.bootstrap",
+                        "${_snapshot.value.stage}: $reason",
+                    )
+                    RuntimeBootstrapProgress.failed(reason)
                     _snapshot.value = _snapshot.value.copy(
                         stage = BootstrapStage.FAILED,
                         finishedAt = System.currentTimeMillis(),

@@ -43,6 +43,7 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -151,12 +152,13 @@ internal class ConversationAdapter(
     private val projectionCache = linkedMapOf<String, Pair<AgentConversationItem, List<AgentConversationDisplayItem>>>()
     private val expandedThoughtIds = mutableSetOf<String>()
     private val expandedToolIds = mutableSetOf<String>()
-    private val toolGroupExpansionOverrides = mutableMapOf<String, Boolean>()
+    private val processExpansionOverrides = mutableMapOf<String, Boolean>()
     private val assistantBodyTypeface = Typeface.create(Typeface.DEFAULT, BODY_TEXT_WEIGHT, false)
 
     fun submitConversation(
         items: List<AgentConversationItem>,
         turns: List<AgentConversationTurn>,
+        phase: AgentSessionPhase,
         committed: () -> Unit,
     ) {
         val activeIds = items.mapTo(linkedSetOf()) { it.id }
@@ -169,9 +171,12 @@ internal class ConversationAdapter(
                     projectionCache[item.id] = item to blocks
                 })
         }
-        val projected = AgentConversationPresentation.composeTurns(items, turns) { item ->
+        val projected = AgentConversationPresentation.composeTurns(items, turns, phase) { item ->
             projectedById[item.id].orEmpty()
         }
+        processExpansionOverrides.keys.retainAll(
+            projected.filterIsInstance<AgentConversationDisplayItem.Process>().mapTo(linkedSetOf()) { it.id }
+        )
         submitList(projected, committed)
     }
 
@@ -183,6 +188,7 @@ internal class ConversationAdapter(
         is AgentConversationDisplayItem.Table -> TYPE_TABLE
         is AgentConversationDisplayItem.AnswerCopy -> TYPE_ANSWER_COPY
         is AgentConversationDisplayItem.Process -> TYPE_PROCESS
+        is AgentConversationDisplayItem.TurnStatus -> TYPE_TURN_STATUS
         is AgentConversationDisplayItem.Thought -> TYPE_THOUGHT
         is AgentConversationDisplayItem.Tool -> TYPE_TOOL
         is AgentConversationDisplayItem.Plan -> TYPE_PLAN
@@ -198,6 +204,7 @@ internal class ConversationAdapter(
         TYPE_TABLE -> TableHolder()
         TYPE_ANSWER_COPY -> AnswerCopyHolder()
         TYPE_PROCESS -> ProcessHolder()
+        TYPE_TURN_STATUS -> TurnStatusHolder()
         TYPE_THOUGHT -> ThoughtHolder()
         TYPE_TOOL -> ToolHolder()
         TYPE_PLAN -> PlanHolder()
@@ -506,156 +513,127 @@ internal class ConversationAdapter(
         }
     ) {
         private val container = itemView as LinearLayout
+        private val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, ui.dp(5), 0, ui.dp(9))
+        }.also(container::addView)
+        private val duration = TextView(context).apply {
+            textSize = 13.5f
+            includeFontPadding = false
+            setTextColor(tokens.textTertiary)
+        }.also {
+            header.addView(it, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+        private val chevron = ImageView(context).apply {
+            setImageResource(R.drawable.ic_chevron_right_light)
+            setColorFilter(tokens.textTertiary)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+        }.also {
+            header.addView(it, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)).apply {
+                marginStart = ui.dp(4)
+            })
+        }
         private val entries = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(0, ui.dp(6), 0, 0)
         }.also(container::addView)
+        private var boundProcess: AgentConversationDisplayItem.Process? = null
+        private var boundExpanded = false
+        private val clockTick = object : Runnable {
+            override fun run() {
+                val process = boundProcess ?: return
+                updateDuration(process)
+                if (process.state == com.kite.app.agent.store.AgentConversationTurnState.Running) {
+                    duration.postDelayed(this, PROCESS_CLOCK_TICK_MILLIS)
+                }
+            }
+        }
 
         override fun bind(item: AgentConversationDisplayItem) {
             item as AgentConversationDisplayItem.Process
-            rebuildEntries(item)
+            stopClock()
+            boundProcess = item
+            boundExpanded = processExpansionOverrides[item.id]
+                ?: AgentConversationProcessPresentation.isExpandedByDefault(item.state)
+            bindHeader(item)
+            if (boundExpanded) rebuildEntries(item) else entries.removeAllViews()
+            entries.visibility = if (boundExpanded) View.VISIBLE else View.GONE
+            if (item.state == com.kite.app.agent.store.AgentConversationTurnState.Running) {
+                duration.postDelayed(clockTick, PROCESS_CLOCK_TICK_MILLIS)
+            }
+        }
+
+        private fun bindHeader(item: AgentConversationDisplayItem.Process) {
+            val expandable = item.entries.isNotEmpty()
+            chevron.visibility = if (expandable) View.VISIBLE else View.INVISIBLE
+            chevron.rotation = if (boundExpanded) 90f else 0f
+            header.isClickable = expandable
+            header.isFocusable = expandable
+            header.setOnClickListener {
+                if (!expandable) return@setOnClickListener
+                processExpansionOverrides[item.id] = !boundExpanded
+                bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
+            }
+            updateDuration(item)
+        }
+
+        private fun updateDuration(item: AgentConversationDisplayItem.Process) {
+            val label = AgentConversationProcessPresentation.durationLabel(item, System.currentTimeMillis())
+            duration.text = label
+            header.contentDescription = if (item.entries.isEmpty()) {
+                label
+            } else {
+                "$label，${if (boundExpanded) "收起过程" else "展开过程"}"
+            }
         }
 
         private fun rebuildEntries(item: AgentConversationDisplayItem.Process) {
             entries.removeAllViews()
-            var index = 0
-            while (index < item.entries.size) {
-                when (val entry = item.entries[index]) {
-                    is AgentConversationDisplayItem.Thought -> {
-                        entries.addView(thoughtRow(entry))
-                        index += 1
-                    }
-                    is AgentConversationDisplayItem.Tool -> {
-                        val tools = item.entries
-                            .drop(index)
-                            .takeWhile { it is AgentConversationDisplayItem.Tool }
-                            .filterIsInstance<AgentConversationDisplayItem.Tool>()
-                        entries.addView(toolGroup(item, tools))
-                        index += tools.size
-                    }
-                    is AgentConversationDisplayItem.Plan -> {
-                        entries.addView(planRows(entry))
-                        index += 1
-                    }
-                    else -> index += 1
+            item.entries.forEach { entry ->
+                when (entry) {
+                    is AgentConversationDisplayItem.Thought -> entries.addView(thoughtRow(entry))
+                    is AgentConversationDisplayItem.Tool -> entries.addView(toolRow(entry))
+                    is AgentConversationDisplayItem.Plan -> entries.addView(planRows(entry))
+                    else -> Unit
                 }
             }
         }
 
         private fun thoughtRow(item: AgentConversationDisplayItem.Thought): View =
-            AgentThoughtRowView(context, tokens).apply {
-                val expanded = item.id in expandedThoughtIds
-                bind(item.text, expanded) {
-                    if (expanded) expandedThoughtIds.remove(item.id) else expandedThoughtIds.add(item.id)
-                    bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
-                }
+            TextView(context).apply {
+                text = item.text
+                textSize = 14.5f
+                includeFontPadding = false
+                setLineSpacing(0f, 1.22f)
+                setTextColor(tokens.textSecondary)
+                setPadding(0, ui.dp(7), 0, ui.dp(7))
+                setTextIsSelectable(true)
             }
 
         private fun toolRow(item: AgentConversationDisplayItem.Tool): View = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            val expanded = item.id in expandedToolIds
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, ui.dp(4), 0, ui.dp(4))
-                addView(ImageView(context).apply {
-                    setImageResource(R.drawable.ic_terminal_prompt_light)
-                    setColorFilter(if (item.status == "失败") tokens.danger else tokens.textTertiary)
-                    scaleType = ImageView.ScaleType.CENTER_INSIDE
-                }, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)).apply { marginEnd = ui.dp(8) })
-                addView(TextView(context).apply {
-                    text = buildString {
-                        append(item.title)
-                        if (item.status == "失败") append(" · 失败")
-                    }
-                    textSize = 13.5f
-                    includeFontPadding = false
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(if (item.status == "失败") tokens.danger else tokens.textSecondary)
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                if (!item.detail.isNullOrBlank()) {
-                    addView(ImageView(context).apply {
-                        setImageResource(R.drawable.ic_chevron_right_light)
-                        setColorFilter(tokens.textTertiary)
-                        rotation = if (expanded) 90f else 0f
-                        scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    }, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)))
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, ui.dp(5), 0, ui.dp(5))
+            addView(ImageView(context).apply {
+                setImageResource(R.drawable.ic_terminal_prompt_light)
+                setColorFilter(if (item.status == "失败") tokens.danger else tokens.textTertiary)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+            }, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)).apply { marginEnd = ui.dp(8) })
+            addView(TextView(context).apply {
+                text = buildString {
+                    append(item.title)
+                    if (item.status == "失败") append(" · 失败")
                 }
-                isClickable = !item.detail.isNullOrBlank()
-                isFocusable = isClickable
-                setOnClickListener {
-                    if (item.detail.isNullOrBlank()) return@setOnClickListener
-                    if (expanded) expandedToolIds.remove(item.id) else expandedToolIds.add(item.id)
-                    bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
-                }
-            })
-            if (expanded && !item.detail.isNullOrBlank()) {
-                addView(TextView(context).apply {
-                    text = item.detail
-                    textSize = 12.5f
-                    typeface = Typeface.MONOSPACE
-                    includeFontPadding = false
-                    setLineSpacing(0f, 1.2f)
-                    setTextColor(tokens.textTertiary)
-                    setPadding(ui.dp(26), ui.dp(2), 0, ui.dp(7))
-                    setTextIsSelectable(true)
-                })
-            }
-        }
-
-        private fun toolGroup(
-            process: AgentConversationDisplayItem.Process,
-            tools: List<AgentConversationDisplayItem.Tool>,
-        ): View {
-            if (tools.size == 1) return toolRow(tools.single())
-            val groupId = "${process.id}:tools:${tools.first().id}"
-            val expanded = toolGroupExpansionOverrides[groupId] ?: false
-            return LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(0, ui.dp(4), 0, ui.dp(4))
-                    addView(ImageView(context).apply {
-                        setImageResource(R.drawable.ic_terminal_prompt_light)
-                        setColorFilter(tokens.textTertiary)
-                        scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    }, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)).apply { marginEnd = ui.dp(8) })
-                    addView(TextView(context).apply {
-                        text = if (tools.all { tool -> tool.kind?.lowercase()?.let { kind ->
-                                "command" in kind || "terminal" in kind
-                            } == true }) {
-                            "运行了多个命令"
-                        } else {
-                            "调用了多个工具"
-                        }
-                        textSize = 13.5f
-                        includeFontPadding = false
-                        setTextColor(tokens.textSecondary)
-                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                    addView(ImageView(context).apply {
-                        setImageResource(R.drawable.ic_chevron_right_light)
-                        setColorFilter(tokens.textTertiary)
-                        rotation = if (expanded) 90f else 0f
-                        scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    }, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)))
-                    isClickable = true
-                    isFocusable = true
-                    contentDescription = if (expanded) "收起工具详情" else "展开工具详情"
-                    setOnClickListener {
-                        toolGroupExpansionOverrides[groupId] = !expanded
-                        bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
-                    }
-                })
-                if (expanded) {
-                    tools.forEach { tool ->
-                        addView(toolRow(tool), LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ).apply { marginStart = ui.dp(24) })
-                    }
-                }
-            }
+                textSize = 13.5f
+                includeFontPadding = false
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(if (item.status == "失败") tokens.danger else tokens.textSecondary)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
 
         private fun planRows(item: AgentConversationDisplayItem.Plan): View = LinearLayout(context).apply {
@@ -674,7 +652,60 @@ internal class ConversationAdapter(
         }
 
         override fun recycle() {
+            stopClock()
+            boundProcess = null
             entries.removeAllViews()
+        }
+
+        private fun stopClock() {
+            duration.removeCallbacks(clockTick)
+        }
+    }
+
+    inner class TurnStatusHolder : DisplayHolder(
+        LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = rowParams(top = 3, bottom = 10)
+        }
+    ) {
+        private val row = itemView as LinearLayout
+        private val progress = ProgressBar(context).apply {
+            isIndeterminate = true
+        }.also {
+            row.addView(it, LinearLayout.LayoutParams(ui.dp(16), ui.dp(16)).apply {
+                marginEnd = ui.dp(9)
+            })
+        }
+        private val copy = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+        }.also {
+            row.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        private val label = TextView(context).apply {
+            textSize = 13.5f
+            includeFontPadding = false
+        }.also(copy::addView)
+        private val detail = TextView(context).apply {
+            textSize = 12.5f
+            includeFontPadding = false
+            maxLines = 3
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, ui.dp(3), 0, 0)
+        }.also(copy::addView)
+
+        override fun bind(item: AgentConversationDisplayItem) {
+            item as AgentConversationDisplayItem.TurnStatus
+            val failed = item.state == com.kite.app.agent.store.AgentConversationTurnState.Failed
+            progress.visibility = if (
+                item.state == com.kite.app.agent.store.AgentConversationTurnState.Running
+            ) View.VISIBLE else View.INVISIBLE
+            label.text = item.label
+            label.setTextColor(if (failed) tokens.danger else tokens.textSecondary)
+            detail.text = item.detail.orEmpty()
+            detail.setTextColor(if (failed) tokens.danger else tokens.textTertiary)
+            detail.visibility = if (item.detail.isNullOrBlank()) View.GONE else View.VISIBLE
+            row.contentDescription = listOfNotNull(item.label, item.detail).joinToString("，")
         }
     }
 
@@ -1082,9 +1113,11 @@ internal class ConversationAdapter(
         const val TYPE_TABLE = 10
         const val TYPE_PROCESS = 11
         const val TYPE_ANSWER_COPY = 12
+        const val TYPE_TURN_STATUS = 13
         const val COPY_BUTTON_SIZE_DP = 36
         const val PLAN_ROWS = 6
         const val COLLAPSED_TOOL_LINES = 4
+        const val PROCESS_CLOCK_TICK_MILLIS = 1_000L
         const val BODY_TEXT_WEIGHT = 450
         const val CONVERSATION_LETTER_SPACING = 0.025f
         const val BODY_LETTER_SPACING = 0.03f

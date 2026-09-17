@@ -1,16 +1,19 @@
 package com.kite.app.shell
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.kite.app.CardRunTaskCloser
 import com.kite.app.action.KiteActionRouter
 import com.kite.app.action.KiteRecipeActionCoordinator
 import com.kite.app.agent.registration.KiteAgentRegistry
 import com.kite.app.agent.registration.KiteCustomAgentRegistrationStore
+import com.kite.app.agent.discovery.AcpAgentDiscoveryRepository
 import com.kite.app.agent.auth.AgentOfficialAccountManager
 import com.kite.app.agent.auth.AndroidAgentOfficialAccountVault
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.AdapterBackedAgentConfigurationApi
+import com.kite.app.agent.config.ModelsDevProviderPresetRepository
 import com.kite.app.agent.config.defaultAgentConfigAdapters
 import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
 import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
@@ -27,6 +30,7 @@ import com.kite.app.application.browser.BrowserOpenCoordinator
 import com.kite.app.application.packages.InstallApkCoordinator
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceActionWorkflowCoordinator
+import com.kite.app.application.resources.ResourcePlanCancellationPolicy
 import com.kite.app.application.resources.ResourceVersionCoordinator
 import com.kite.app.application.resources.ResourceVersionBatchSummary
 import com.kite.app.application.recipes.RecipeFeatureGateway
@@ -35,6 +39,7 @@ import com.kite.app.application.runs.RunExecutionEnvironmentProvider
 import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunHistoryGateway
 import com.kite.app.application.runs.RunInstanceCloseCoordinator
+import com.kite.app.application.runs.RunInstanceCloseSource
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartGate
 import com.kite.app.application.runs.RecipeActionWorkflowCoordinator
@@ -55,7 +60,10 @@ import com.kite.app.dropzone.KiteDropZoneManager
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteCardGroupStore
 import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourceAssetDefinitionSource
 import com.kite.app.resources.KiteResourceManifestLoader
+import com.kite.app.resources.KiteResourceRemoteStore
+import com.kite.app.resources.KiteResourceStoreRefreshResult
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.runtime.KFContainerManager
 import com.kite.app.foundation.runtime.StructuredJsonStringContext
@@ -69,6 +77,8 @@ import com.kite.app.platform.packages.AndroidInstallApkGateway
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.platform.resources.AndroidResourceRecipeFactory
 import com.kite.app.platform.resources.AndroidResourceRunGateway
+import com.kite.app.platform.resources.ResourceInstallRecoveryCoordinator
+import com.kite.app.platform.resources.ResourceInstallCandidateCoordinator
 import com.kite.app.platform.resources.AndroidResourceActionGateway
 import com.kite.app.platform.resources.AndroidResourceVersionGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
@@ -103,6 +113,8 @@ internal class KiteAppGraph private constructor(context: Context) {
     private val processScope = CoroutineScope(processJob + Dispatchers.IO)
     @Volatile
     private var agentCatalogPreloadJob: Job? = null
+    @Volatile
+    private var resourceDefinitionRefreshJob: Job? = null
 
     val diagnostics: KiteDiagnostics by lazy { KiteDiagnostics(appContext) }
     val bridgeClient: KiteBridgeClient by lazy { KiteBridgeClient(diagnostics, appContext) }
@@ -145,9 +157,38 @@ internal class KiteAppGraph private constructor(context: Context) {
         // 正式资源事实固定归属原生 PRoot。View 只服务显式事务，不能再切换资源状态域。
         KiteResourceInstallStore(appContext)
     }
-    val resourceManifestLoader: KiteResourceManifestLoader by lazy { KiteResourceManifestLoader(appContext) }
+    private val resourceDefinitionStore: KiteResourceRemoteStore by lazy {
+        KiteResourceRemoteStore.create(appContext)
+    }
+    val resourceManifestLoader: KiteResourceManifestLoader by lazy {
+        val isDebugBuild = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        val assetDefinitionSource = KiteResourceAssetDefinitionSource(appContext)
+        KiteResourceManifestLoader(
+            isDebugBuild = isDebugBuild,
+            definitionSources = if (isDebugBuild) {
+                // 调试包必须能验收本次构建携带的资源合同，不能被设备上较旧的远程缓存遮住。
+                listOf(assetDefinitionSource, resourceDefinitionStore)
+            } else {
+                listOf(resourceDefinitionStore, assetDefinitionSource)
+            },
+        )
+    }
+    val resourceInstallCandidateCoordinator: ResourceInstallCandidateCoordinator by lazy {
+        ResourceInstallCandidateCoordinator()
+    }
+    val resourceInstallRecoveryCoordinator: ResourceInstallRecoveryCoordinator by lazy {
+        ResourceInstallRecoveryCoordinator(
+            context = appContext,
+            installStore = resourceInstallStore,
+            manifestLoader = resourceManifestLoader,
+            candidateCoordinator = resourceInstallCandidateCoordinator,
+        )
+    }
     val customAgentRegistrationStore: KiteCustomAgentRegistrationStore by lazy {
         KiteCustomAgentRegistrationStore(appContext)
+    }
+    val acpAgentDiscoveryRepository: AcpAgentDiscoveryRepository by lazy {
+        AcpAgentDiscoveryRepository(appContext)
     }
     val agentConfigAdapterRegistry: AgentConfigAdapterRegistry by lazy {
         AgentConfigAdapterRegistry(
@@ -194,6 +235,53 @@ internal class KiteAppGraph private constructor(context: Context) {
                     }
             }.also { agentCatalogPreloadJob = it }
         }
+
+    /** 进程级 single-flight 后台刷新；资源页面只消费刷新后发布的本地快照。 */
+    fun refreshResourceDefinitions(): Job =
+        resourceDefinitionRefreshJob?.takeIf(Job::isActive) ?: synchronized(this) {
+            resourceDefinitionRefreshJob?.takeIf(Job::isActive) ?: processScope.launch {
+                when (val result = resourceDefinitionStore.refresh()) {
+                    is KiteResourceStoreRefreshResult.Published -> {
+                        resourceManifestLoader.invalidate()
+                        agentRegistry.invalidateResourceDefinitions()
+                        Log.i(
+                            TAG,
+                            "Resource definitions published: revision=${result.revision} endpoint=${result.endpointId}",
+                        )
+                        silentUpdateCheck()
+                    }
+                    is KiteResourceStoreRefreshResult.Unchanged -> Log.i(
+                        TAG,
+                        "Resource definitions unchanged: revision=${result.revision} endpoint=${result.endpointId}",
+                    )
+                    KiteResourceStoreRefreshResult.Disabled -> Log.i(TAG, "Remote resource definitions disabled")
+                    is KiteResourceStoreRefreshResult.Failed -> Unit
+                }
+            }.also { resourceDefinitionRefreshJob = it }
+        }
+
+    /**
+     * 启动时对已安装资源静默检查一次更新（零网络：official_command 读商店 latestVersion，
+     * 旧源走既有探测）。结果只写注册表（卡片亮可更新），不产生 UI 副作用。
+     */
+    private fun silentUpdateCheck() {
+        processScope.launch {
+            runCatching {
+                val environmentId = resourceInstallStore.currentEnvironmentId()
+                val installedIds = resourceInstallStore.registrySnapshot(environmentId = environmentId)
+                    .filterValues { it.installed }
+                    .keys
+                    .toList()
+                if (installedIds.isEmpty()) return@runCatching
+                resourceActionWorkflowCoordinator.checkUpdates(installedIds)
+                Log.i(TAG, "Silent update check completed for ${installedIds.size} resources")
+            }.onFailure { error ->
+                Log.w(TAG, "Silent update check failed", error)
+            }
+        }
+    }
+
+    fun resourceDefinitionStoreStatusFile(): java.io.File = resourceDefinitionStore.statusFile()
     val agentOfficialAccountManager: AgentOfficialAccountManager by lazy {
         AgentOfficialAccountManager(
             scope = processScope,
@@ -218,7 +306,8 @@ internal class KiteAppGraph private constructor(context: Context) {
             installStore = resourceInstallStore,
             nodeRuntimeInstalled = {
                 resourceInstallStore.isInstalled(ToolchainPackInstaller.RESOURCE_NODEJS)
-            }
+            },
+            activeResourceRunOwned = resourceRunCoordinator::owns,
         )
     }
     val recipeFeatureGateway: RecipeFeatureGateway by lazy {
@@ -263,9 +352,10 @@ internal class KiteAppGraph private constructor(context: Context) {
             appContext,
             bridgeClient,
             diagnostics,
-            // 普通卡片、终端与资源运行固定走原生 PRoot。View 环境只能由更新事务等
-            // 显式调用方逐次注入，不能因运行实例带有 environmentId 就全局回到 View。
-            RunExecutionEnvironmentProvider.None,
+            // 只有资源安装运行实例获得资源级候选绑定；普通卡片和 Agent 不受影响。
+            RunExecutionEnvironmentProvider { request ->
+                resourceInstallCandidateCoordinator.environmentForRun(request.instanceId)
+            },
             agentRuntime = com.kite.app.platform.runs.AndroidAgentRecipeRuntime(
                 context = appContext,
                 agentRegistry = agentRegistry,
@@ -355,7 +445,12 @@ internal class KiteAppGraph private constructor(context: Context) {
         )
     }
     private val resourceRecipeFactory: AndroidResourceRecipeFactory by lazy {
-        AndroidResourceRecipeFactory(resourceManifestLoader)
+        AndroidResourceRecipeFactory(
+            manifestLoader = resourceManifestLoader,
+            sourcePreferencesProvider = {
+                settingsGateway.currentSnapshot().resourceSourcePreferences
+            },
+        )
     }
     val resourceRunCoordinator: ResourceRunCoordinator by lazy {
         ResourceRunCoordinator(
@@ -364,6 +459,7 @@ internal class KiteAppGraph private constructor(context: Context) {
                 installStore = resourceInstallStore,
                 manifestLoader = resourceManifestLoader,
                 recipeFactory = resourceRecipeFactory,
+                candidateCoordinator = resourceInstallCandidateCoordinator,
                 diagnostics = diagnostics
             ),
             runOrchestrator = runOrchestrator,
@@ -393,7 +489,7 @@ internal class KiteAppGraph private constructor(context: Context) {
                     )
                 },
                 versionCoordinator = ResourceVersionCoordinator(
-                    AndroidResourceVersionGateway(
+                    gateway = AndroidResourceVersionGateway(
                         bridgeClient = bridgeClient,
                         metadataContextProvider = {
                             StructuredJsonStringContext(
@@ -411,13 +507,19 @@ internal class KiteAppGraph private constructor(context: Context) {
                                 "route=${event.route.name.lowercase()} reason=${event.reason}",
                             )
                         },
-                    )
+                    ),
+                    sourcePreferencesProvider = {
+                        settingsGateway.currentSnapshot().resourceSourcePreferences
+                    },
                 )
             )
         )
     }
     val agentConfigurationApi: AgentConfigurationApi by lazy {
-        AdapterBackedAgentConfigurationApi(agentConfigAdapterRegistry)
+        AdapterBackedAgentConfigurationApi(
+            adapters = agentConfigAdapterRegistry,
+            providerPresetRepository = ModelsDevProviderPresetRepository(appContext),
+        )
     }
     val agentSessionControlApi: AgentSessionControlApi by lazy {
         RuntimeBackedAgentSessionControlApi()
@@ -427,10 +529,15 @@ internal class KiteAppGraph private constructor(context: Context) {
             scope = processScope,
             state = CardRunStore::get,
             stopRun = { command -> runOrchestrator.stop(command) },
-            cancelInstallWizard = { state ->
+            cancelInstallWizard = { state, source ->
                 val targetResourceId = state.stepId.orEmpty()
                 val plan = resourceInstallStore.planSnapshot(state.environmentId)
-                if (state.status in INSTALL_WIZARD_ENDED_STATUSES) {
+                if (
+                    source == RunInstanceCloseSource.NavigateBack &&
+                    !ResourcePlanCancellationPolicy.canCancelBeforeFirstStart(plan, targetResourceId)
+                ) {
+                    false
+                } else if (state.status in INSTALL_WIZARD_ENDED_STATUSES) {
                     CardRunStore.removeRun(state.instanceId, state.createdAt) != null
                 } else if (
                     targetResourceId.isNotBlank() &&

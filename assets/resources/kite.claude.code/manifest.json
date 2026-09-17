@@ -14,7 +14,10 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["claude", "claude-agent-acp"],
+    "managedCommands": [
+      "claude",
+      "claude-agent-acp"
+    ],
     "versionProbe": {
       "command": "claude --version",
       "pattern": "([0-9]+(?:\\.[0-9]+)+)"
@@ -24,7 +27,9 @@
     "sections": [
       "ai-vendor"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 70,
     "category": "AI",
     "accent": "orange",
@@ -73,10 +78,11 @@
     "extensions": []
   },
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "@anthropic-ai/claude-code",
-    "companionPackages": ["@agentclientprotocol/claude-agent-acp"],
-    "installArguments": ["--allow-scripts=@anthropic-ai/claude-code"]
+    "command": "npm install -g @anthropic-ai/claude-code@latest && npm install -g @agentclientprotocol/claude-agent-acp@latest",
+    "uninstallCommand": "npm uninstall -g @anthropic-ai/claude-code && npm uninstall -g @agentclientprotocol/claude-agent-acp",
+    "latestVersion": "2.1.274"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.claude.code",
@@ -96,19 +102,39 @@
         {
           "id": "anthropic",
           "name": "Anthropic 官方",
-          "modelGroupIds": ["claude-code", "anthropic", "claude"],
+          "modelGroupIds": [
+            "claude-code",
+            "anthropic",
+            "claude"
+          ],
           "status": {
-            "argv": ["claude", "auth", "status"],
-            "loggedInPatterns": ["\"loggedIn\":true"],
-            "loggedOutPatterns": ["\"loggedIn\":false"],
+            "argv": [
+              "claude",
+              "auth",
+              "status"
+            ],
+            "loggedInPatterns": [
+              "\"loggedIn\":true"
+            ],
+            "loggedOutPatterns": [
+              "\"loggedIn\":false"
+            ],
             "timeoutMs": 15000
           },
           "login": {
-            "argv": ["claude", "auth", "login"],
+            "argv": [
+              "claude",
+              "auth",
+              "login"
+            ],
             "timeoutMs": 300000
           },
           "logout": {
-            "argv": ["claude", "auth", "logout"],
+            "argv": [
+              "claude",
+              "auth",
+              "logout"
+            ],
             "timeoutMs": 30000
           }
         }
@@ -118,7 +144,10 @@
         "providerId": "claude-code",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["/usr/bin/env", "claude-agent-acp"],
+        "argv": [
+          "/usr/bin/env",
+          "claude-agent-acp"
+        ],
         "title": "Claude Code"
       }
     }

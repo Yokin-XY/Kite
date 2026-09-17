@@ -140,6 +140,7 @@ data class KiteRecipe(
         const val ANDROID_ACTION_PREPARE_AI_ENV = "prepare_ai_env"
         const val ANDROID_ACTION_TOOLCHAIN_DOCTOR = "toolchain_doctor"
         const val ANDROID_ACTION_INSTALL_APK = "install_apk"
+        const val ANDROID_ACTION_AWAIT_PACKAGE = "await_android_package"
 
         const val RUN_MODE_ATTACHED = "attached"
         const val RUN_MODE_WAIT = "wait"

@@ -190,7 +190,7 @@ internal class ResourceCatalogScreen(
                 emptyList()
             ))
         }
-        if (tabs.none { it.id == selectedTabId }) selectedTabId = RESOURCE_HOME_TAB_ALL
+        if (tabs.none { it.id == selectedTabId }) selectedTabId = tabs.first().id
         val displayLabels = tabs.associate { tab ->
             tab.id to if (tab.id == RESOURCE_HOME_TAB_ALL) {
                 root.context.getString(R.string.resource_catalog_tab_all)
@@ -267,25 +267,31 @@ internal class ResourceCatalogScreen(
     }
 
     private fun sectionView(section: ResourceSectionPresentation, generation: Long): View =
-        if (section.style.equals("shelf", ignoreCase = true)) {
-            shelfSection(section, generation)
-        } else {
-            listSection(section, generation)
+        when {
+            section.style.equals("shelf", ignoreCase = true) -> shelfSection(section, generation)
+            section.style.equals("plain-list", ignoreCase = true) -> listSection(section, generation, showTitle = false)
+            else -> listSection(section, generation, showTitle = true)
         }
 
-    private fun listSection(section: ResourceSectionPresentation, generation: Long): View {
+    private fun listSection(
+        section: ResourceSectionPresentation,
+        generation: Long,
+        showTitle: Boolean
+    ): View {
         val sectionRoot = LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, factory.dp(24), 0, 0)
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(factory.sectionTitle(section.title), LinearLayout.LayoutParams(
-                    0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    1f
-                ))
-            })
+            setPadding(0, factory.dp(if (showTitle) 24 else 4), 0, 0)
+            if (showTitle) {
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(factory.sectionTitle(section.title), LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1f
+                    ))
+                })
+            }
         }
         val rows = LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
@@ -295,7 +301,7 @@ internal class ResourceCatalogScreen(
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, factory.dp(12), 0, 0) }
+            ).apply { setMargins(0, factory.dp(if (showTitle) 12 else 0), 0, 0) }
         }
         sectionRoot.addView(rows)
         rows.post { renderRowBatch(section.items, rows, generation, 0) }

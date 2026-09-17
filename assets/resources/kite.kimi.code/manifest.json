@@ -4,7 +4,7 @@
   "base": {
     "name": "Kimi Code",
     "description": "Moonshot AI 的终端编码助手",
-    "version": "official",
+    "version": "npm",
     "icon": {
       "type": "asset",
       "value": "resources/kite.kimi.code/icon.png",
@@ -14,27 +14,33 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["kimi"],
+    "managedCommands": [
+      "kimi"
+    ],
     "versionProbe": {
       "command": "kimi --version",
       "pattern": "v?([0-9]+(?:\\.[0-9]+)+)"
     },
-    "preservePaths": ["user-home"]
+    "preservePaths": [
+      "user-home"
+    ]
   },
   "display": {
     "sections": [
       "ai-vendor"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 80,
     "category": "AI",
     "accent": "blue",
     "sizeLabel": "网络包",
-    "longDescription": "Kimi Code 是 Moonshot AI 的开源 AI 编码 Agent，可以读写代码、运行命令、搜索文件和获取网页。Kite 使用官方 install script 获取 kimi 命令，并通过原生 ACP stdio 能力建立 Agent 会话；登录凭据和 Provider 配置仍由 Kimi Code 自己保存，不写入资源卡 JSON。",
+    "longDescription": "Kimi Code 是 Moonshot AI 的开源 AI 编码 Agent，可以读写代码、运行命令、搜索文件和获取网页。Kite 使用官方 npm 包获取 kimi 命令，并通过原生 ACP stdio 能力建立 Agent 会话；登录凭据和 Provider 配置仍由 Kimi Code 自己保存，不写入资源卡 JSON。",
     "recommendations": [
       {
-        "resourceId": "kite.curl",
-        "label": "下载工具"
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
       },
       {
         "resourceId": "kite.git",
@@ -64,8 +70,8 @@
       "agent.moonshot.kimi-code"
     ],
     "base": [
-      "kite.git",
-      "kite.curl"
+      "kite.nodejs",
+      "kite.git"
     ],
     "defaults": [],
     "extensions": []
@@ -83,9 +89,15 @@
         {
           "id": "moonshot",
           "name": "Kimi 官方",
-          "modelGroupIds": ["kimi-code", "moonshot"],
+          "modelGroupIds": [
+            "kimi-code",
+            "moonshot"
+          ],
           "login": {
-            "argv": ["kimi", "login"],
+            "argv": [
+              "kimi",
+              "login"
+            ],
             "timeoutMs": 300000
           }
         }
@@ -95,23 +107,20 @@
         "providerId": "kimi",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["kimi", "acp"],
+        "argv": [
+          "kimi",
+          "acp"
+        ],
         "title": "Kimi Code"
       }
     }
   ],
   "source": {
-    "type": "official_script",
-    "url": "https://code.kimi.com/kimi-code/install.sh",
-    "repository": "https://github.com/MoonshotAI/kimi-code",
-    "latestUrl": "https://code.kimi.com/kimi-code/latest",
-    "latestFormat": "text",
-    "maxBytes": 16777216,
-    "versionArguments": ["--version", "{version}"],
-    "environment": {
-      "KIMI_INSTALL_DIR": "$install_root",
-      "KIMI_NO_MODIFY_PATH": "1"
-    }
+    "type": "official_command",
+    "package": "@moonshot-ai/kimi-code",
+    "command": "npm install -g @moonshot-ai/kimi-code@latest",
+    "uninstallCommand": "npm uninstall -g @moonshot-ai/kimi-code",
+    "latestVersion": "2.0.0"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.kimi.code",

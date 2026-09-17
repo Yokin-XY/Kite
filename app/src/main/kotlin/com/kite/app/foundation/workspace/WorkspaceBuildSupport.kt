@@ -2,10 +2,13 @@ package com.kite.app.foundation.workspace
 
 import android.content.Context
 import android.system.Os
+import com.kite.app.foundation.devicebridge.DeviceBridgeCatalog
+import com.kite.app.foundation.devicebridge.DeviceBridgeContract
 import com.kite.app.foundation.runtime.RuntimeControlledLeaseProbeRegistration
 import com.kite.app.foundation.runtime.RuntimeControlledLeaseProbeRegistrationReceiver
 import java.io.File
 import java.nio.file.Files
+import java.security.MessageDigest
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -48,6 +51,9 @@ object WorkspaceBuildSupport {
     private const val SYSTEM_PROCESS_APPLET_ASSET_PATH = "system/kf-procps-arm64"
     private const val KITE_RUNNER_ASSET_PATH = "system/kf-runner-arm64"
     private const val KITE_RUNNER_APPLET_NAME = "kf-runner"
+    private const val KITE_DEVICE_ASSET_PATH = "system/kite-device-arm64"
+    private const val KITE_DEVICE_APPLET_NAME = "kite-device"
+    private const val DEVICE_BRIDGE_CAPABILITY_CATALOG_FILE_NAME = "device-bridge-capabilities-v1.json"
     private const val PROOT_SHIM_NAME = "proot"
     private const val SYSTEMCTL_SHIM_NAME = "systemctl"
     private const val SERVICE_SHIM_NAME = "service"
@@ -84,6 +90,7 @@ object WorkspaceBuildSupport {
     private const val GENERATED_TOOL_WRAPPER_MARKER = "# KFShell generated tool wrapper"
     private val systemComponentsInstallLock = Any()
     private val installedSystemComponentKeys = mutableSetOf<String>()
+    private val assetIdentityCache = mutableMapOf<String, String>()
     const val GRADLE_USER_HOME_DIR_NAME = ".gradle-user"
     const val ANDROID_USER_HOME_DIR_NAME = ".android-user"
     const val ANDROID_DATA_DIR_NAME = ".android-data"
@@ -91,6 +98,9 @@ object WorkspaceBuildSupport {
     const val CONTAINER_HELPER_SYSTEM_BIN_PATH = "/workspace/.kf/system/bin"
     const val CONTAINER_HELPER_SYSTEM_WRAPPERS_PATH = "/workspace/.kf/system/wrappers"
     const val CONTAINER_KITE_RUNNER_PATH = "/workspace/.kf/system/bin/kf-runner"
+    const val CONTAINER_KITE_DEVICE_PATH = "/workspace/.kf/system/bin/kite-device"
+    const val CONTAINER_DEVICE_BRIDGE_CAPABILITY_CATALOG_PATH =
+        "/workspace/.kf/system/device-bridge-capabilities-v1.json"
     const val CONTAINER_SUPERVISORD_HEALTH_SNAPSHOT_PATH =
         "/workspace/.kf/system/bin/kf-supervisord-health-snapshot"
     const val CONTAINER_HELPER_SYSTEM_PROC_PATH = "/workspace/.kf/system/state/proc"
@@ -227,6 +237,10 @@ object WorkspaceBuildSupport {
             """.trimIndent() + "\n"
         )
         writeWorkspaceRootReadme(workspaceDir)
+        writeTextIfChanged(
+            File(helperSystemDir, DEVICE_BRIDGE_CAPABILITY_CATALOG_FILE_NAME),
+            DeviceBridgeCatalog.toJson()
+        )
 
         val helperScript = File(helperSystemBinDir, HELPER_SCRIPT_NAME)
         writeTextIfChanged(helperScript, buildWorkspaceGradleHelperScript())
@@ -388,7 +402,7 @@ object WorkspaceBuildSupport {
                 installMarker.exists() &&
                 runCatching { installMarker.readText() }.getOrNull() == installVersion &&
                 processAppletCommandNames().all { commandName -> File(systemBinDir, commandName).canExecute() } &&
-                optionalRunnerReady(context, systemBinDir)
+                optionalNativeToolsReady(context, systemBinDir)
             ) {
                 installedSystemComponentKeys.add(installKey)
                 return
@@ -425,6 +439,16 @@ object WorkspaceBuildSupport {
             if (!runnerInstalled && runnerDestination.exists()) {
                 runnerDestination.setWritable(true, false)
                 runnerDestination.delete()
+            }
+            val deviceCliDestination = File(systemBinDir, KITE_DEVICE_APPLET_NAME)
+            val deviceCliInstalled = copyAssetExecutableIfAvailable(
+                context = context,
+                assetPath = KITE_DEVICE_ASSET_PATH,
+                destination = deviceCliDestination
+            )
+            if (!deviceCliInstalled && deviceCliDestination.exists()) {
+                deviceCliDestination.setWritable(true, false)
+                deviceCliDestination.delete()
             }
             // T014h：迁移清理门禁由 sealedChecker 真实封存状态决定。
             migrateLegacyEnvBinIfNeeded(workspaceDir, sealedChecker())
@@ -494,8 +518,13 @@ object WorkspaceBuildSupport {
         val versionCode = runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
         }.getOrDefault(-1L)
-        val runnerState = if (assetExists(context, KITE_RUNNER_ASSET_PATH)) "present" else "absent"
-        return "versionCode=$versionCode\nasset=$SYSTEM_PROCESS_APPLET_ASSET_PATH\nrunner=$KITE_RUNNER_ASSET_PATH:$runnerState\nlayout=v11_kf_runner_protocol_v1\n"
+        val runnerState = assetIdentity(context, KITE_RUNNER_ASSET_PATH)
+        val deviceCliState = assetIdentity(context, KITE_DEVICE_ASSET_PATH)
+        return "versionCode=$versionCode\nasset=$SYSTEM_PROCESS_APPLET_ASSET_PATH\n" +
+            "runner=$KITE_RUNNER_ASSET_PATH:$runnerState\n" +
+            "deviceCli=$KITE_DEVICE_ASSET_PATH:$deviceCliState\n" +
+            "deviceBridgeProtocol=${DeviceBridgeContract.PROTOCOL_VERSION}\n" +
+            "layout=v13_native_asset_identity\n"
     }
 
     private fun processAppletCommandNames(): List<String> {
@@ -520,9 +549,12 @@ object WorkspaceBuildSupport {
         }
     }
 
-    private fun optionalRunnerReady(context: Context, systemBinDir: File): Boolean {
-        return !assetExists(context, KITE_RUNNER_ASSET_PATH) ||
+    private fun optionalNativeToolsReady(context: Context, systemBinDir: File): Boolean {
+        val runnerReady = !assetExists(context, KITE_RUNNER_ASSET_PATH) ||
             File(systemBinDir, KITE_RUNNER_APPLET_NAME).canExecute()
+        val deviceCliReady = !assetExists(context, KITE_DEVICE_ASSET_PATH) ||
+            File(systemBinDir, KITE_DEVICE_APPLET_NAME).canExecute()
+        return runnerReady && deviceCliReady
     }
 
     private fun assetExists(context: Context, assetPath: String): Boolean {
@@ -572,6 +604,29 @@ object WorkspaceBuildSupport {
             if (ownedLegacyShim) {
                 file.delete()
             }
+        }
+    }
+
+    @Synchronized
+    private fun assetIdentity(context: Context, assetPath: String): String {
+        return assetIdentityCache.getOrPut(assetPath) {
+            runCatching {
+                val digest = MessageDigest.getInstance("SHA-256")
+                var byteCount = 0L
+                context.assets.open(assetPath).use { input ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        digest.update(buffer, 0, read)
+                        byteCount += read
+                    }
+                }
+                val sha256 = digest.digest().joinToString("") { byte ->
+                    "%02x".format(byte.toInt() and 0xff)
+                }
+                "present:$byteCount:$sha256"
+            }.getOrDefault("absent")
         }
     }
 
@@ -706,7 +761,13 @@ object WorkspaceBuildSupport {
             "KF_ADB_SHIZUKU_PERMISSION" to "unknown",
             "KF_ADB_SHIZUKU_UID" to "",
             "KF_ADB_SHIZUKU_VERSION" to "",
-            "KF_ADB_SHIZUKU_ERROR" to ""
+            "KF_ADB_SHIZUKU_ERROR" to "",
+            "KF_DEVICE_BRIDGE_PROTOCOL_VERSION" to DeviceBridgeContract.PROTOCOL_VERSION.toString(),
+            "KF_DEVICE_SELECTED_BACKEND" to "shizuku",
+            "KF_DEVICE_IMPLEMENTED_CAPABILITIES" to
+                DeviceBridgeCatalog.implementedCapabilityIds.joinToString(","),
+            "KF_DEVICE_CLI" to CONTAINER_KITE_DEVICE_PATH,
+            "KF_DEVICE_CAPABILITY_CATALOG_PATH" to CONTAINER_DEVICE_BRIDGE_CAPABILITY_CATALOG_PATH
         )
     }
 
@@ -1319,6 +1380,12 @@ object WorkspaceBuildSupport {
             |  cancel_file="${'$'}response_dir/${'$'}request_id.cancel"
             |  stdout_pos=0
             |  stderr_pos=0
+            |  timeout_sec="${'$'}{KF_ADB_BRIDGE_REQUEST_TIMEOUT_SEC:-0}"
+            |  case "${'$'}timeout_sec" in ''|*[!0-9]*) timeout_sec=0 ;; esac
+            |  deadline=0
+            |  if [ "${'$'}timeout_sec" -gt 0 ]; then
+            |    deadline=$(( $(date +%s) + timeout_sec ))
+            |  fi
             |
             |  flush_streams() {
             |    if [ -f "${'$'}stdout_stream" ]; then
@@ -1326,7 +1393,7 @@ object WorkspaceBuildSupport {
             |      case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
             |      if [ "${'$'}size" -gt "${'$'}stdout_pos" ]; then
             |        if [ -z "${'$'}output_file" ]; then
-            |          tail -c +$((stdout_pos + 1)) "${'$'}stdout_stream"
+            |          tail -c +$((stdout_pos + 1)) "${'$'}stdout_stream" | head -c $((size - stdout_pos))
             |        fi
             |        stdout_pos="${'$'}size"
             |      fi
@@ -1335,7 +1402,7 @@ object WorkspaceBuildSupport {
             |      size="$(wc -c < "${'$'}stderr_stream" 2>/dev/null | tr -d ' ')"
             |      case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
             |      if [ "${'$'}size" -gt "${'$'}stderr_pos" ]; then
-            |        tail -c +$((stderr_pos + 1)) "${'$'}stderr_stream" >&2
+            |        tail -c +$((stderr_pos + 1)) "${'$'}stderr_stream" | head -c $((size - stderr_pos)) >&2
             |        stderr_pos="${'$'}size"
             |      fi
             |    fi
@@ -1346,6 +1413,14 @@ object WorkspaceBuildSupport {
             |    rm -f "${'$'}request_file" "${'$'}request_file.tmp"
             |    flush_streams
             |    exit 130
+            |  }
+            |
+            |  timeout_bridge_request() {
+            |    touch "${'$'}cancel_file" 2>/dev/null || true
+            |    rm -f "${'$'}request_file" "${'$'}request_file.tmp"
+            |    flush_streams
+            |    echo "error: kf-host-self request timed out after ${'$'}timeout_sec seconds" >&2
+            |    return ${DeviceBridgeContract.EXIT_TIMEOUT}
             |  }
             |  trap cancel_bridge_request INT TERM
             |
@@ -1360,6 +1435,10 @@ object WorkspaceBuildSupport {
             |
             |  while :; do
             |    flush_streams
+            |    if [ "${'$'}deadline" -gt 0 ] && [ "$(date +%s)" -ge "${'$'}deadline" ]; then
+            |      timeout_bridge_request
+            |      return ${'$'}?
+            |    fi
             |    if [ -f "${'$'}response_file" ]; then
             |      stdout_file="${'$'}response_file.stdout"
             |      stderr_file="${'$'}response_file.stderr"
@@ -1372,12 +1451,12 @@ object WorkspaceBuildSupport {
             |      elif [ -s "${'$'}stdout_file" ]; then
             |        size="$(wc -c < "${'$'}stdout_file" 2>/dev/null | tr -d ' ')"
             |        case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
-            |        [ "${'$'}size" -gt "${'$'}stdout_pos" ] && tail -c +$((stdout_pos + 1)) "${'$'}stdout_file"
+            |        [ "${'$'}size" -gt "${'$'}stdout_pos" ] && tail -c +$((stdout_pos + 1)) "${'$'}stdout_file" | head -c $((size - stdout_pos))
             |      fi
             |      if [ -s "${'$'}stderr_file" ]; then
             |        size="$(wc -c < "${'$'}stderr_file" 2>/dev/null | tr -d ' ')"
             |        case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
-            |        [ "${'$'}size" -gt "${'$'}stderr_pos" ] && tail -c +$((stderr_pos + 1)) "${'$'}stderr_file" >&2
+            |        [ "${'$'}size" -gt "${'$'}stderr_pos" ] && tail -c +$((stderr_pos + 1)) "${'$'}stderr_file" | head -c $((size - stderr_pos)) >&2
             |      fi
             |      rm -f "${'$'}stdout_file" "${'$'}stderr_file" "${'$'}stdout_stream" "${'$'}stderr_stream" "${'$'}cancel_file"
             |      case "${'$'}exit_code" in
@@ -1918,7 +1997,7 @@ object WorkspaceBuildSupport {
     private fun buildHostContractJson(): String {
         return """
             |{
-            |  "surfaceVersion": "v0",
+            |  "surfaceVersion": "v1",
             |  "networkMode": "shared_host_stack",
             |  "loopback": "shared_with_android",
             |  "portPolicy": "prefer_127_0_0_1_and_ports_ge_1024",
@@ -1940,7 +2019,8 @@ object WorkspaceBuildSupport {
             |    "Android-specific control stays in the APK layer and is bridged narrowly.",
             |    "PRoot argv, rootfs, bind mounts, loader and network mode are owned by the Android control plane.",
             |    "AI should prefer stable shell-visible contracts instead of private button flows.",
-            |    "Host-self ADB is a request/receiver bridge: container requests, Android APK receives; scanning itself from proot is not required."
+            |    "Host-self ADB is a request/receiver bridge: container requests, Android APK receives; scanning itself from proot is not required.",
+            |    "Agents should discover Android device abilities through kite-device capabilities --json and prefer structured commands over raw adb shell."
             |  ],
             |  "policies": {
             |    "serviceBindDefault": "127.0.0.1",
@@ -1960,6 +2040,15 @@ object WorkspaceBuildSupport {
             |      "status": "recommended_default",
             |      "guidance": "Shared with Android host under proot host network mode."
             |    }
+            |  },
+            |  "deviceBridge": {
+            |    "protocolVersion": ${DeviceBridgeContract.PROTOCOL_VERSION},
+            |    "cli": "${CONTAINER_KITE_DEVICE_PATH}",
+            |    "statusCommand": "kite-device status --json",
+            |    "capabilityCommand": "kite-device capabilities --json",
+            |    "catalogPath": "${CONTAINER_DEVICE_BRIDGE_CAPABILITY_CATALOG_PATH}",
+            |    "compatibilityTarget": "adb -s kf-host-self",
+            |    "backendAuthority": "android_apk"
             |  },
             |  "endpoints": [
             |    {
@@ -1991,6 +2080,8 @@ object WorkspaceBuildSupport {
             |    "policy": "kf-host policy",
             |    "checkBind": "kf-host check-bind <address> <port>",
             |    "installApk": "kf-host install-apk <apk-path>",
+            |    "deviceStatus": "kite-device status --json",
+            |    "deviceCapabilities": "kite-device capabilities --json",
             |    "envDoctor": "kf-env doctor",
             |    "envLimits": "kf-env limits",
             |    "envRuntime": "kf-env runtime",
@@ -2674,7 +2765,7 @@ object WorkspaceBuildSupport {
             |
             |print_shims() {
             |  echo "KFSHELL_ENV_SHIMS_BEGIN"
-            |  for cmd in ps pgrep pkill kill pidof pstree free top kf-resource-sampler systemctl service supervisorctl ss proot adb fd claude opencode pnpm pnpx node npm npx uv uvx fastboot kf-host kf-runtime kf-adb-check kf-adb-bridge kf-android-sh kf-gradle; do
+            |  for cmd in ps pgrep pkill kill pidof pstree free top kf-resource-sampler systemctl service supervisorctl ss proot adb fd claude opencode pnpm pnpx node npm npx uv uvx fastboot kf-host kf-runtime kf-adb-check kf-adb-bridge kite-device kf-android-sh kf-gradle; do
             |    path="$(command -v "${'$'}cmd" 2>/dev/null || true)"
             |    if [ -n "${'$'}path" ]; then
             |      echo "${'$'}cmd=${'$'}path"
@@ -2696,6 +2787,12 @@ object WorkspaceBuildSupport {
             |    grep -E '^(Uid|Gid|Groups|Cap|NoNewPrivs|Seccomp):' /proc/self/status 2>/dev/null | sed 's/^/proc_self: /'
             |  else
             |    echo "proc_self_status=unreadable"
+            |  fi
+            |  if command -v kite-device >/dev/null 2>&1; then
+            |    echo "device_bridge_cli=$(command -v kite-device)"
+            |    kite-device status --json 2>&1 | sed 's/^/device_bridge: /'
+            |  else
+            |    echo "device_bridge_cli=missing"
             |  fi
             |  echo "hint: uid=0 in proot does not imply Android root or Linux capabilities."
             |  echo "KFSHELL_ENV_CAPABILITIES_END"
@@ -3581,6 +3678,7 @@ object WorkspaceBuildSupport {
             ADB_WRAPPER_NAME,
             ADB_CHECK_SCRIPT_NAME,
             ADB_BRIDGE_SCRIPT_NAME,
+            KITE_DEVICE_APPLET_NAME,
             ANDROID_SHELL_BRIDGE_SCRIPT_NAME,
             HOST_SURFACE_SCRIPT_NAME,
             ENV_SURFACE_SCRIPT_NAME,

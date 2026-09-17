@@ -7,6 +7,7 @@ import com.kite.app.application.resources.ResourceFeatureChange
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.resources.ResourceFeatureRunSnapshot
 import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceRegistryEntry
@@ -145,6 +146,39 @@ class ResourceFeatureControllerTest {
         assertEquals(KiteResourceActionIntent.Install, item.primaryIntent)
         assertEquals(KiteResourceActionIntent.CancelFailedInstall, item.secondaryIntent)
         assertEquals("network_failed", item.registrySummary)
+    }
+
+    @Test
+    fun `维护运行中主按钮保持可用并打开同一运行进度`() = runTest {
+        val run = ResourceFeatureRunSnapshot(
+            instanceId = "repair-instance",
+            operation = KiteResourceInstallRecipes.OP_REPAIR,
+            status = CardRunStatus.Running,
+            surface = CardRunSurface.Report,
+            startedAt = 10L,
+            updatedAt = 20L,
+        )
+        val gateway = FakeGateway().apply {
+            registry["tool"] = entry(
+                status = KiteResourceRegistry.STATUS_INSTALLING,
+                operation = KiteResourceInstallRecipes.OP_REPAIR,
+                updateStatus = KiteResourceInstallStore.UPDATE_STATUS_FAILED,
+            )
+            operationRuns["tool" to KiteResourceInstallRecipes.OP_REPAIR] = run
+        }
+        val controller = ResourceFeatureController(gateway)
+
+        controller.dispatch(ResourceFeatureAction.Refresh())
+
+        val item = controller.state.value.item("tool")!!
+        assertEquals("修复中", item.projection.stateLabel)
+        assertTrue(item.projection.actionEnabled)
+        assertEquals(KiteResourceActionIntent.ReopenOperation, item.primaryIntent)
+        assertEquals(run, item.operationRun)
+        val effect = controller.dispatch(
+            ResourceFeatureAction.Primary("tool", KiteResourceActionSource.Detail)
+        ) as ResourceFeatureEffect.ActionRequested
+        assertEquals(KiteResourceActionIntent.ReopenOperation, effect.request.intent)
     }
 
     @Test
@@ -288,7 +322,7 @@ class ResourceFeatureControllerTest {
         val item = controller.state.value.item("tool")!!
         assertTrue(item.maintenance.checkUpdateEnabled)
         assertTrue(item.maintenance.updateEnabled)
-        assertEquals(KiteResourceActionIntent.Open, item.primaryIntent)
+        assertEquals(KiteResourceActionIntent.Update, item.primaryIntent)
         val effect = controller.dispatch(
             ResourceFeatureAction.Explicit(
                 "tool",
@@ -335,11 +369,13 @@ class ResourceFeatureControllerTest {
     private fun entry(
         status: String,
         operation: String = "",
-        summary: String = ""
+        summary: String = "",
+        updateStatus: String = "",
     ): KiteResourceRegistryEntry = KiteResourceRegistryEntry(
         resourceId = "tool",
         status = status,
         operation = operation,
+        updateStatus = updateStatus,
         summary = summary,
         updatedAt = 123L
     )

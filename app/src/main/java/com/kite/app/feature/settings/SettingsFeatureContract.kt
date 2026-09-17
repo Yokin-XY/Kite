@@ -3,6 +3,7 @@ package com.kite.app.feature.settings
 import com.kite.app.application.settings.SettingsSnapshot
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.resources.KiteResourceSourcePreferences
 import com.kite.app.theme.ThemeCommand
 import com.kite.app.theme.ThemeSelection
 
@@ -10,6 +11,7 @@ internal data class SettingsUiState(
     val theme: ThemeSelection,
     val appLanguage: AppLanguagePreference,
     val browserRuntimeMode: BrowserRuntimeMode,
+    val resourceSourcePreferences: KiteResourceSourcePreferences,
     val restoreLastScreen: Boolean,
     val hideMainTaskFromRecents: Boolean,
     val notificationsEnabled: Boolean,
@@ -22,6 +24,7 @@ internal sealed interface SettingsFeatureAction {
     data class UpdateTheme(val command: ThemeCommand) : SettingsFeatureAction
     data class SelectAppLanguage(val language: AppLanguagePreference) : SettingsFeatureAction
     data class SelectBrowserMode(val mode: BrowserRuntimeMode) : SettingsFeatureAction
+    data class SetResourceSourceOrder(val sourceIds: List<String>) : SettingsFeatureAction
     data class SetRestoreLastScreen(val enabled: Boolean) : SettingsFeatureAction
     data class SetHideMainTaskFromRecents(val enabled: Boolean) : SettingsFeatureAction
     data object OpenNotificationSettings : SettingsFeatureAction
@@ -42,6 +45,7 @@ internal object SettingsProjector {
         theme = snapshot.themeSelection,
         appLanguage = snapshot.appLanguage,
         browserRuntimeMode = snapshot.browserRuntimeMode,
+        resourceSourcePreferences = snapshot.resourceSourcePreferences,
         restoreLastScreen = snapshot.restoreLastScreen,
         hideMainTaskFromRecents = snapshot.hideMainTaskFromRecents,
         notificationsEnabled = snapshot.notificationsEnabled,

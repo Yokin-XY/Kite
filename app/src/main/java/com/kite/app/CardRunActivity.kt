@@ -61,7 +61,6 @@ import com.kite.app.feature.runsurface.RunSurfaceHost
 import com.kite.app.feature.runsurface.RunSurfaceUiState
 import com.kite.app.feature.runsurface.RunTerminalSurfaceBinding
 import com.kite.app.feature.runsurface.RunWebSurfaceBinding
-import com.kite.app.feature.runsurface.RunX11SurfaceBinding
 import com.kite.app.feature.runsurface.StaticRunSurfaceBinding
 import com.kite.app.foundation.bootstrap.StartupTraceStore
 import com.kite.app.platform.browser.AndroidBrowserAutomationRunUpdater
@@ -114,12 +113,23 @@ class CardRunActivity : AppCompatActivity() {
     private var registeredCloserGeneration: Long? = null
     private var pendingCloseInstanceId: String? = null
     private var pendingCloseGeneration: Long? = null
+    private var resolvingInstallWizardBack = false
     private var tickScheduled = false
     private var agentSurfaceBinding: RunAgentSurfaceBinding? = null
     private val agentAttachmentPicker = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         agentSurfaceBinding?.addAttachments(uris)
+    }
+    private val agentSkillArchivePicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { agentSurfaceBinding?.importSkillArchive(it) }
+    }
+    private val agentMcpConfigPicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { agentSurfaceBinding?.importMcpConfig(it) }
     }
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
@@ -183,6 +193,15 @@ class CardRunActivity : AppCompatActivity() {
                 renderState(state)
                 surfaceHost?.reconcile()
             }
+        // P0 保险（第二层）：目标存在但背后任务已消失且无待获取计划 → 僵尸目标，退出。
+        currentTarget?.let { target ->
+            val runAlive = CardRunStore.get(target.instanceId) != null
+            val hasPlan = graph.resourceInstallStore.planResourceIds().isNotEmpty() ||
+                graph.resourceInstallStore.pendingPlanResourceIds().isNotEmpty()
+            if (!runAlive && !hasPlan) {
+                closeCurrentInstance()
+            }
+        }
         StartupTraceStore.markReady(applicationContext)
     }
 
@@ -402,7 +421,7 @@ class CardRunActivity : AppCompatActivity() {
             onOpenExternal = ::openExternalBrowser,
             onManualUrl = ::openManualWebUrl
         )
-        is RunSurfaceContent.X11 -> RunX11SurfaceBinding(this, tokens)
+        is RunSurfaceContent.X11 -> StaticRunSurfaceBinding(placeholder("图形界面", "X11 支持已移除"))
         is RunSurfaceContent.Agent -> RunAgentSurfaceBinding(
             context = this,
             tokens = tokens,
@@ -415,11 +434,18 @@ class CardRunActivity : AppCompatActivity() {
                     arrayOf("text/*", "application/pdf", "application/octet-stream")
                 )
             },
+            onPickSkillArchive = {
+                agentSkillArchivePicker.launch(arrayOf("application/zip", "application/octet-stream"))
+            },
+            onPickMcpConfig = {
+                agentMcpConfigPicker.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+            },
             agentRegistry = graph.agentRegistry,
             officialAccountManager = graph.agentOfficialAccountManager,
             agentConfigurationApi = graph.agentConfigurationApi,
             agentProviderCatalogApi = graph.agentProviderCatalogApi,
             agentSessionControlApi = graph.agentSessionControlApi,
+            acpAgentDiscoveryRepository = graph.acpAgentDiscoveryRepository,
         ).also { agentSurfaceBinding = it }
         RunSurfaceContent.InstallWizard -> createInstallWizardBinding()
         else -> StaticRunSurfaceBinding(placeholder(state.title, state.statusLabel))
@@ -431,6 +457,13 @@ class CardRunActivity : AppCompatActivity() {
         val planIds = target?.installPlanResourceIds.orEmpty()
             .ifEmpty { graph.resourceInstallStore.planResourceIds() }
             .ifEmpty { graph.resourceInstallStore.pendingPlanResourceIds() }
+        // P0 保险：目标与计划都为空说明向导背后没有活体数据（典型场景：系统任务
+        // 快照恢复了向导画面但计划已被清理）。立即退出，不渲染僵尸界面。
+        if (targetId.isBlank() && planIds.isEmpty()) {
+            Toast.makeText(this, R.string.resource_wizard_no_pending_plan, Toast.LENGTH_SHORT).show()
+            closeCurrentInstance()
+            return StaticRunSurfaceBinding(placeholder("资源获取", "已退出"))
+        }
         return RunInstallWizardSurfaceBinding(
             context = this,
             gateway = graph.resourceFeatureGateway,
@@ -930,12 +963,44 @@ class CardRunActivity : AppCompatActivity() {
         currentChildren = emptyList()
         pendingCloseInstanceId = null
         pendingCloseGeneration = null
+        resolvingInstallWizardBack = false
     }
 
     private fun navigateBackFromTask() {
         when (CardRunTaskNavigationPolicy.decide(currentState)) {
+            CardRunTaskNavigationAction.ResolveInstallWizardBack -> resolveInstallWizardBack()
             CardRunTaskNavigationAction.HideTask -> moveTaskToBack(true)
             CardRunTaskNavigationAction.CloseTask -> closeTaskWindow(CardRunTaskCloseReason.DismissSurface)
+        }
+    }
+
+    private fun resolveInstallWizardBack() {
+        val state = currentState ?: run {
+            closeTaskWindow(CardRunTaskCloseReason.DismissSurface)
+            return
+        }
+        if (resolvingInstallWizardBack) return
+        resolvingInstallWizardBack = true
+        lifecycleScope.launch {
+            val result = graph.runInstanceCloseCoordinator.close(
+                RunInstanceCloseCommand(
+                    instanceId = state.instanceId,
+                    expectedGeneration = state.createdAt,
+                    source = RunInstanceCloseSource.NavigateBack,
+                )
+            )
+            resolvingInstallWizardBack = false
+            when (result) {
+                is RunCommandResult.Accepted ->
+                    closeTaskWindow(CardRunTaskCloseReason.StopConfirmed)
+                is RunCommandResult.Ignored -> {
+                    if (result.reason == "missing_instance" || result.reason == "generation_mismatch") {
+                        closeTaskWindow(CardRunTaskCloseReason.DismissSurface)
+                    } else {
+                        moveTaskToBack(true)
+                    }
+                }
+            }
         }
     }
 

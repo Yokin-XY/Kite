@@ -1,6 +1,10 @@
 package com.kite.app.agent.config
 
 import java.io.File
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -59,5 +63,36 @@ class AgentSkillImportStagerTest {
 
         assertThrows(IllegalArgumentException::class.java) { stager.stage("/workspace/unsafe") }
         assertTrue(!File(workspace, ".kf/imports/skills").exists())
+    }
+
+    @Test
+    fun stagesOneSkillFromZipAndRejectsTraversal() {
+        val workspace = workspace()
+        val stager = AgentSkillImportStager(workspace)
+        val valid = zipOf(
+            "demo/SKILL.md" to "---\nname: demo-skill\ndescription: Demo\n---\n正文",
+            "demo/references/readme.md" to "参考",
+        )
+
+        val stage = stager.stageArchive(ByteArrayInputStream(valid))
+
+        assertEquals("demo-skill", stage.skillId)
+        stage.discard()
+        assertThrows(IllegalArgumentException::class.java) {
+            stager.stageArchive(ByteArrayInputStream(zipOf("../escape/SKILL.md" to "---\nname: escape\n---")))
+        }
+        assertTrue(!File(workspace.parentFile, "escape").exists())
+    }
+
+    private fun zipOf(vararg files: Pair<String, String>): ByteArray {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { archive ->
+            files.forEach { (path, content) ->
+                archive.putNextEntry(ZipEntry(path))
+                archive.write(content.toByteArray())
+                archive.closeEntry()
+            }
+        }
+        return output.toByteArray()
     }
 }

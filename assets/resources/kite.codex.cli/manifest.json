@@ -13,18 +13,24 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["codex"],
+    "managedCommands": [
+      "codex"
+    ],
     "versionProbe": {
       "command": "codex --version",
       "pattern": "([0-9]+(?:\\.[0-9]+)+)"
     },
-    "preservePaths": ["user-home"]
+    "preservePaths": [
+      "user-home"
+    ]
   },
   "display": {
     "sections": [
       "ai-vendor"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 50,
     "category": "AI",
     "accent": "teal",
@@ -74,8 +80,11 @@
     "extensions": []
   },
   "source": {
-    "type": "npm",
+    "type": "official_command",
     "package": "@openai/codex",
+    "command": "npm install -g @openai/codex@latest",
+    "uninstallCommand": "npm uninstall -g @openai/codex",
+    "latestVersion": "0.154.0",
     "repository": "https://github.com/openai/codex"
   },
   "paths": {
@@ -96,19 +105,36 @@
         {
           "id": "chatgpt",
           "name": "ChatGPT 官方",
-          "modelGroupIds": ["codex", "openai"],
+          "modelGroupIds": [
+            "codex",
+            "openai"
+          ],
           "status": {
-            "argv": ["codex", "login", "status"],
-            "loggedInPatterns": ["logged in"],
-            "loggedOutPatterns": ["not logged in"],
+            "argv": [
+              "codex",
+              "login",
+              "status"
+            ],
+            "loggedInPatterns": [
+              "logged in"
+            ],
+            "loggedOutPatterns": [
+              "not logged in"
+            ],
             "timeoutMs": 15000
           },
           "login": {
-            "argv": ["codex", "login"],
+            "argv": [
+              "codex",
+              "login"
+            ],
             "timeoutMs": 300000
           },
           "logout": {
-            "argv": ["codex", "logout"],
+            "argv": [
+              "codex",
+              "logout"
+            ],
             "timeoutMs": 30000
           }
         }
@@ -118,7 +144,9 @@
         "providerId": "codex",
         "protocol": "codex-app-server",
         "transport": "stdio",
-        "argv": ["kite-codex-app-server"],
+        "argv": [
+          "kite-codex-app-server"
+        ],
         "title": "Codex"
       }
     }

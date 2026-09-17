@@ -76,6 +76,7 @@ class StartupTraceStoreTest {
         val prefs = context.getSharedPreferences("kite_startup_trace", Context.MODE_PRIVATE)
         assertEquals("main.resources_and_server", prefs.getString("current_stage", null))
         assertTrue(prefs.getString("current_timeline", "").orEmpty().contains("main.resources_and_server"))
+        assertTrue(StartupTraceStore.traceReportText(context).contains("main.resources_and_server"))
     }
 
     @Test
@@ -102,6 +103,19 @@ class StartupTraceStoreTest {
         StartupTraceStore.prepareProcess(context)
 
         assertFalse(StartupTraceStore.hasFailure(context))
+    }
+
+    @Test
+    fun setupFailureRemainsAvailableAfterStartupBecomesReady() {
+        StartupTraceStore.prepareProcess(context)
+        StartupTraceStore.recordSetupFailure(context, "kite.git", "missing rootfs command: git")
+        StartupTraceStore.markReady(context)
+
+        val failure = requireNotNull(StartupTraceStore.readSetupFailure(context, "kite.git"))
+
+        assertEquals("kite.git", failure.checkId)
+        assertEquals("missing rootfs command: git", failure.reason)
+        assertTrue(failure.occurredAtMs > 0L)
     }
 
     @Test
