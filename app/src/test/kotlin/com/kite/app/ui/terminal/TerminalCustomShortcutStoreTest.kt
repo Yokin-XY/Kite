@@ -86,6 +86,25 @@ class TerminalCustomShortcutStoreTest {
     }
 
     @Test
+    fun unsupportedPersistedCombinationIsFilteredFromSnapshot() {
+        val supported = TerminalShortcutDefinition(setOf(TerminalShortcutModifier.CTRL), TerminalShortcutKey.R)
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .putString(
+                "shortcuts",
+                """
+                {"schemaVersion":1,"shortcuts":[
+                  {"id":"Ctrl+F1","modifiers":["CTRL"],"key":"F1"},
+                  {"id":"Ctrl+R","modifiers":["CTRL"],"key":"R"}
+                ]}
+                """.trimIndent(),
+            )
+            .commit()
+
+        assertEquals(listOf(supported), store.snapshot())
+    }
+
+    @Test
     fun unsupportedCombinationIsRejectedWithoutPersisting() {
         val shortcut = TerminalShortcutDefinition(setOf(TerminalShortcutModifier.CTRL), TerminalShortcutKey.F1)
 

@@ -23,7 +23,10 @@ class TerminalCustomShortcutStore(context: Context) {
         val shortcuts = root.optJSONArray(KEY_SHORTCUTS) ?: JSONArray()
         buildList {
             for (index in 0 until shortcuts.length()) {
-                parse(shortcuts.optJSONObject(index))?.let(::add)
+                // 面板只接受可编码的组合键：不可编码的条目在读取时丢弃，不进入面板构建路径。
+                parse(shortcuts.optJSONObject(index))
+                    ?.takeIf(TerminalShortcutCodec::isSupported)
+                    ?.let(::add)
             }
         }
     }.getOrDefault(emptyList())
