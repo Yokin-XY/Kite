@@ -83,7 +83,7 @@
     "package": "@qoder-ai/qodercli",
     "command": "npm install -g @qoder-ai/qodercli@latest",
     "uninstallCommand": "npm uninstall -g @qoder-ai/qodercli",
-    "latestVersion": "1.1.54"
+    "latestVersion": "1.1.55"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.qoder.cli",
