@@ -68,6 +68,21 @@
 
 ## 下一步
 
+### 已修复（bb47c76d）：merge 重复复制
+
+- 根因：本地 echo（local-）与协议回显（uuid）双镜像 + 回放单份历史，指纹消费错位导致
+  本地 turn 被误判非持久而整体重放；表现为 UI 顶部残缺 turn（User 行 4px 无文本）。
+- 修复带回归单测（AgentConversationStoreReplayMergeTest）；真机 store 日志确认不再产生重复 turn。
+- 注意：修复前产生的重复已写进 Claude Code 协议历史，旧会话每次重放仍会重现（数据污染，非代码问题）。
+
+### 遗留：渲染层最后一跳
+
+- 干净会话 + 修复后：store/diff/bind 全部正常（bind 日志 h=51、内容正确、块序列完整），
+  但 UI 树中对应 TextView 文本为空——bind 成功与最终显示之间还有一跳异常。
+- 下一步用 Layout Inspector / 更精细的 bind 后钩子定位（怀疑点：styledInlineText 渲染、
+  Holder 复用后的二次清空、RecyclerView 预取测量）。
+
 1. 攻问题 1：恢复会话的响应流（代码定位 + 修复 + 重测杀进程恢复对话）。
 2. 查问题 2：OpenClaw 网关崩溃日志（background-runtimes 日志区）与 OpenCode 登记掉落链路。
-3. 以上修完再铺 5 Agent × 4 层矩阵（会话生命周期 / 供应商+档位 / 自有模式 / MCP+Skill）。
+3. 以上修完再铺 6 Agent × 4 层矩阵（会话生命周期 / 供应商+档位 / 自有模式 / MCP+Skill，
+   更新与安装已交官方机制不再单列）。pi 作为第 6 个成员，先验证官方 ACP 通路。
