@@ -119,6 +119,11 @@ sealed interface AgentConversationItem {
  * load/resume 决定恢复，不能把旧内存内容伪装成已连接会话。
  */
 object AgentConversationStore {
+
+    /** 纯 JVM 单测环境没有 android.util.Log 实现，观测日志失败必须静默。 */
+    private fun safeDebugLog(tag: String, message: String) {
+        runCatching { android.util.Log.d(tag, message) }
+    }
     private val mutableConversations = linkedMapOf<AgentConversationKey, MutableConversation>()
     private val replayConversations = linkedMapOf<AgentConversationKey, MutableConversation>()
     private val pendingPublications = linkedSetOf<AgentConversationKey>()
@@ -142,7 +147,7 @@ object AgentConversationStore {
         phase: AgentSessionPhase = AgentSessionPhase.Preparing
     ): AgentConversationSnapshot {
         val existing = mutableConversations[key]
-        android.util.Log.d(
+        safeDebugLog(
             "KiteConvRoute",
             "bind instance=${instanceId.take(18)} existing=${existing != null} " +
                 "sameInstance=${existing?.instanceId == instanceId} shadowPending=${replayConversations.containsKey(key)}",
@@ -609,7 +614,7 @@ object AgentConversationStore {
                     turnOrdinal = turnOrdinal
                 ).also {
                     addTimelineItem(it)
-                    android.util.Log.d(
+                    safeDebugLog(
                         "KiteConvStore",
                         "new item role=${event.role} msgId=${event.messageId?.take(24)} turn=$turnOrdinal active=$turnActive chars=${(event.content as? AgentContent.Text)?.text?.length ?: -1}",
                     )
@@ -653,7 +658,7 @@ object AgentConversationStore {
 
         private fun beginTurn() {
             if (turnActive) finishTurn(AgentConversationTurnState.Completed)
-            android.util.Log.d("KiteConvStore", "beginTurn newOrdinal=${turnOrdinal + 1} liveTiming=$recordsLiveTiming")
+            safeDebugLog("KiteConvStore", "beginTurn newOrdinal=${turnOrdinal + 1} liveTiming=$recordsLiveTiming")
             turnOrdinal += 1L
             turnActive = true
             currentTurnHasUser = false
@@ -670,7 +675,7 @@ object AgentConversationStore {
 
         private fun finishTurn(state: AgentConversationTurnState, errorMessage: String? = null) {
             if (!turnActive) return
-            android.util.Log.d(
+            safeDebugLog(
                 "KiteConvStore",
                 "finishTurn turn=$turnOrdinal state=$state liveTiming=$recordsLiveTiming itemsInTurn=${timeline.count { it.turnOrdinal == turnOrdinal }}",
             )
@@ -697,6 +702,22 @@ object AgentConversationStore {
          * 完整回合，并用角色与内容和已回放历史对账；这样既不会整份覆盖刚发送的内容，也不会
          * 把所有旧内存消息永久当成第二份历史来源。
          */
+        /** 本地镜像的指纹已被协议镜像消费时，从回放正本中找回对应消息，避免重复重放。 */
+        private fun consumedDuplicateOf(
+            message: MutableMessage,
+            consumedFingerprints: MutableMap<MessageFingerprint, Int>,
+            @Suppress("UNUSED_PARAMETER") localTurnOrdinals: Set<Long>,
+        ): MutableMessage? {
+            val fingerprint = message.fingerprint()
+            val consumed = consumedFingerprints[fingerprint]
+            if (consumed == null || consumed <= 0) return null
+            consumedFingerprints[fingerprint] = consumed - 1
+            // merge 重放尚未开始，此时 timeline 全部是回放正本；
+            // 回放实例的 turn 序号与旧投影各自独立，不可用旧序号空间过滤。
+            return timeline.filterIsInstance<MutableMessage>()
+                .lastOrNull { candidate -> candidate.fingerprint() == fingerprint }
+        }
+
         fun mergeLocalTurnsFrom(current: MutableConversation) {
             val localTurnOrdinals = current.timeline
                 .filterIsInstance<MutableMessage>()
@@ -709,9 +730,17 @@ object AgentConversationStore {
                 replayedMessages.getOrPut(message.fingerprint(), ::ArrayDeque).addLast(message)
             }
             // 先消费当前投影中原本就来自历史的消息，剩余队列才代表本次 load 新确认的内容。
+            // 同一指纹可能被本地镜像（local echo）与协议镜像（回显）各引用一次，
+            // 而回放里只有一份：记账被消费的指纹，供本地侧回退匹配，避免误判非持久而重放复制。
+            val consumedFingerprints = mutableMapOf<MessageFingerprint, Int>()
             current.timeline.filterIsInstance<MutableMessage>()
                 .filterNot { message -> message.turnOrdinal in localTurnOrdinals }
-                .forEach { message -> replayedMessages[message.fingerprint()]?.pollFirst() }
+                .forEach { message ->
+                    val fingerprint = message.fingerprint()
+                    if (replayedMessages[fingerprint]?.pollFirst() != null) {
+                        consumedFingerprints[fingerprint] = (consumedFingerprints[fingerprint] ?: 0) + 1
+                    }
+                }
             val replayedTools = timeline.filterIsInstance<MutableTool>()
                 .mapTo(linkedSetOf()) { tool -> tool.call.id }
             val replayedPlans = timeline.filterIsInstance<MutablePlan>()
@@ -721,7 +750,14 @@ object AgentConversationStore {
                 val sourceItems = current.timeline.filter { item -> item.turnOrdinal == sourceOrdinal }
                 val sourceMessages = sourceItems.filterIsInstance<MutableMessage>()
                 val durableMatches = sourceMessages.map { message ->
-                    replayedMessages[message.fingerprint()]?.pollFirst()
+                    val polled = replayedMessages[message.fingerprint()]?.pollFirst()
+                    safeDebugLog(
+                        "KiteMerge",
+                        "match src=${message.role}:${message.messageId?.take(10)} polled=${polled != null} " +
+                            "queueLeft=${replayedMessages[message.fingerprint()]?.size ?: -1} " +
+                            "consumedKeys=${consumedFingerprints.keys.joinToString { it.role.toString() }}",
+                    )
+                    polled ?: consumedDuplicateOf(message, consumedFingerprints, localTurnOrdinals)
                 }
                 val fullyDurable = durableMatches.all { message -> message != null }
                 if (fullyDurable) {

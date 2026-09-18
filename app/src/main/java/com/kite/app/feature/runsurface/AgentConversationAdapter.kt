@@ -177,6 +177,7 @@ internal class ConversationAdapter(
         android.util.Log.d(
             "KiteConvAdapter",
             "submit items=${items.size} turns=${turns.size} phase=$phase blocks=${projected.size} " +
+                "lastItems=${items.takeLast(4).joinToString(",") { "${it.id.take(20)}(${it::class.simpleName?.take(4)})" }} " +
                 "lastBlocks=${projected.takeLast(6).joinToString(",") { it::class.simpleName ?: "?" }} " +
                 "lastAssistant=${(projected.lastOrNull { it is AgentConversationDisplayItem.AssistantText } as? AgentConversationDisplayItem.AssistantText)?.let { "segs=${it.inline.size} text=${it.inline.firstOrNull()?.text?.take(24)}" } ?: "none"}",
         )
@@ -267,6 +268,7 @@ internal class ConversationAdapter(
 
         override fun bind(item: AgentConversationDisplayItem) {
             item as AgentConversationDisplayItem.UserMessage
+            android.util.Log.d("KiteConvBind", "User bind id=${item.id.take(24)} text=${item.text.take(20)}")
             skillHost.removeAllViews()
             item.skills.forEach { skillName ->
                 skillHost.addView(TextView(context).apply {
@@ -330,7 +332,7 @@ internal class ConversationAdapter(
             item as AgentConversationDisplayItem.AssistantText
             android.util.Log.d(
                 "KiteConvBind",
-                "AssistantText bind id=${item.id.take(28)} inlineSegs=${item.inline.size} firstText=${item.inline.firstOrNull()?.text?.take(30) ?: "-"}",
+                "AssistantText bind id=${item.id.take(28)} segs=${item.inline.size} h=${itemView.height} first=${item.inline.firstOrNull()?.text?.take(24) ?: "-"}",
             )
             label.visibility = View.GONE
             text.text = styledInlineText(item.inline)

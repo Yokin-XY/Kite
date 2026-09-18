@@ -486,7 +486,7 @@ private class AcpProcessAgentConnection(
             session.prompt(request.content.map(AgentContent::toAcp)).collect { event ->
                 when (event) {
                     is Event.SessionUpdateEvent -> {
-                        android.util.Log.d(
+                        safeDebugLog(
                             "KiteAcpPrompt",
                             "stream kind=${event.update::class.simpleName} elapsedMs=${System.currentTimeMillis() - promptStartedAt}",
                         )
@@ -519,13 +519,13 @@ private class AcpProcessAgentConnection(
                 )
             }
             AgentOperationResult.Success(resolved).also {
-                android.util.Log.i(
+                safeDebugLog(
                     "KiteAcpPrompt",
                     "turn done stopReason=${resolved.stopReason} elapsedMs=${System.currentTimeMillis() - promptStartedAt} usageThought=${resolved.usage?.thoughtTokens}",
                 )
             }
         } catch (cancelled: CancellationException) {
-            android.util.Log.w("KiteAcpPrompt", "turn cancelled elapsedMs=${System.currentTimeMillis() - promptStartedAt}")
+            safeDebugLog("KiteAcpPrompt", "turn cancelled elapsedMs=${System.currentTimeMillis() - promptStartedAt}")
             if (publishLifecycle && request.sessionId !in steeringSessions) {
                 endpoint.eventSink.onEvent(
                     request.sessionId,
@@ -534,7 +534,7 @@ private class AcpProcessAgentConnection(
             }
             throw cancelled
         } catch (error: Throwable) {
-            android.util.Log.e(
+            safeDebugLog(
                 "KiteAcpPrompt",
                 "turn failed elapsedMs=${System.currentTimeMillis() - promptStartedAt}: ${error.message}",
                 error,
@@ -689,6 +689,13 @@ private const val STEER_INTERRUPT_TIMEOUT_MS = 5_000L
 private const val INLINE_REPLAY_DEDUPLICATION_MS = 1_000L
 
 @OptIn(UnstableApi::class)
+internal fun safeDebugLog(tag: String, message: String, error: Throwable? = null) {
+    runCatching {
+        if (error != null) android.util.Log.e(tag, message, error)
+        else android.util.Log.d(tag, message)
+    }
+}
+
 private class AcpClientOperations(
     private val sessionId: String,
     private val endpoint: AgentClientEndpoint,
@@ -714,7 +721,7 @@ private class AcpClientOperations(
         _meta: kotlinx.serialization.json.JsonElement?
     ) {
         val updateKind = notification::class.simpleName
-        android.util.Log.d(TAG, "update kind=$updateKind messageId=${(notification as? SessionUpdate.AgentMessageChunk)?.messageId?.value ?: (notification as? SessionUpdate.AgentThoughtChunk)?.messageId?.value ?: "-"}")
+        safeDebugLog(TAG, "update kind=$updateKind messageId=${(notification as? SessionUpdate.AgentMessageChunk)?.messageId?.value ?: (notification as? SessionUpdate.AgentThoughtChunk)?.messageId?.value ?: "-"}")
         inlineSessionUpdateRelay?.fromSdk(notification)
             ?: endpoint.eventSink.onEvent(sessionId, AcpAgentMapper.sessionEvent(notification))
     }
