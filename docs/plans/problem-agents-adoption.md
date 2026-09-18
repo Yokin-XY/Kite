@@ -31,16 +31,20 @@
      命令面板（getPrompts→available_commands_update，Kite 斜杠命令面的输入源）。
    - Docker lifecycle **9/9**。踩坑记录：npm 无 package.json 安装报 idealTree、ESM 不认
      NODE_PATH（桥须与 node_modules 同目录）、listAll 首参是会话目录非 cwd（用 list(cwd)）。
-3. **阶段 3 Kite 接入（进行中）**：
-   - ✅ OpenClaw 真机闭环（2026-09-19，提交 9b77c231）：崩溃循环三层根因全破
-     （宿主通道无 /tmp→服务型 FULL_LINUX；准入活锁→常驻豁免；ACP 进程→清单
-     requirements 新合同）。真机：网关 /readyz 200、会话启动、GLM-5.3 对话完整渲染。
-     斜杠命令事件（AvailableCommandsUpdate）全链路已通。
-   - 遗留：网关冷启动 >30s（无代理时模型目录刷新拖慢几分钟）——需调
-     startupTimeoutMs / 网关代理 env；智谱 provider 当前为容器内手写配置，
-     产品化走 Kite 的 openclaw 配置适配器（模块 2）。
-   - ⏳ pi 清单改桥（argv 指向 APK assets 桥，静默拷贝）。
-   - ⏳ Hermes 真机安装验证（Python 前置已就绪：kite.python/kite.uv 已装）。
+3. **阶段 3 Kite 接入（完成）**：
+   - ✅ OpenClaw 真机闭环（提交 9b77c231）：三层根因全破，GLM-5.3 对话完整渲染。
+   - ✅ pi 真机闭环（提交 cca303d3）：清单改 ACP 桥+requirements=full_linux；
+     桥随 APK assets 分发（launch.bridgeAsset，启动前幂等拷贝）；
+     会话/恢复/模型选择全通（Docker lifecycle 9/9 + models 5/6；真机对话+恢复）。
+     key 走 pi 原生 auth.json（SDK 自动装载）。
+   - ✅ **六 Agent 真机全上线**：claude/codex/opencode/hermes/openclaw/pi。
+   - 已知遗留：装完资源列表不即时刷新（重启后正常）；OpenClaw 网关冷启动>30s；
+     智谱 key 当前为容器内手写（产品化走各 Agent 配置适配器，模块 2）。
+   - 六 Agent models 矩阵事实：pi/hermes 原生支持 session/set_model；
+     claude/codex/opencode/openclaw 无 ACP 模型通道（各自原生配置）。
+   - 推理强度=模型参数（CC switch 观点）：pi Model 对象 reasoning+thinkingLevelMap
+     实证；桥目录已带 thinkingLevels _meta。模式（规划/目标）= Agent 维度，
+     各家支持度待模块 4 探测。
 4. **阶段 4 真机验收**：六 Agent 模块 1；回归 6×4 矩阵。
 
 ## 已完成的前置事实
