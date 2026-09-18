@@ -24,9 +24,16 @@
    - OpenClaw：网关常驻（gateway.mode=local, port 18789）+ 官方 `openclaw acp` 桥 → **9/9**。
      崩溃循环根因同款复现：网关多实例写锁打架；单例网关+官方桥即干净。
    - 前置 3 个（claude/codex/opencode）此前已 9/9。**5/6 全绿。**
-2. **阶段 2 pi 桥原型**：initialize/session new/load/prompt+updates 转发的最小实现；Docker 跑 lifecycle 9/9。
+2. **阶段 2 pi 桥原型 ✅ 完成（2026-09-19）**：
+   - `pi-bridge/pi-acp-bridge.mjs`（~400 行）：官方 SDK（createAgentSession/SessionManager/DefaultResourceLoader）
+     → ACP stdio；智谱用 pi 内置供应商 zai-coding-cn（glm-5.3 及全档位在目录，零自定义模型配置）。
+   - 覆盖：消息流/思考流/工具调用映射、跨进程恢复（SessionManager.list→open→重放）、
+     命令面板（getPrompts→available_commands_update，Kite 斜杠命令面的输入源）。
+   - Docker lifecycle **9/9**。踩坑记录：npm 无 package.json 安装报 idealTree、ESM 不认
+     NODE_PATH（桥须与 node_modules 同目录）、listAll 首参是会话目录非 cwd（用 list(cwd)）。
 3. **阶段 3 Kite 接入**：5 条资源 manifest（新增 hermes/openclaw，openclaw 需声明网关后台运行时）；
-   assets 桥拷贝安装动作；OpenClaw 不需要 Kotlin attach 适配器（官方 acp 桥即可，比预期更简）。
+   pi 桥拷入 APK assets + 安装动作静默拷贝；OpenClaw 不需要 Kotlin attach 适配器（官方 acp 桥即可）。
+   Kite 侧待接：available_commands_update→斜杠命令 UI（pi/claude 均发此事件，用户反馈一直未识别好）。
 4. **阶段 4 真机验收**：六 Agent 模块 1；回归 6×4 矩阵。
 
 ## 已完成的前置事实
