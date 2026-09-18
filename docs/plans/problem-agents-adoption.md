@@ -31,9 +31,16 @@
      命令面板（getPrompts→available_commands_update，Kite 斜杠命令面的输入源）。
    - Docker lifecycle **9/9**。踩坑记录：npm 无 package.json 安装报 idealTree、ESM 不认
      NODE_PATH（桥须与 node_modules 同目录）、listAll 首参是会话目录非 cwd（用 list(cwd)）。
-3. **阶段 3 Kite 接入**：5 条资源 manifest（新增 hermes/openclaw，openclaw 需声明网关后台运行时）；
-   pi 桥拷入 APK assets + 安装动作静默拷贝；OpenClaw 不需要 Kotlin attach 适配器（官方 acp 桥即可）。
-   Kite 侧待接：available_commands_update→斜杠命令 UI（pi/claude 均发此事件，用户反馈一直未识别好）。
+3. **阶段 3 Kite 接入（进行中）**：
+   - ✅ OpenClaw 真机闭环（2026-09-19，提交 9b77c231）：崩溃循环三层根因全破
+     （宿主通道无 /tmp→服务型 FULL_LINUX；准入活锁→常驻豁免；ACP 进程→清单
+     requirements 新合同）。真机：网关 /readyz 200、会话启动、GLM-5.3 对话完整渲染。
+     斜杠命令事件（AvailableCommandsUpdate）全链路已通。
+   - 遗留：网关冷启动 >30s（无代理时模型目录刷新拖慢几分钟）——需调
+     startupTimeoutMs / 网关代理 env；智谱 provider 当前为容器内手写配置，
+     产品化走 Kite 的 openclaw 配置适配器（模块 2）。
+   - ⏳ pi 清单改桥（argv 指向 APK assets 桥，静默拷贝）。
+   - ⏳ Hermes 真机安装验证（Python 前置已就绪：kite.python/kite.uv 已装）。
 4. **阶段 4 真机验收**：六 Agent 模块 1；回归 6×4 矩阵。
 
 ## 已完成的前置事实
