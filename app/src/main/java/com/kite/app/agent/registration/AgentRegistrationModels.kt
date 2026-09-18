@@ -29,6 +29,8 @@ sealed interface AgentLaunchSpec {
         val argv: List<String>,
         val runtimeGuarantees: Set<String> = emptySet(),
         val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
+        /** 运行需求（wire 名小写，如 full_linux）：宿主通道不满足时自动落容器。 */
+        val requirements: Set<String> = emptySet(),
     ) : AgentLaunchSpec
 
     data class Attach(

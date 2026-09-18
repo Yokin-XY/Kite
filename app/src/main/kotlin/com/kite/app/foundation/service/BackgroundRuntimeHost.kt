@@ -1448,6 +1448,13 @@ object BackgroundRuntimeHost {
                     environment = resolvedEnvironment,
                     guarantees = runtimeGuarantees,
                     guaranteeEvidence = guaranteeEvidence,
+                    // 服务型依赖（声明端口/健康检查）必须落完整 Linux 环境：
+                    // 宿主 node 通道没有根级 /tmp，OpenClaw 等网关的状态锁会直接 ENOENT 崩溃循环。
+                    requirements = if (record.bindPort != null || !record.healthHttpPath.isNullOrBlank()) {
+                        setOf(RuntimeExecutionRequirement.FULL_LINUX)
+                    } else {
+                        emptySet()
+                    },
                 ),
             )) {
                 is ManagedRuntimeLaunchPlan.Ready -> return RuntimeProcessLaunchConfig(
@@ -2886,6 +2893,7 @@ object BackgroundRuntimeHost {
             cancellationMode = ProotJobCancellationMode.MANAGED_OWNER,
             resultMode = ProotJobResultMode.DETACHED_BINDING,
             pressureEssential = record.retentionClass == RuntimeRetentionClass.CRITICAL_CORE,
+            residentService = record.retentionClass.resident,
             waitTimeoutMs = 10_000L,
         )
     }

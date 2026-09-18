@@ -440,6 +440,40 @@ class ProotJobAdmissionControllerTest {
     }
 
     @Test
+    fun `resident service bypasses managed owner headroom but stays inside global capacity`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED)
+        // 均衡档 globalMax=2，managedOwnerMax=1：一个会话（非常驻）已占预算，
+        // 常驻网关仍可进入（前置依赖不能与会话活锁）……
+        val session = granted(controller.acquireBlocking(managedRequest("session"))).lease
+        val gateway = granted(
+            controller.acquireBlocking(managedRequest("gateway").copy(residentService = true))
+        ).lease
+        assertEquals(2, controller.snapshot().activeCount)
+        // ……但不能突破全局容量：第三个任务在满员时仍要排队。
+        val overflow = controller.acquireBlocking(
+            managedRequest("overflow").copy(waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_global_capacity_timeout", overflow.reason)
+        gateway.close()
+        session.close()
+        controller.close()
+    }
+
+    @Test
+    fun `resident service does not consume interactive managed owner budget`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED)
+        val gateway = granted(
+            controller.acquireBlocking(managedRequest("gateway").copy(residentService = true))
+        ).lease
+        // 常驻网关在位时，交互预算名额仍完整可用（会话不被网关挤出）
+        val session = granted(controller.acquireBlocking(managedRequest("session"))).lease
+        assertEquals(2, controller.snapshot().activeCount)
+        session.close()
+        gateway.close()
+        controller.close()
+    }
+
+    @Test
     fun `balanced profile keeps one slot for a short task behind a queued managed owner`() {
         val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED)
         val firstManaged = granted(controller.acquireBlocking(managedRequest("managed-one"))).lease

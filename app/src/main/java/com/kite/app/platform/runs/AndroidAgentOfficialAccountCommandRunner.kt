@@ -35,6 +35,7 @@ internal class AndroidAgentOfficialAccountCommandRunner(
             runtimeGuarantees = emptySet(),
             runtimeGuaranteeEvidence = emptyMap(),
             hardLinkMode = command.hardLinkMode,
+            requirements = emptySet(),
         )
         val process = processFactory.start(plannedLaunch.process)
         val output = StringBuilder()

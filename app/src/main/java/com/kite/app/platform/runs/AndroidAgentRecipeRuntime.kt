@@ -51,6 +51,7 @@ import com.kite.app.agent.sdk.configuration.StoreBackedAgentProviderCatalogApi
 import com.kite.app.agent.sdk.configuration.recordProtocolOfficialModels
 import com.kite.app.foundation.runtime.AndroidSharedStorageManager
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirementCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
 import com.kite.app.foundation.runtime.RuntimeHardLinkMode
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
@@ -164,6 +165,7 @@ internal fun interface ManagedAgentProcessLaunchPlanner {
         runtimeGuarantees: Set<String>,
         runtimeGuaranteeEvidence: Map<String, String>,
         hardLinkMode: RuntimeHardLinkMode,
+        requirements: Set<String>,
     ): ManagedAgentProcessLaunch
 }
 
@@ -266,6 +268,7 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
         runtimeGuarantees: Set<String>,
         runtimeGuaranteeEvidence: Map<String, String>,
         hardLinkMode: RuntimeHardLinkMode,
+        requirements: Set<String>,
     ): ManagedAgentProcessLaunch {
         require(argv.isNotEmpty()) { "agent_process_command_empty" }
         val guarantees = RuntimeExecutionGuaranteeCodec.decode(runtimeGuarantees)
@@ -285,6 +288,8 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
                 guarantees = guarantees,
                 guaranteeEvidence = guaranteeEvidence,
                 hardLinkMode = hardLinkMode,
+                requirements = RuntimeExecutionRequirementCodec.decode(requirements)
+                    ?: error("agent_requirements_invalid"),
             ),
         )
         val selected = ManagedAgentProcessLaunchSelector.select(runtimePlan) { plan ->
@@ -373,7 +378,8 @@ internal class AndroidAgentRecipeRuntime(
         val initializeTimeoutMs: Long,
         val connectionReference: String?,
         val configAdapterId: String?,
-        val sessionAdapterId: String?
+        val sessionAdapterId: String?,
+        val requirements: Set<String> = emptySet(),
     )
 
     private val appContext = context.applicationContext
@@ -497,6 +503,7 @@ internal class AndroidAgentRecipeRuntime(
                     runtimeGuarantees = resolved.runtimeGuarantees,
                     runtimeGuaranteeEvidence = resolved.runtimeGuaranteeEvidence,
                     hardLinkMode = resolved.hardLinkMode,
+                    requirements = resolved.requirements,
                 )
             }.getOrElse { error ->
                 callback(
@@ -990,7 +997,8 @@ internal class AndroidAgentRecipeRuntime(
                         ?: DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
                     connectionReference = null,
                     configAdapterId = entry.registration.configAdapterId,
-                    sessionAdapterId = entry.registration.sessionAdapterId
+                    sessionAdapterId = entry.registration.sessionAdapterId,
+                    requirements = launch.requirements,
                 )
             }
             is AgentLaunchSpec.Attach -> ResolvedLaunch(

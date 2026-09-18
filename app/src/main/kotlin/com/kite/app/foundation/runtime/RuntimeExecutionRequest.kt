@@ -59,6 +59,19 @@ internal enum class RuntimeExecutionGuarantee(val wireValue: String) {
     VERIFIED_NATIVE_IMPORTS("verified_native_imports"),
 }
 
+/** 清单声明的运行需求（wire 名 = 枚举名小写）；未知值拒绝，不默认容忍。 */
+internal object RuntimeExecutionRequirementCodec {
+    private val byWireValue = RuntimeExecutionRequirement.entries.associateBy {
+        it.name.lowercase()
+    }
+
+    fun decode(values: Collection<String>): Set<RuntimeExecutionRequirement>? {
+        val normalized = values.map { it.trim().lowercase() }.filter(String::isNotBlank).toSet()
+        return normalized.takeIf { candidates -> candidates.all(byWireValue::containsKey) }
+            ?.mapNotNullTo(linkedSetOf()) { byWireValue[it] }
+    }
+}
+
 internal object RuntimeExecutionGuaranteeCodec {
     private val byWireValue = RuntimeExecutionGuarantee.entries.associateBy { it.wireValue }
 

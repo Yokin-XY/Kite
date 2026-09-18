@@ -28,8 +28,12 @@ internal object HostNodeRuntimeProvider :
         if (RuntimeExecutionRequirement.FULL_LINUX in request.requirements) {
             return unsupported("full_linux_required")
         }
-        if (RuntimeExecutionRequirement.FILESYSTEM_VIEW in request.requirements) {
-            return unsupported("filesystem_view_required")
+        if (
+            RuntimeExecutionRequirement.FILESYSTEM_VIEW in request.requirements ||
+            RuntimeExecutionRequirement.FULL_LINUX in request.requirements
+        ) {
+            // 宿主 node 通道没有完整 Linux 根文件系统（无 /tmp 等）；服务型后台依赖必须进容器。
+            return unsupported("full_linux_required")
         }
         val container = context.container
         if (container.networkMode != NetworkMode.HOST) {

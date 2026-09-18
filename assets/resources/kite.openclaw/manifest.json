@@ -132,7 +132,10 @@
             "retentionClass": "resident"
           }
         ],
-        "title": "OpenClaw"
+        "title": "OpenClaw",
+        "requirements": [
+          "full_linux"
+        ]
       }
     }
   ],

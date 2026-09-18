@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirementCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
 import com.kite.app.foundation.runtime.RuntimeHardLinkMode
 import org.json.JSONArray
@@ -75,7 +76,8 @@ data class KiteResourceAgentProfile(
     val configAdapterId: String = "",
     val sessionAdapterId: String = "",
     val officialAccounts: List<KiteResourceAgentOfficialAccount> = emptyList(),
-    val title: String = ""
+    val title: String = "",
+    val requirements: Set<String> = emptySet(),
 )
 
 private const val DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS = 45_000L
@@ -798,6 +800,9 @@ class KiteResourceManifestLoader private constructor(
         val runtimeGuaranteeEvidence = RuntimeExecutionGuaranteeEvidenceCodec.normalize(
             launch.optJSONObject("runtimeGuaranteeEvidence").toStringMap()
         ) ?: return null
+        val requirements = RuntimeExecutionRequirementCodec.decode(
+            launch.optJSONArray("requirements").toStringList()
+        ) ?: return null
         val runtimeDependencies = parseAgentRuntimeDependencies(
             launch.optJSONArray("runtimeDependencies")
         ) ?: return null
@@ -842,7 +847,9 @@ class KiteResourceManifestLoader private constructor(
             configAdapterId = configuration?.optString("adapter")?.trim().orEmpty(),
             sessionAdapterId = sessions?.optString("adapter")?.trim().orEmpty(),
             officialAccounts = parseAgentOfficialAccounts(json.optJSONArray("accounts")),
-            title = title
+            title = title,
+            requirements = launch.optJSONArray("requirements").toStringList()
+                .map { it.trim().lowercase() }.filter(String::isNotBlank).toSet(),
         )
     }
 

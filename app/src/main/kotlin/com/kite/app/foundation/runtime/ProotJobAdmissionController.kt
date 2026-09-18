@@ -36,6 +36,8 @@ internal data class ProotJobAdmissionRequest(
     val cancellationMode: ProotJobCancellationMode,
     val resultMode: ProotJobResultMode,
     val pressureEssential: Boolean = false,
+    /** 常驻服务依赖（前置守护，如网关）：不占 managed-owner 交互预算，仅受全局容量约束。 */
+    val residentService: Boolean = false,
     val waitTimeoutMs: Long = 10_000L,
 )
 
@@ -380,8 +382,13 @@ internal class ProotJobAdmissionController(
         currentPolicy: ProotJobAdmissionPolicy,
     ): Boolean {
         if (request.cancellationMode != ProotJobCancellationMode.MANAGED_OWNER) return false
+        // 声明常驻的服务依赖（如 OpenClaw 网关这类前置守护）不占交互预算，也不被预算挤出：
+        // 它们是会话的先决条件，与会话/短任务活锁在低档位上互斥是配置级死结。
+        // 全局容量（effectiveGlobalMax）仍然约束常驻服务，不会无限叠加。
+        if (request.residentService) return false
         val activeManagedOwners = active.values.count {
-            it.request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER
+            it.request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER &&
+                !it.request.residentService
         }
         return activeManagedOwners >= currentPolicy.managedOwnerMax()
     }
