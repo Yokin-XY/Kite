@@ -8689,6 +8689,10 @@ internal class RunAgentSurfaceBinding(
                     selectedPreset != null -> null
                     else -> AgentProviderCatalogSyncPolicy.metadataAfterUserEdit(catalogSync, models)
                 }
+                // 预置声明的请求协议跟随预置；无预置时保留目录里已有的协议事实，交给 Adapter 默认值。
+                val apiFormatForSave = routePreset?.apiFormat
+                    ?: selectedPreset?.apiFormat
+                    ?: storedCatalogProvider?.apiFormat
                 keyInput.setText("")
                 saveCatalogProvider(
                     selected = selected,
@@ -8698,6 +8702,7 @@ internal class RunAgentSurfaceBinding(
                         displayName = name,
                         baseUrl = url,
                         models = models,
+                        apiFormat = apiFormatForSave,
                     ),
                     credential = credential,
                     catalogSync = syncForSave,

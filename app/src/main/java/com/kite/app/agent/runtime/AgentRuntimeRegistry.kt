@@ -1504,7 +1504,11 @@ object AgentRuntimeRegistry {
     }
 
     private suspend fun ActiveRuntime.prepareDraftProvider(): AgentOperationResult<Unit> {
-        val target = draftModelSelection ?: return AgentOperationResult.Success(Unit)
+        val target = draftModelSelection ?: run {
+            android.util.Log.d("KiteProviderFlow", "prepareDraftProvider: no draftModelSelection, skip")
+            return AgentOperationResult.Success(Unit)
+        }
+        android.util.Log.d("KiteProviderFlow", "prepareDraftProvider: sel=${target.providerId}/${target.modelId}")
         return when (val prepared = prepareDraftModelSelection(target)) {
             is AgentProviderPreparationResult.Failed -> AgentOperationResult.Failure(prepared.message)
             is AgentProviderPreparationResult.Ready -> {

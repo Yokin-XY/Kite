@@ -335,6 +335,7 @@ class StoreBackedAgentProviderCatalogApi(
                 source = AgentModelSource.UserConfigured,
                 policy = AgentProviderCatalogPolicy.UserManaged,
                 catalogSync = catalogSync,
+                apiFormat = provider.apiFormat,
             ),
             credential.toCatalogCredentialChange(),
         )
@@ -384,6 +385,7 @@ class StoreBackedAgentProviderCatalogApi(
         target: AgentConfigurationTarget,
         selection: AgentDraftModelSelection,
     ): AgentProviderPreparationResult {
+        android.util.Log.d("KiteProviderFlow", "prepare: agent=${target.agentId} adapter=${target.adapterId} sel=${selection.providerId}/${selection.modelId}")
         val selected = store.snapshot(target.agentId).providers.firstOrNull { provider ->
             provider.id == selection.providerId && provider.models.any { it.id == selection.modelId }
         } ?: return AgentProviderPreparationResult.Failed("Kite 目录中已没有这个模型，请重新选择")
@@ -396,6 +398,7 @@ class StoreBackedAgentProviderCatalogApi(
         val adapter = adapters.adapter(target.adapterId)
             ?: return AgentProviderPreparationResult.Failed("当前 Agent 没有可用的配置 Adapter")
         val credential = store.credential(target.agentId, selected.id)
+        android.util.Log.d("KiteProviderFlow", "prepare: provider=${selected.id} policy=${selected.policy} cred=${credential != null} apiFormat=${selected.apiFormat}")
         val fingerprint = providerFingerprint(selected, selection.modelId, credential != null)
         val preparedKey = preparedKey(target)
         if (preparedFingerprints[preparedKey] == fingerprint) {
@@ -403,10 +406,16 @@ class StoreBackedAgentProviderCatalogApi(
         }
         val before = when (val read = adapter.readLive(target.agentId)) {
             is AgentConfigReadResult.Ready -> read.snapshot
-            is AgentConfigReadResult.Failed -> return AgentProviderPreparationResult.Failed(read.message)
-            is AgentConfigReadResult.Unavailable -> return AgentProviderPreparationResult.Failed(
-                read.discovery.warnings.firstOrNull() ?: "当前无法准备 Agent 配置",
-            )
+            is AgentConfigReadResult.Failed -> {
+                android.util.Log.d("KiteProviderFlow", "prepare: readLive Failed: ${read.message}")
+                return AgentProviderPreparationResult.Failed(read.message)
+            }
+            is AgentConfigReadResult.Unavailable -> {
+                android.util.Log.d("KiteProviderFlow", "prepare: readLive Unavailable: ${read.discovery.warnings.firstOrNull()}")
+                return AgentProviderPreparationResult.Failed(
+                    read.discovery.warnings.firstOrNull() ?: "当前无法准备 Agent 配置",
+                )
+            }
         }
         if (selected.policy == AgentProviderCatalogPolicy.OfficialLoginVersion) {
             val option = AgentConfigOption.Select(
@@ -446,6 +455,7 @@ class StoreBackedAgentProviderCatalogApi(
                 }
         } == true
         val pendingNativeWrite = selected.id in store.snapshot(target.agentId).pendingNativeProviderIds
+        android.util.Log.d("KiteProviderFlow", "prepare: pendingNativeWrite=$pendingNativeWrite sameConfig=$samePublicConfiguration existing=${existing?.id}")
         if (!pendingNativeWrite && samePublicConfiguration) {
             val activeModelMatches = before.activeProviderId == selected.id &&
                 (before.defaultModel == selection.modelId ||
@@ -471,6 +481,7 @@ class StoreBackedAgentProviderCatalogApi(
                 baseUrl = selected.baseUrl.orEmpty(),
                 models = listOf(selectedModel).plus(selected.models.filterNot { it.id == selectedModel.id })
                     .map { AgentProviderModelSummary(it.id, it.displayName) },
+                apiFormat = selected.apiFormat,
             ),
             credential = credential?.let { AgentProviderCredentialChange.replace(it.secret) }
                 ?: AgentProviderCredentialChange.Remove,

@@ -9,6 +9,8 @@
 //   PI_ACP_DEBUG    —— 1 时向 stderr 打调试行
 
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -53,12 +55,40 @@ async function resolveModel() {
   const runtime = await modelRuntimeP;
   const key = process.env.ZHIPU_API_KEY;
   if (key) await runtime.setRuntimeApiKey('zai-coding-cn', key);
-  const wanted = process.env.PI_ACP_MODEL ?? 'zai-coding-cn/glm-5.3';
+  const wanted = process.env.PI_ACP_MODEL ?? defaultModelFromConfig();
   const [providerId, ...rest] = wanted.split('/');
   const modelId = rest.join('/') || 'glm-5.3';
   const model = runtime.getModel(providerId, modelId);
   if (!model) throw new Error(`model not found: ${wanted}`);
   return { runtime, model };
+}
+
+// 默认模型解析（对齐 CC Switch 的 Pi 原生合同，不碰 auth.json）：
+// 1) pi 全局 settings.json 的 defaultProvider/defaultModel；
+// 2) models.json.providers 里第一个带 apiKey 且有模型的显式节点（Kite 配置适配器写入）；
+// 3) 内置 zai-coding-cn/glm-5.3。
+function defaultModelFromConfig() {
+  const agentDir = getAgentDir();
+  try {
+    const settings = readJsonFileSync(join(agentDir, 'settings.json'));
+    if (settings?.defaultProvider && settings?.defaultModel) {
+      return `${settings.defaultProvider}/${settings.defaultModel}`;
+    }
+  } catch { /* 缺省文件是正常状态 */ }
+  try {
+    const models = readJsonFileSync(join(agentDir, 'models.json'));
+    const providers = models?.providers ?? {};
+    for (const [pid, node] of Object.entries(providers)) {
+      const apiKey = typeof node === 'object' && node ? node.apiKey : '';
+      const first = Array.isArray(node?.models) && node.models[0]?.id;
+      if (apiKey && first) return `${pid}/${first}`;
+    }
+  } catch { /* 缺省文件是正常状态 */ }
+  return 'zai-coding-cn/glm-5.3';
+}
+
+function readJsonFileSync(path) {
+  return JSON.parse(readFileSync(path, 'utf8'));
 }
 
 async function newPiSession(cwd, sessionManager) {

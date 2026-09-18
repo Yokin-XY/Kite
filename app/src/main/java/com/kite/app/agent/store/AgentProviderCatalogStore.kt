@@ -51,6 +51,8 @@ data class AgentCatalogProvider(
     val credentialPresent: Boolean = false,
     /** 仅用户供应商可携带；描述它与远端预置目录的绑定和用户排除意图。 */
     val catalogSync: AgentProviderCatalogSyncMetadata? = null,
+    /** CC Switch 预置声明的请求协议；供发送前准备阶段原样传给 Adapter。 */
+    val apiFormat: String? = null,
 )
 
 data class AgentProviderCatalogSnapshot(
@@ -517,6 +519,7 @@ class AgentProviderCatalogStore private constructor(
             id = id,
             displayName = name,
             baseUrl = optString(KEY_BASE_URL).trim().take(MAX_URL).takeIf(String::isNotBlank),
+            apiFormat = optString(KEY_API_FORMAT).trim().take(MAX_URL).takeIf(String::isNotBlank),
             models = models,
             source = source,
             policy = policy,
@@ -533,6 +536,7 @@ class AgentProviderCatalogStore private constructor(
         put(KEY_ID, id)
         put(KEY_NAME, displayName)
         baseUrl?.let { put(KEY_BASE_URL, it) }
+        apiFormat?.let { put(KEY_API_FORMAT, it) }
         put(KEY_SOURCE, source.name)
         put(KEY_POLICY, policy.name)
         ownerId?.let { put(KEY_OWNER_ID, it) }
@@ -636,6 +640,7 @@ class AgentProviderCatalogStore private constructor(
             id = providerId,
             displayName = providerName,
             baseUrl = baseUrl?.trim()?.take(MAX_URL)?.takeIf(String::isNotBlank),
+            apiFormat = apiFormat?.trim()?.take(MAX_URL)?.takeIf(String::isNotBlank),
             models = normalizedModels,
             source = source,
             policy = policy,
@@ -754,6 +759,7 @@ class AgentProviderCatalogStore private constructor(
         const val KEY_ID = "id"
         const val KEY_NAME = "name"
         const val KEY_BASE_URL = "baseUrl"
+        const val KEY_API_FORMAT = "apiFormat"
         const val KEY_MODELS = "models"
         const val KEY_SOURCE = "source"
         const val KEY_POLICY = "policy"

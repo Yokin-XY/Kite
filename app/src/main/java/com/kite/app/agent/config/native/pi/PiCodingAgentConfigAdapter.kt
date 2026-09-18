@@ -174,7 +174,7 @@ internal class PiCodingAgentConfigAdapter internal constructor(
             putPreserving(entry, NAME_KEY, JsonPrimitive.of(it.trim()))
         }
         putPreserving(entry, BASE_URL_KEY, JsonPrimitive.of(provider.baseUrl.trim()))
-        putPreserving(entry, API_KIND_KEY, JsonPrimitive.of(OPENAI_COMPLETIONS))
+        putPreserving(entry, API_KIND_KEY, JsonPrimitive.of(provider.apiFormat?.trim().takeUnless { it.isNullOrEmpty() } ?: OPENAI_COMPLETIONS))
         when (credential) {
             AgentProviderCredentialChange.Keep -> Unit
             is AgentProviderCredentialChange.Replace -> putPreserving(entry, API_KEY, JsonPrimitive.of(credential.secret))

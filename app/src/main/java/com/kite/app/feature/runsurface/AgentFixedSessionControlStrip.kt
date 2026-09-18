@@ -48,7 +48,6 @@ internal class AgentFixedSessionControlStrip(
 
     fun render(catalog: AgentControlCatalog, pending: Boolean) {
         val model = catalog.model
-        modelHost.visibility = if (model == null) View.GONE else View.VISIBLE
         if (model != null) {
             val label = model.choices.firstOrNull {
                 it.selection.nativeValue == model.current.nativeValue
@@ -62,7 +61,17 @@ internal class AgentFixedSessionControlStrip(
                 ui.dp(style.maximumWidthDp),
                 style.textSizeSp,
             )
+        } else {
+            // 没有模型目录时仍保留入口；会话配置页负责展示"当前没有供应商，请配置供应商"。
+            bind(
+                modelEntry,
+                "模型",
+                "选择模型",
+                false,
+                ui.dp(118),
+            )
         }
+        modelHost.visibility = View.VISIBLE
 
         val permission = catalog.permission
         permissionHost.visibility = if (permission == null) View.GONE else View.VISIBLE
@@ -78,7 +87,7 @@ internal class AgentFixedSessionControlStrip(
                 ui.dp(104),
             )
         }
-        view.visibility = if (model == null && permission == null) View.GONE else View.VISIBLE
+        view.visibility = View.VISIBLE
     }
 
     internal fun identities(): Pair<Int, Int> =

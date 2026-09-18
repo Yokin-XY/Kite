@@ -538,7 +538,11 @@ internal class OpenClawAgentConfigAdapter(
         val providers = modelsRoot.objectCopy("providers")
         val entry = providers.objectCopy(provider.id)
         putPreserving(entry, "baseUrl", JsonPrimitive.of(provider.baseUrl.trim()))
-        if (!entry.containsKey("api")) putPreserving(entry, "api", JsonPrimitive.of("openai-completions"))
+        putPreserving(
+            entry,
+            "api",
+            JsonPrimitive.of(provider.apiFormat?.trim().takeUnless { it.isNullOrEmpty() } ?: "openai-completions"),
+        )
         when (credential) {
             AgentProviderCredentialChange.Keep -> Unit
             is AgentProviderCredentialChange.Replace -> putPreserving(entry, "apiKey", JsonPrimitive.of(credential.secret))

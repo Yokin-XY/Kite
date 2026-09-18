@@ -327,6 +327,7 @@ internal class HermesAgentConfigAdapter(
                         this["api"] = draft.baseUrl.trim()
                         remove("base_url")
                         remove("url")
+                        this["api_mode"] = draft.apiFormat?.trim().takeUnless { it.isNullOrEmpty() } ?: "chat_completions"
                         this["models"] = linkedMapOf<String, Any?>().also { models ->
                             draft.models.forEach { models[it.id.trim()] = linkedMapOf<String, Any?>() }
                         }

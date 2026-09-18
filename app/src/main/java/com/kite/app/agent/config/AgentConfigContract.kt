@@ -311,7 +311,9 @@ data class AgentProviderDraft(
     val id: String,
     val displayName: String? = null,
     val baseUrl: String,
-    val models: List<AgentProviderModelSummary>
+    val models: List<AgentProviderModelSummary>,
+    /** CC Switch 预置声明的请求协议；空时 Adapter 用自身默认协议写入。 */
+    val apiFormat: String? = null,
 )
 
 /** 供应商预置的展示分类；只负责配对页组织，不改变模型来源或运行时协议。 */
@@ -372,6 +374,11 @@ data class AgentProviderPreset(
     val documentationUrl: String? = null,
     /** models.dev 可能有数百个模型；表单只预填最近一批，但这里保留完整数量用于明确提示。 */
     val catalogModelCount: Int = models.size,
+    /**
+     * CC Switch 预置声明的请求协议格式（如 openai-completions / anthropic-messages）；
+     * 为空表示由 Adapter 默认协议写入。它属于预置事实，不在表单中展示，也不可编辑。
+     */
+    val apiFormat: String? = null,
 )
 
 /** Agent 官方权限档位的生效边界；显示层不得把它推断成更强的沙箱承诺。 */

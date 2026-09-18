@@ -282,7 +282,7 @@ internal class AgentSessionConfigurationPanel(
         )
         return childPanel("供应商", selectedGroup?.name ?: "暂无可选供应商", maxHeight) { host ->
             if (model == null || groups.isEmpty()) {
-                host.addView(message("当前 Agent 没有可选供应商"))
+                host.addView(message("当前没有供应商，请配置供应商"))
                 return@childPanel
             }
             groups.forEach { group ->
