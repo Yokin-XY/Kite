@@ -135,21 +135,14 @@ internal class ResourceFeatureController(
             facts.currentOperation.isNotBlank() -> facts.currentOperation
             else -> KiteResourceInstallStore.OP_INSTALL
         }
-        val repairRequired = registryEntry?.status == KiteResourceInstallStore.STATUS_INSTALLED &&
-            registryEntry.operation == KiteResourceInstallRecipes.OP_REPAIR &&
-            registryEntry.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_FAILED
         return ResourceItemUiState(
             descriptor = descriptor,
             phase = resourcePhase(facts, openRunStatus),
             projection = projection,
-            primaryIntent = if (repairRequired) {
-                KiteResourceActionIntent.Repair
-            } else {
-                KiteResourceActionCoordinator.primaryIntent(
-                    projection.actionLabel,
-                    reopenInstall = facts.installPlanInProgress
-                )
-            },
+            primaryIntent = KiteResourceActionCoordinator.primaryIntent(
+                projection.actionLabel,
+                reopenInstall = facts.installPlanInProgress
+            ),
             secondaryIntent = secondaryIntent(projection.secondaryActionLabel, facts),
             operation = operation,
             operationRun = gateway.operationRunSnapshot(descriptor.id, operation),
@@ -168,9 +161,6 @@ internal class ResourceFeatureController(
         val plan = KiteResourceSourcePlanFactory.plan(manifest)
         val userManaged = manifest.management.userLifecycleEnabled
         val idle = !facts.extraBusy && !facts.preparing && !facts.installing && !facts.uninstalling
-        val repairRequired = registryEntry?.status == KiteResourceInstallStore.STATUS_INSTALLED &&
-            registryEntry.operation == KiteResourceInstallRecipes.OP_REPAIR &&
-            registryEntry.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_FAILED
         return ResourceMaintenanceUiState(
             userLifecycleEnabled = userManaged,
             installedVersion = registryEntry?.version.orEmpty(),
@@ -181,8 +171,6 @@ internal class ResourceFeatureController(
             updateEnabled = userManaged && facts.installed && idle && plan.capabilities.update &&
                 registryEntry?.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE &&
                 registryEntry.latestVersion.isNotBlank(),
-            repairEnabled = userManaged && repairRequired && idle && plan.capabilities.install,
-            reinstallEnabled = userManaged && facts.installed && idle && plan.capabilities.install && plan.capabilities.uninstall,
             uninstallEnabled = userManaged && facts.installed && idle && plan.capabilities.uninstall
         )
     }
@@ -264,8 +252,6 @@ internal class ResourceFeatureController(
         val allowed = when (action.intent) {
             KiteResourceActionIntent.CheckUpdate -> item.maintenance.checkUpdateEnabled
             KiteResourceActionIntent.Update -> item.maintenance.updateEnabled
-            KiteResourceActionIntent.Repair -> item.maintenance.repairEnabled
-            KiteResourceActionIntent.Reinstall -> item.maintenance.reinstallEnabled
             KiteResourceActionIntent.Uninstall -> item.maintenance.uninstallEnabled
             else -> false
         }

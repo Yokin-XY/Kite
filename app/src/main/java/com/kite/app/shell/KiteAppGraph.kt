@@ -102,6 +102,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -115,6 +117,7 @@ internal class KiteAppGraph private constructor(context: Context) {
     private var agentCatalogPreloadJob: Job? = null
     @Volatile
     private var resourceDefinitionRefreshJob: Job? = null
+    private var silentUpdateCheckJob: Job? = null
 
     val diagnostics: KiteDiagnostics by lazy { KiteDiagnostics(appContext) }
     val bridgeClient: KiteBridgeClient by lazy { KiteBridgeClient(diagnostics, appContext) }
@@ -261,24 +264,30 @@ internal class KiteAppGraph private constructor(context: Context) {
         }
 
     /**
-     * 启动时对已安装资源静默检查一次更新（零网络：official_command 读商店 latestVersion，
-     * 旧源走既有探测）。结果只写注册表（卡片亮可更新），不产生 UI 副作用。
+     * 已安装资源静默更新检查（自动通道）：启动后每 6 小时一次，
+     * 零网络优先（official_command 读商店 latestVersion）。
+     * 手动通道：资源管理页检查更新按钮 + 下拉刷新。
      */
     private fun silentUpdateCheck() {
-        processScope.launch {
-            runCatching {
-                val environmentId = resourceInstallStore.currentEnvironmentId()
-                val installedIds = resourceInstallStore.registrySnapshot(environmentId = environmentId)
-                    .filterValues { it.installed }
-                    .keys
-                    .toList()
-                if (installedIds.isEmpty()) return@runCatching
-                resourceActionWorkflowCoordinator.checkUpdates(installedIds)
-                Log.i(TAG, "Silent update check completed for ${installedIds.size} resources")
-            }.onFailure { error ->
-                Log.w(TAG, "Silent update check failed", error)
+        if (silentUpdateCheckJob?.isActive == true) return
+        silentUpdateCheckJob = processScope.launch {
+            while (isActive) {
+                runCatching { performSilentUpdateCheck() }
+                    .onFailure { error -> Log.w(TAG, "Silent update check failed", error) }
+                delay(SILENT_UPDATE_CHECK_INTERVAL_MS)
             }
         }
+    }
+
+    private suspend fun performSilentUpdateCheck() {
+        val environmentId = resourceInstallStore.currentEnvironmentId()
+        val installedIds = resourceInstallStore.registrySnapshot(environmentId = environmentId)
+            .filterValues { it.installed }
+            .keys
+            .toList()
+        if (installedIds.isEmpty()) return
+        resourceActionWorkflowCoordinator.checkUpdates(installedIds)
+        Log.i(TAG, "Silent update check completed for ${installedIds.size} resources")
     }
 
     fun resourceDefinitionStoreStatusFile(): java.io.File = resourceDefinitionStore.statusFile()
@@ -587,6 +596,7 @@ internal class KiteAppGraph private constructor(context: Context) {
 
     companion object {
         private const val TAG = "KiteAppGraph"
+        private const val SILENT_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L
         private val INSTALL_WIZARD_ENDED_STATUSES = setOf(
             CardRunStatus.Unknown,
             CardRunStatus.Stopped,

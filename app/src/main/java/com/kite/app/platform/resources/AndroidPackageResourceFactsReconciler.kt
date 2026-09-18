@@ -61,9 +61,9 @@ internal class AndroidPackageResourceFactsReconciler(
                     }
                 }
                 registered -> {
-                    installStore.markRepairRequired(
+                    // 修复概念已退场：应用被移除就当未获取，由[获取]重新安装。
+                    installStore.invalidateMissingInstallations(
                         resourceIds = listOf(manifest.id),
-                        explanation = "Android 应用已被移除，需要重新获取",
                         environmentId = environmentId,
                     )
                     missing += manifest.id

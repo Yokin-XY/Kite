@@ -73,7 +73,11 @@ internal object KiteResourceInstallContract {
                 copyIfPresent(relations, "defaults")
             }.takeIf { it.length() > 0 }?.let { put("relations", it) }
         }
-        copyIfPresent(manifest, "source")
+        // source 剔除纯提示性字段：latestVersion 由商店清单日常维护，
+        // 它的变化不代表安装实质变化，不应触发重装。
+        manifest.optJSONObject("source")?.let { source ->
+            put("source", withoutVolatileFields(source))
+        }
         copyIfPresent(manifest, "paths")
         manifest.optJSONObject("actions")
             ?.takeIf { it.has("install") }
@@ -83,6 +87,14 @@ internal object KiteResourceInstallContract {
     private fun JSONObject.copyIfPresent(source: JSONObject, key: String) {
         if (source.has(key)) put(key, source.opt(key))
     }
+
+    private fun withoutVolatileFields(source: JSONObject): JSONObject = JSONObject().apply {
+        source.keys().asSequence()
+            .filter { key -> key != VOLATILE_SOURCE_LATEST_VERSION }
+            .forEach { key -> put(key, source.opt(key)) }
+    }
+
+    private const val VOLATILE_SOURCE_LATEST_VERSION = "latestVersion"
 
     private fun JSONObject.baseVersion(): String =
         optJSONObject("base")?.optString("version").orEmpty().trim()

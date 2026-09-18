@@ -31,6 +31,7 @@ internal class ResourcesFragment : ResourceFeatureFragment() {
             onManage = { send(ResourceFeatureRequest.OpenManage) },
             onOpenDetail = { resourceId -> send(ResourceFeatureRequest.OpenDetail(resourceId)) },
             onPrimaryAction = ::submitPrimaryAction,
+            onSecondaryAction = ::submitSecondaryAction,
             onRetry = { refreshResources(force = true) }
         ).also { screen = it }.root
     }
@@ -56,6 +57,15 @@ internal class ResourcesFragment : ResourceFeatureFragment() {
 
     private fun submitPrimaryAction(resourceId: String) {
         submitPrimary(
+            resourceId = resourceId,
+            source = KiteResourceActionSource.Card,
+            onAccepted = { intent -> screen?.acknowledge(resourceId, intent) },
+            onUnavailable = { screen?.render(controller.state.value) }
+        )
+    }
+
+    private fun submitSecondaryAction(resourceId: String) {
+        submitSecondary(
             resourceId = resourceId,
             source = KiteResourceActionSource.Card,
             onAccepted = { intent -> screen?.acknowledge(resourceId, intent) },

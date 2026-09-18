@@ -41,10 +41,10 @@ class ResourceSupplementalScreensTest {
         )
 
         screen.render(item(maintenance = managedMaintenance()), listOf(history))
-        val checkButton = screen.root.views().filterIsInstance<TextView>().first {
-            it.text.toString() == context.getString(R.string.resource_action_check_update)
+        val uninstallButton = screen.root.views().filterIsInstance<TextView>().first {
+            it.text.toString() == context.getString(R.string.resource_action_uninstall)
         }
-        checkButton.performClick()
+        uninstallButton.performClick()
         val historyRow = screen.root.views().first { view ->
             view.isClickable && view.texts().any {
                 it.contains(context.getString(R.string.runtime_management_status_completed))
@@ -53,10 +53,15 @@ class ResourceSupplementalScreensTest {
         historyRow.performClick()
 
         assertEquals(listOf("history"), opened)
-        assertEquals(listOf(KiteResourceActionIntent.CheckUpdate), maintenance)
+        assertEquals(listOf(KiteResourceActionIntent.Uninstall), maintenance)
         assertTrue(screen.root.texts().contains(context.getString(R.string.resource_manage_title)))
         assertTrue(screen.root.texts().contains(context.getString(R.string.resource_more_create_card)))
         assertFalse(screen.root.texts().contains("修复"))
+        // 更新入口已收敛到资源管理页：详情维护区不再出现检查更新/更新按钮。
+        assertFalse(screen.root.views().filterIsInstance<TextView>().any {
+            it.text.toString() == context.getString(R.string.resource_action_check_update) ||
+                it.text.toString() == context.getString(R.string.resource_action_update)
+        })
 
         screen.render(
             item(maintenance = managedMaintenance(
@@ -66,12 +71,12 @@ class ResourceSupplementalScreensTest {
             )),
             listOf(history)
         )
-        val rebound = screen.root.views().filterIsInstance<TextView>().first {
-            it.text.toString() == context.getString(R.string.resource_maintenance_update_to, "2.0.0")
-        }
-        assertSame(checkButton, rebound)
+        // 可更新只作为状态文案呈现，不提供详情页更新按钮。
+        assertTrue(screen.root.texts().contains(
+            context.getString(R.string.resource_maintenance_available, "1.0.0", "2.0.0")
+        ))
 
-        screen.acknowledge(KiteResourceActionIntent.Update)
+        screen.acknowledge(KiteResourceActionIntent.Uninstall)
         screen.render(
             item(
                 phase = ResourceItemPhase.Installing,
@@ -83,8 +88,8 @@ class ResourceSupplementalScreensTest {
             ),
             listOf(history)
         )
-        assertTrue(screen.root.texts().contains(context.getString(R.string.resource_maintenance_updating)))
-        assertTrue(screen.root.texts().contains(context.getString(R.string.resource_state_updating)))
+        assertTrue(screen.root.texts().contains(context.getString(R.string.resource_maintenance_updating))
+            || screen.root.texts().contains(context.getString(R.string.resource_state_updating)))
     }
 
     @Test
@@ -125,7 +130,6 @@ class ResourceSupplementalScreensTest {
         updateStatus = updateStatus,
         checkUpdateEnabled = !updateEnabled,
         updateEnabled = updateEnabled,
-        reinstallEnabled = true,
         uninstallEnabled = true
     )
 

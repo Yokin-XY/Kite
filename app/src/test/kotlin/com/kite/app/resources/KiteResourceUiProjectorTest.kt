@@ -22,8 +22,8 @@ class KiteResourceUiProjectorTest {
         assertProjection(installing = true, state = "获取中", action = "获取中", enabled = true, secondary = "取消")
         assertProjection(
             installing = true,
-            currentOperation = KiteResourceInstallRecipes.OP_REPAIR,
-            state = "修复中",
+            currentOperation = KiteResourceInstallRecipes.OP_UPDATE,
+            state = "更新中",
             action = "查看进度",
             enabled = true,
         )
@@ -32,8 +32,9 @@ class KiteResourceUiProjectorTest {
             installed = true,
             updateAvailable = true,
             state = "可更新",
-            action = "更新",
+            action = "打开",
             enabled = true,
+            secondary = "卸载"
         )
         assertProjection(uninstalling = true, state = "卸载中", action = "卸载中", enabled = false)
         assertProjection(failed = true, state = "获取失败", action = "重新获取", enabled = true, secondary = "取消")

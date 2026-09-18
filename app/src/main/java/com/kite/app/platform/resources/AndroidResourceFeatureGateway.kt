@@ -162,13 +162,15 @@ internal class AndroidResourceFeatureGateway(
                         }
                     }
                     KiteResourceInstallContractResolution.RepairRequired -> {
-                        val alreadyRequired =
-                            entry.operation == KiteResourceInstallRecipes.OP_REPAIR &&
-                                entry.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_FAILED
-                        if (!alreadyRequired) {
-                            installStore.markRepairRequired(
-                                resourceIds = setOf(manifest.id),
-                                explanation = "资源定义已变化，需要修复安装",
+                        // 修复概念已退场：真漂移并入可更新，由已安装页更新入口收敛。
+                        val alreadyFlagged =
+                            entry.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE &&
+                                entry.latestVersion == manifest.version
+                        if (!alreadyFlagged) {
+                            installStore.markDefinitionUpdateAvailable(
+                                resourceId = manifest.id,
+                                installedVersion = entry.version.ifBlank { manifest.version },
+                                latestVersion = manifest.version,
                                 environmentId = environmentId,
                             )
                         }

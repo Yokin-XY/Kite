@@ -28,13 +28,13 @@ object KiteResourceUiProjector {
             installPlanInProgress -> "获取中" to "获取中"
             preparing -> "准备中" to "准备中"
             installing && currentOperation == KiteResourceInstallRecipes.OP_UPDATE -> "更新中" to "查看进度"
-            installing && currentOperation == KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装中" to "查看进度"
-            installing && currentOperation == KiteResourceInstallRecipes.OP_REPAIR -> "修复中" to "查看进度"
             installing -> "获取中" to "获取中"
             uninstalling -> "卸载中" to "卸载中"
             failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "卸载失败" to "重新获取"
             failed -> "获取失败" to "重新获取"
-            installed && updateAvailable -> "可更新" to "更新"
+            // 更新入口收敛到资源管理页（已安装）：卡片主按钮保持"打开"，
+            // 仅在状态标签里提示可更新。
+            installed && updateAvailable -> "可更新" to "打开"
             installed -> openRunLabels(openRunStatus) ?: ("已获取" to "打开")
             else -> idleStateLabel to "获取"
         }

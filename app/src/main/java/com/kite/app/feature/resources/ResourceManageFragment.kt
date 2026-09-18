@@ -4,6 +4,8 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import com.kite.app.action.KiteResourceActionIntent
+import com.kite.app.action.KiteResourceActionRequest
 import com.kite.app.action.KiteResourceActionSource
 
 /** 资源管理 Feature。队列、已获取列表、滚动与动作绑定均归本页面所有。 */
@@ -27,6 +29,7 @@ internal class ResourceManageFragment : ResourceFeatureFragment() {
             onBack = { send(ResourceFeatureRequest.Back) },
             onOpenDetail = { resourceId -> send(ResourceFeatureRequest.OpenDetail(resourceId)) },
             onPrimaryAction = ::submitPrimaryAction,
+            onUninstallAction = ::submitSecondaryAction,
             onOpenPlan = { targetResourceId ->
                 send(ResourceFeatureRequest.OpenInstallPlan(targetResourceId))
             },
@@ -36,6 +39,18 @@ internal class ResourceManageFragment : ResourceFeatureFragment() {
             onCheckInstalledUpdates = { resourceIds ->
                 screen?.acknowledgeUpdateCheck()
                 send(ResourceFeatureRequest.CheckInstalledUpdates(resourceIds))
+            },
+            onUpdateResource = { resourceId ->
+                screen?.acknowledge(resourceId, KiteResourceActionIntent.Update)
+                send(
+                    ResourceFeatureRequest.SubmitAction(
+                        KiteResourceActionRequest(
+                            resourceId,
+                            KiteResourceActionIntent.Update,
+                            KiteResourceActionSource.Card
+                        )
+                    )
+                )
             },
             onRetry = { refreshResources(force = true) }
         ).also { screen = it }.root
@@ -60,6 +75,15 @@ internal class ResourceManageFragment : ResourceFeatureFragment() {
 
     private fun submitPrimaryAction(resourceId: String) {
         submitPrimary(
+            resourceId = resourceId,
+            source = KiteResourceActionSource.Card,
+            onAccepted = { intent -> screen?.acknowledge(resourceId, intent) },
+            onUnavailable = { screen?.render(controller.state.value) }
+        )
+    }
+
+    private fun submitSecondaryAction(resourceId: String) {
+        submitSecondary(
             resourceId = resourceId,
             source = KiteResourceActionSource.Card,
             onAccepted = { intent -> screen?.acknowledge(resourceId, intent) },

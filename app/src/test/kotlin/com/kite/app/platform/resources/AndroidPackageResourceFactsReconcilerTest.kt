@@ -47,15 +47,8 @@ class AndroidPackageResourceFactsReconcilerTest {
 
         assertEquals(setOf(manifest.id), result.missingResourceIds)
         assertFalse(result.readyResourceIds.contains(manifest.id))
-        assertTrue(store.isInstalled(manifest.id, environmentId))
-        assertEquals(
-            KiteResourceInstallStore.UPDATE_STATUS_FAILED,
-            store.registryEntry(manifest.id, environmentId)?.updateStatus,
-        )
-        assertEquals(
-            KiteResourceInstallStore.OP_REPAIR,
-            store.registryEntry(manifest.id, environmentId)?.operation,
-        )
+        // 修复概念已退场：登记直接失效，回到未获取，由[获取]重新安装。
+        assertFalse(store.isInstalled(manifest.id, environmentId))
     }
 
     private fun manifest() = KiteResourceManifestLoader(context).parseManifestJson(

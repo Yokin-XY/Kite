@@ -24,9 +24,11 @@ internal class ResourceManageScreen(
     private val onBack: () -> Unit,
     private val onOpenDetail: (String) -> Unit,
     private val onPrimaryAction: (String) -> Unit,
+    private val onUninstallAction: (String) -> Unit = {},
     private val onOpenPlan: (String) -> Unit,
     private val onCancelPlan: (String, List<String>) -> Unit,
-    private val onCheckInstalledUpdates: (List<String>) -> Unit,
+    private val onCheckInstalledUpdates: (List<String>) -> Unit = {},
+    private val onUpdateResource: (String) -> Unit = {},
     private val onRetry: () -> Unit
 ) {
     private val environment = ResourceFeatureTheme.environment(context)
@@ -35,7 +37,8 @@ internal class ResourceManageScreen(
         context = context,
         tokens = ResourceFeatureTheme.tokens(context),
         onOpenDetail = onOpenDetail,
-        onPrimaryAction = onPrimaryAction
+        onPrimaryAction = onPrimaryAction,
+        onSecondaryAction = onUninstallAction
     )
     private val queueHost = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val installedHost = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
@@ -53,6 +56,8 @@ internal class ResourceManageScreen(
     private var queueBinding: QueueBinding? = null
     private var installedCheckResourceIds: List<String> = emptyList()
     private var restoredScrollY = initialScrollY.coerceAtLeast(0)
+    private var pullRefreshArmed = false
+    private var pullRefreshTriggered = false
 
     val root: View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -75,6 +80,41 @@ internal class ResourceManageScreen(
             0,
             1f
         ))
+        attachPullToCheckUpdates()
+    }
+
+    /** 已安装页下拉刷新：页面已在顶部时继续下拉，触发一次批量更新检查（手动主动通道）。 */
+    private fun attachPullToCheckUpdates() {
+        var downRawY = 0f
+        scrollView.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawY = event.rawY
+                    pullRefreshArmed = scrollView.scrollY == 0
+                    pullRefreshTriggered = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (pullRefreshArmed && !pullRefreshTriggered &&
+                        event.rawY - downRawY > factory.dp(72)
+                    ) {
+                        pullRefreshTriggered = true
+                        performPullCheckUpdates()
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    pullRefreshArmed = false
+                    pullRefreshTriggered = false
+                }
+            }
+            false
+        }
+    }
+
+    private fun performPullCheckUpdates() {
+        val resourceIds = installedCheckResourceIds
+        if (resourceIds.isEmpty()) return
+        acknowledgeUpdateCheck()
+        onCheckInstalledUpdates(resourceIds)
     }
 
     fun render(state: ResourceFeatureUiState) {
@@ -393,6 +433,19 @@ internal class ResourceManageScreen(
             }
         } else {
             installed.forEach { item -> factory.bind(installedBindings[item.resourceId] ?: return@forEach, item) }
+        }
+        // 更新入口收敛到本页：可更新项的动作按钮覆盖为[更新]。
+        applyInstalledUpdateActions(installed)
+    }
+
+    private fun applyInstalledUpdateActions(installed: List<ResourceItemUiState>) {
+        installed.forEach { item ->
+            val binding = installedBindings[item.resourceId] ?: return@forEach
+            if (!item.maintenance.updateEnabled) return@forEach
+            binding.actionButton.apply {
+                text = context.getString(R.string.resource_action_update)
+                setOnClickListener { onUpdateResource(item.resourceId) }
+            }
         }
     }
 

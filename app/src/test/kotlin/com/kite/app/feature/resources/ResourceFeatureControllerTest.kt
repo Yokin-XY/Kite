@@ -151,8 +151,8 @@ class ResourceFeatureControllerTest {
     @Test
     fun `维护运行中主按钮保持可用并打开同一运行进度`() = runTest {
         val run = ResourceFeatureRunSnapshot(
-            instanceId = "repair-instance",
-            operation = KiteResourceInstallRecipes.OP_REPAIR,
+            instanceId = "update-instance",
+            operation = KiteResourceInstallRecipes.OP_UPDATE,
             status = CardRunStatus.Running,
             surface = CardRunSurface.Report,
             startedAt = 10L,
@@ -161,17 +161,16 @@ class ResourceFeatureControllerTest {
         val gateway = FakeGateway().apply {
             registry["tool"] = entry(
                 status = KiteResourceRegistry.STATUS_INSTALLING,
-                operation = KiteResourceInstallRecipes.OP_REPAIR,
-                updateStatus = KiteResourceInstallStore.UPDATE_STATUS_FAILED,
+                operation = KiteResourceInstallRecipes.OP_UPDATE,
             )
-            operationRuns["tool" to KiteResourceInstallRecipes.OP_REPAIR] = run
+            operationRuns["tool" to KiteResourceInstallRecipes.OP_UPDATE] = run
         }
         val controller = ResourceFeatureController(gateway)
 
         controller.dispatch(ResourceFeatureAction.Refresh())
 
         val item = controller.state.value.item("tool")!!
-        assertEquals("修复中", item.projection.stateLabel)
+        assertEquals("更新中", item.projection.stateLabel)
         assertTrue(item.projection.actionEnabled)
         assertEquals(KiteResourceActionIntent.ReopenOperation, item.primaryIntent)
         assertEquals(run, item.operationRun)
@@ -322,7 +321,10 @@ class ResourceFeatureControllerTest {
         val item = controller.state.value.item("tool")!!
         assertTrue(item.maintenance.checkUpdateEnabled)
         assertTrue(item.maintenance.updateEnabled)
-        assertEquals(KiteResourceActionIntent.Update, item.primaryIntent)
+        // 更新入口收敛到资源管理页：卡片主意图保持打开，状态标签提示可更新。
+        assertEquals(KiteResourceActionIntent.Open, item.primaryIntent)
+        assertEquals("可更新", item.projection.stateLabel)
+        assertEquals("打开", item.projection.actionLabel)
         val effect = controller.dispatch(
             ResourceFeatureAction.Explicit(
                 "tool",

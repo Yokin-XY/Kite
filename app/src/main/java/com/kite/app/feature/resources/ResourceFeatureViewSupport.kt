@@ -38,6 +38,7 @@ internal data class ResourceItemViewBinding(
     val root: View,
     val stateView: TextView?,
     val actionButton: TextView,
+    val secondaryButton: TextView? = null,
     val compact: Boolean,
     var item: ResourceItemUiState
 )
@@ -46,7 +47,8 @@ internal class ResourceFeatureViewFactory(
     private val context: Context,
     internal val tokens: ThemeTokens,
     private val onOpenDetail: (String) -> Unit,
-    private val onPrimaryAction: (String) -> Unit
+    private val onPrimaryAction: (String) -> Unit,
+    private val onSecondaryAction: (String) -> Unit = {}
 ) {
     internal val ui = UiKit(context, ResourceFeatureTheme.environment(context))
 
@@ -138,6 +140,7 @@ internal class ResourceFeatureViewFactory(
             setPadding(0, dp(3), 0, 0)
         }
         val action = TextView(context)
+        val secondary = TextView(context)
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -170,15 +173,25 @@ internal class ResourceFeatureViewFactory(
                 })
                 addView(stateView)
             })
-            addView(action, LinearLayout.LayoutParams(dp(60), dp(32)))
+            addView(compactActionRow(action, secondary), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)
+            ))
         }
-        return ResourceItemViewBinding(item.resourceId, root, stateView, action, compact = true, item = item)
-            .also(::bind)
+        return ResourceItemViewBinding(
+            resourceId = item.resourceId,
+            root = root,
+            stateView = stateView,
+            actionButton = action,
+            secondaryButton = secondary,
+            compact = true,
+            item = item
+        ).also(::bind)
     }
 
     fun shelfItem(item: ResourceItemUiState): ResourceItemViewBinding {
         val presentation = item.presentation(context)
         val action = TextView(context)
+        val secondary = TextView(context)
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -199,13 +212,38 @@ internal class ResourceFeatureViewFactory(
                 setPadding(0, dp(7), 0, 0)
                 layoutParams = LinearLayout.LayoutParams(dp(52), ViewGroup.LayoutParams.WRAP_CONTENT)
             })
-            addView(action, LinearLayout.LayoutParams(dp(60), dp(32)).apply {
+            addView(compactActionRow(action, secondary), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)
+            ).apply {
                 setMargins(0, dp(7), 0, 0)
             })
         }
-        return ResourceItemViewBinding(item.resourceId, root, null, action, compact = true, item = item)
-            .also(::bind)
+        return ResourceItemViewBinding(
+            resourceId = item.resourceId,
+            root = root,
+            stateView = null,
+            actionButton = action,
+            secondaryButton = secondary,
+            compact = true,
+            item = item
+        ).also(::bind)
     }
+
+    /** 卡片右下角动作区：主胶囊 + 可选辅胶囊（危险色），与详情页主/辅按钮视觉同源。 */
+    private fun compactActionRow(primary: TextView, secondary: TextView): LinearLayout =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(primary, LinearLayout.LayoutParams(dp(60), ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(secondary, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ).apply {
+                setMargins(dp(6), 0, 0, 0)
+                secondary.setPadding(dp(10), 0, dp(10), 0)
+            })
+            secondary.visibility = View.GONE
+        }
 
     fun bind(binding: ResourceItemViewBinding, item: ResourceItemUiState = binding.item) {
         binding.item = item
@@ -236,11 +274,38 @@ internal class ResourceFeatureViewFactory(
                 setOnClickListener { onPrimaryAction(item.resourceId) }
             }
         }
+        binding.secondaryButton?.apply {
+            val intent = item.secondaryIntent
+            if (intent == null) {
+                visibility = View.GONE
+                setOnClickListener(null)
+            } else {
+                visibility = View.VISIBLE
+                text = actionLabel(intent)
+                textSize = if (binding.compact) 12.2f else 13f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(tokens.danger)
+                alpha = if (presentation.actionEnabled) 1f else 0.58f
+                isEnabled = presentation.actionEnabled
+                background = roundedBox(tokens.dangerSoft, tokens.dangerBorder, dp(16).toFloat())
+                setOnClickListener(null)
+                if (presentation.actionEnabled) {
+                    setOnClickListener { onSecondaryAction(item.resourceId) }
+                }
+            }
+        }
     }
 
     fun acknowledge(binding: ResourceItemViewBinding?, label: String) {
         binding?.actionButton?.apply {
             text = label
+            isEnabled = false
+            alpha = 0.58f
+            setOnClickListener(null)
+        }
+        binding?.secondaryButton?.apply {
             isEnabled = false
             alpha = 0.58f
             setOnClickListener(null)
@@ -256,8 +321,6 @@ internal class ResourceFeatureViewFactory(
         KiteResourceActionIntent.Uninstall -> R.string.resource_state_uninstalling
         KiteResourceActionIntent.CheckUpdate -> R.string.resource_state_checking_update
         KiteResourceActionIntent.Update -> R.string.resource_state_updating
-        KiteResourceActionIntent.Reinstall -> R.string.resource_state_preparing
-        KiteResourceActionIntent.Repair -> R.string.resource_state_repairing
         KiteResourceActionIntent.CancelInstall,
         KiteResourceActionIntent.CancelFailedInstall -> R.string.resource_action_cancel
         KiteResourceActionIntent.BusyStatus,
@@ -286,8 +349,6 @@ internal class ResourceFeatureViewFactory(
         KiteResourceActionIntent.Uninstall -> R.string.resource_action_uninstall
         KiteResourceActionIntent.CheckUpdate -> R.string.resource_action_check_update
         KiteResourceActionIntent.Update -> R.string.resource_action_update
-        KiteResourceActionIntent.Reinstall -> R.string.resource_action_reinstall
-        KiteResourceActionIntent.Repair -> R.string.resource_action_repair
         KiteResourceActionIntent.CancelInstall,
         KiteResourceActionIntent.CancelFailedInstall -> R.string.resource_action_cancel
         KiteResourceActionIntent.BusyStatus -> R.string.resource_action_processing

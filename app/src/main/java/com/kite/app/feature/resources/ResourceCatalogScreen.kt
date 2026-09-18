@@ -29,13 +29,15 @@ internal class ResourceCatalogScreen(
     private val onManage: () -> Unit,
     private val onOpenDetail: (String) -> Unit,
     private val onPrimaryAction: (String) -> Unit,
+    private val onSecondaryAction: (String) -> Unit = {},
     private val onRetry: () -> Unit
 ) {
     private val factory = ResourceFeatureViewFactory(
         context = context,
         tokens = ResourceFeatureTheme.tokens(context),
         onOpenDetail = onOpenDetail,
-        onPrimaryAction = onPrimaryAction
+        onPrimaryAction = onPrimaryAction,
+        onSecondaryAction = onSecondaryAction
     )
     private val statusHost = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val heroHost = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }

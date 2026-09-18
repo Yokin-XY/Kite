@@ -54,6 +54,47 @@ class KiteResourceInstallContractTest {
         assertTrue(KiteResourceInstallContract.hasDrift(current, "not-json"))
     }
 
+    @Test
+    fun latestVersionMaintenanceDoesNotInvalidateInstalledContent() {
+        val installed = officialCommandManifest(latestVersion = "2.1.272")
+        val current = officialCommandManifest(latestVersion = "2.1.274")
+
+        assertFalse(KiteResourceInstallContract.hasDrift(current, installed.toString()))
+        assertEquals(
+            KiteResourceInstallContractResolution.Current,
+            KiteResourceInstallContract.resolve(current, installed.toString()),
+        )
+    }
+
+    @Test
+    fun officialCommandChangeStillInvalidateInstalledContent() {
+        val installed = officialCommandManifest(latestVersion = "2.1.272", command = "npm install -g agent@latest")
+        val current = officialCommandManifest(latestVersion = "2.1.290", command = "npm install -g agent2@latest")
+
+        assertTrue(KiteResourceInstallContract.hasDrift(current, installed.toString()))
+    }
+
+    private fun officialCommandManifest(
+        latestVersion: String,
+        command: String = "npm install -g agent@latest",
+    ): JSONObject = JSONObject(
+        """
+        {
+          "id":"test.official",
+          "base":{"name":"Official","description":"官方机制","version":"npm"},
+          "management":{"mode":"managed_extension","managedCommands":["agent"]},
+          "source":{
+            "type":"official_command",
+            "package":"agent",
+            "command":"$command",
+            "uninstallCommand":"npm uninstall -g agent",
+            "latestVersion":"$latestVersion"
+          },
+          "paths":{"installRoot":"/workspace/.kf/software/test.official","binRoot":"/workspace/.kf/bin"}
+        }
+        """.trimIndent()
+    )
+
     private fun manifest(
         description: String,
         command: String,

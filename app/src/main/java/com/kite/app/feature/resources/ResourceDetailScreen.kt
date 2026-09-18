@@ -197,7 +197,7 @@ internal class ResourceDetailScreen(
             background = factory.roundedBox(
                 factory.tokens.primarySubtle,
                 Color.TRANSPARENT,
-                factory.dp(15).toFloat()
+                factory.dp(16).toFloat()
             )
             setOnClickListener(null)
             if (presentation.actionEnabled) setOnClickListener { onPrimaryAction(item.resourceId) }
@@ -220,7 +220,7 @@ internal class ResourceDetailScreen(
                 background = factory.roundedBox(
                     factory.tokens.dangerSoft,
                     factory.tokens.dangerBorder,
-                    factory.dp(15).toFloat()
+                    factory.dp(16).toFloat()
                 )
                 if (presentation.actionEnabled) setOnClickListener { onSecondaryAction(item.resourceId) }
             }

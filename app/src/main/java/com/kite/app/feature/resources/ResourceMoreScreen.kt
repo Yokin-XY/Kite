@@ -94,8 +94,6 @@ internal class ResourceMoreScreen(
         maintenanceStatus?.text = context.getString(when (intent) {
             KiteResourceActionIntent.CheckUpdate -> R.string.resource_maintenance_checking
             KiteResourceActionIntent.Update -> R.string.resource_maintenance_updating
-            KiteResourceActionIntent.Reinstall -> R.string.resource_maintenance_reinstalling
-            KiteResourceActionIntent.Repair -> R.string.resource_maintenance_repairing
             KiteResourceActionIntent.Uninstall -> R.string.resource_state_uninstalling
             else -> R.string.resource_action_processing
         })
@@ -206,21 +204,10 @@ internal class ResourceMoreScreen(
             }
             addView(maintenanceStatus)
             if (item.maintenance.userLifecycleEnabled) {
-                addView(maintenanceButton(KiteResourceActionIntent.CheckUpdate), LinearLayout.LayoutParams(
+                addView(maintenanceButton(KiteResourceActionIntent.Uninstall, danger = true), LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     dp(44)
                 ).apply { setMargins(0, dp(13), 0, 0) })
-                addView(maintenanceButton(KiteResourceActionIntent.Repair), LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(42)
-                ).apply { setMargins(0, dp(9), 0, 0) })
-                addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    addView(maintenanceButton(KiteResourceActionIntent.Reinstall), actionLayoutParams())
-                    addView(maintenanceButton(KiteResourceActionIntent.Uninstall, danger = true), actionLayoutParams(dp(8)))
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply {
-                    setMargins(0, dp(9), 0, 0)
-                })
             }
         })
     }
@@ -240,11 +227,6 @@ internal class ResourceMoreScreen(
             maintenanceButtons[intent] = this
         }
 
-    private fun actionLayoutParams(startMargin: Int = 0): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-            if (startMargin > 0) setMargins(startMargin, 0, 0, 0)
-        }
-
     private fun bindMaintenance(item: ResourceItemUiState) {
         val state = item.maintenance
         val nextSignature = state.hashCode()
@@ -255,10 +237,6 @@ internal class ResourceMoreScreen(
             item.phase == ResourceItemPhase.NotInstalled -> context.getString(R.string.resource_maintenance_install_first)
             item.phase == ResourceItemPhase.Installing && item.operation == KiteResourceInstallRecipes.OP_UPDATE ->
                 context.getString(R.string.resource_maintenance_updating)
-            item.phase == ResourceItemPhase.Installing && item.operation == KiteResourceInstallRecipes.OP_REINSTALL ->
-                context.getString(R.string.resource_maintenance_reinstalling)
-            item.phase == ResourceItemPhase.Installing && item.operation == KiteResourceInstallRecipes.OP_REPAIR ->
-                context.getString(R.string.resource_maintenance_repairing)
             item.phase == ResourceItemPhase.Uninstalling -> context.getString(R.string.resource_state_uninstalling)
             state.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_CHECKING ->
                 context.getString(R.string.resource_maintenance_checking)
@@ -273,39 +251,13 @@ internal class ResourceMoreScreen(
             state.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_UNSUPPORTED ->
                 context.getString(R.string.resource_maintenance_unsupported)
             state.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_FAILED ->
-                context.getString(
-                    if (item.operation == KiteResourceInstallRecipes.OP_REINSTALL) {
-                        R.string.resource_maintenance_reinstall_failed
-                    } else if (item.operation == KiteResourceInstallRecipes.OP_REPAIR) {
-                        R.string.resource_maintenance_repair_required
-                    } else {
-                        R.string.resource_maintenance_check_failed
-                    },
-                    state.statusSummary
-                )
+                context.getString(R.string.resource_maintenance_check_failed, state.statusSummary)
             else -> context.getString(
                 R.string.resource_maintenance_installed_version,
                 state.installedVersion.ifBlank { context.getString(R.string.resource_maintenance_unknown_version) }
             )
         }
 
-        val primaryIntent = if (state.updateEnabled) KiteResourceActionIntent.Update else KiteResourceActionIntent.CheckUpdate
-        maintenanceButtons[KiteResourceActionIntent.CheckUpdate]?.apply {
-            val enabled = if (state.updateEnabled) true else state.checkUpdateEnabled
-            text = when {
-                item.phase == ResourceItemPhase.Installing && item.operation == KiteResourceInstallRecipes.OP_UPDATE ->
-                    context.getString(R.string.resource_state_updating)
-                state.updateEnabled -> context.getString(R.string.resource_maintenance_update_to, state.latestVersion)
-                else -> context.getString(R.string.resource_action_check_update)
-            }
-            isEnabled = enabled
-            alpha = if (enabled) 1f else 0.5f
-            setOnClickListener(if (enabled) View.OnClickListener { onMaintenanceAction(primaryIntent) } else null)
-        }
-        maintenanceButtons[KiteResourceActionIntent.Repair]?.visibility =
-            if (state.repairEnabled) View.VISIBLE else View.GONE
-        bindMaintenanceButton(KiteResourceActionIntent.Repair, state.repairEnabled, R.string.resource_action_repair)
-        bindMaintenanceButton(KiteResourceActionIntent.Reinstall, state.reinstallEnabled, R.string.resource_action_reinstall)
         bindMaintenanceButton(KiteResourceActionIntent.Uninstall, state.uninstallEnabled, R.string.resource_action_uninstall)
     }
 
