@@ -360,6 +360,31 @@ internal class AndroidAgentRecipeRuntime(
     managedProcessLaunchPlanner: ManagedAgentProcessLaunchPlanner? = null,
     managedRuntimeDependencyPreparer: ManagedAgentRuntimeDependencyPreparer? = null,
 ) : AgentRecipeRuntime {
+    /** APK 内置桥脚本随包分发：会话启动前幂等拷贝到 argv 指定的容器内路径（字节比对刷新）。 */
+    private fun installBridgeAssetIfNeeded(resolved: ResolvedLaunch) {
+        val bridgeAsset = resolved.bridgeAsset.takeIf(String::isNotBlank) ?: return
+        val target = resolved.argv.getOrNull(1)
+            ?.takeIf { it.startsWith(CONTAINER_WORKSPACE_ROOT) && it.endsWith(".mjs") }
+            ?: return
+        val workspacePath = WorkSurfaceRuntimeBridge.getSavedContainer(appContext)?.workspacePath
+            ?.takeIf(String::isNotBlank)
+            ?: return
+        val bytes = runCatching {
+            appContext.assets.open(bridgeAsset).use { input -> input.readBytes() }
+        }.getOrElse { error ->
+            Log.w(TAG, "Bridge asset missing: $bridgeAsset, ${error.message}")
+            return
+        }
+        val destination = File(workspacePath, target.removePrefix(CONTAINER_WORKSPACE_ROOT))
+        val shouldWrite = !destination.exists() ||
+            runCatching { !destination.readBytes().contentEquals(bytes) }.getOrDefault(true)
+        if (shouldWrite) {
+            destination.parentFile?.mkdirs()
+            destination.writeBytes(bytes)
+            Log.i(TAG, "Installed agent bridge asset: ${destination.absolutePath}")
+        }
+    }
+
     private data class ResolvedLaunch(
         val agentId: String?,
         val providerId: String,
@@ -380,6 +405,7 @@ internal class AndroidAgentRecipeRuntime(
         val configAdapterId: String?,
         val sessionAdapterId: String?,
         val requirements: Set<String> = emptySet(),
+        val bridgeAsset: String = "",
     )
 
     private val appContext = context.applicationContext
@@ -496,6 +522,7 @@ internal class AndroidAgentRecipeRuntime(
                 val resolvedEnvironment = environment + resolveEnvironmentFiles(
                     resolved.environmentFiles
                 )
+                installBridgeAssetIfNeeded(resolved)
                 managedProcessLaunchPlanner.plan(
                     argv = resolved.argv,
                     workingDirectory = cwd,
@@ -999,6 +1026,7 @@ internal class AndroidAgentRecipeRuntime(
                     configAdapterId = entry.registration.configAdapterId,
                     sessionAdapterId = entry.registration.sessionAdapterId,
                     requirements = launch.requirements,
+                    bridgeAsset = launch.bridgeAsset,
                 )
             }
             is AgentLaunchSpec.Attach -> ResolvedLaunch(
@@ -1221,6 +1249,7 @@ internal class AndroidAgentRecipeRuntime(
 
     private companion object {
         const val TAG = "KiteAgentRuntime"
+        const val CONTAINER_WORKSPACE_ROOT = "/workspace"
         const val DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS = 45_000L
         const val PROTOCOL_ACP = "acp"
         const val PROTOCOL_CODEX_APP_SERVER = "codex-app-server"

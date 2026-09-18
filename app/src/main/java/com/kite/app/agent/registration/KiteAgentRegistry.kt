@@ -38,6 +38,7 @@ internal object AgentResourceRegistrationMapper {
                 runtimeGuarantees = runtimeGuarantees,
                 runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
                 requirements = requirements,
+                bridgeAsset = bridgeAsset,
             )
             MODE_ATTACH -> AgentLaunchSpec.Attach(
                 providerId = providerId,

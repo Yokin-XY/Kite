@@ -78,6 +78,8 @@ data class KiteResourceAgentProfile(
     val officialAccounts: List<KiteResourceAgentOfficialAccount> = emptyList(),
     val title: String = "",
     val requirements: Set<String> = emptySet(),
+    /** APK 内置桥脚本（assets 相对路径）；启动前幂等拷贝到 argv 指定的容器内路径。 */
+    val bridgeAsset: String = "",
 )
 
 private const val DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS = 45_000L
@@ -850,6 +852,7 @@ class KiteResourceManifestLoader private constructor(
             title = title,
             requirements = launch.optJSONArray("requirements").toStringList()
                 .map { it.trim().lowercase() }.filter(String::isNotBlank).toSet(),
+            bridgeAsset = launch.optString("bridgeAsset").trim(),
         )
     }
 

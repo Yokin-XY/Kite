@@ -31,6 +31,8 @@ sealed interface AgentLaunchSpec {
         val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
         /** 运行需求（wire 名小写，如 full_linux）：宿主通道不满足时自动落容器。 */
         val requirements: Set<String> = emptySet(),
+        /** APK 内置桥脚本（assets 相对路径）；启动前幂等拷贝到 argv 指定的容器内路径。 */
+        val bridgeAsset: String = "",
     ) : AgentLaunchSpec
 
     data class Attach(
