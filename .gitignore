@@ -36,3 +36,10 @@ Thumbs.db
 # 设备截屏与诊断输出。
 /.device-screens/
 .autotask/gitcode-api-key.txt
+tools/cc-switch-vendor/node_modules/
+tools/cc-switch-vendor/out/
+tools/cc-switch-vendor/tmp-entry-*
+tools/cc-switch-vendor/entry.mjs
+tools/cc-switch-vendor/entry.mts
+tools/cc-switch-vendor/pi-presets.json
+tools/cc-switch-vendor/types.ts
