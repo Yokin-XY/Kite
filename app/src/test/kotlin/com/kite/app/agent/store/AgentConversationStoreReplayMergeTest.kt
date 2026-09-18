@@ -34,6 +34,33 @@ class AgentConversationStoreReplayMergeTest {
         AgentSessionEvent.MessageChunk(AgentMessageRole.Assistant, AgentContent.Text(text), messageId)
 
     @Test
+    fun `bind 不同运行实例接管同一会话时继承既有时间线`() {
+        AgentConversationStore.bind("instance-A", key, AgentSessionPhase.Ready)
+        AgentConversationStore.applyEvent(key, user("hi", "local-1"))
+        AgentConversationStore.applyEvent(key, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting))
+        AgentConversationStore.applyEvent(key, assistant("Hello!", "msg_1"))
+        AgentConversationStore.applyEvent(key, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready))
+        val before = AgentConversationStore.snapshot(key)!!
+        assertEquals(2, before.timeline.size)
+
+        // 新实例接管（进程重启/重连后的典型场景）：历史不得丢失
+        AgentConversationStore.bind("instance-B", key, AgentSessionPhase.Preparing)
+        val after = AgentConversationStore.snapshot(key)!!
+        assertEquals(
+            "换实例不得清空时间线",
+            before.timeline.map { it.id },
+            after.timeline.map { it.id },
+        )
+        assertEquals("instance-B", after.instanceId)
+
+        // 接管后新回合继续追加在同一会话（开新轮）
+        AgentConversationStore.applyEvent(key, user("again", "local-2"))
+        val continued = AgentConversationStore.snapshot(key)!!
+        assertEquals(3, continued.timeline.size)
+        assertEquals(2, continued.turns.size)
+    }
+
+    @Test
     fun `local turn with protocol echo is not duplicated by replay merge`() {
         // live 会话：本地 echo（local-）+ 协议回显（uuid）+ Agent 回复
         AgentConversationStore.bind("instance-1", key, AgentSessionPhase.Ready)

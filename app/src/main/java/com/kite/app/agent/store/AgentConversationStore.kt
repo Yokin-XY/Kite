@@ -152,15 +152,14 @@ object AgentConversationStore {
             "bind instance=${instanceId.take(18)} existing=${existing != null} " +
                 "sameInstance=${existing?.instanceId == instanceId} shadowPending=${replayConversations.containsKey(key)}",
         )
-        val conversation = if (existing == null || existing.instanceId != instanceId) {
-            MutableConversation(key = key, instanceId = instanceId, phase = phase).also {
-                mutableConversations[key] = it
-            }
-        } else {
-            existing.apply {
-                this.phase = phase
-                revision++
-            }
+        // 会话身份是（providerId, sessionId）；运行实例会随进程重启/重连而更替，
+        // 新实例接管同一会话时必须继承既有时间线，绝不能换空会话（真机丢历史轮的根因）。
+        val conversation = existing?.apply {
+            this.instanceId = instanceId
+            this.phase = phase
+            revision++
+        } ?: MutableConversation(key = key, instanceId = instanceId, phase = phase).also {
+            mutableConversations[key] = it
         }
         publishNow(key)
         return conversation.freeze()
@@ -445,7 +444,8 @@ object AgentConversationStore {
 
     private class MutableConversation(
         var key: AgentConversationKey,
-        val instanceId: String,
+        // 运行实例更替时由 bind() 原地改写；会话身份始终是 key，时间线不随实例交接丢失。
+        var instanceId: String,
         var phase: AgentSessionPhase,
         private var recordsLiveTiming: Boolean = true,
     ) {
