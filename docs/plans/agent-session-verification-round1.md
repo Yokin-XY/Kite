@@ -23,17 +23,20 @@
 
 ## 发现的问题 ❌
 
-### 问题 1（核心）：特定消息触发无声失败——回复永不到达且无失败提示
+### 问题 1（已破案，修复中）：回复被渲染层压成 4px 高的"隐形行"
 
-- 稳定复现：`what was my first word` 两次发送均失败（用时 3/5 秒后 turn 结束，无回复、无错误提示）。
-- **已排除**的假设：
-  - ✗ 息屏/后台打断（息屏 40 秒回复照常到达）；
-  - ✗ 冷启后恢复会话第一条（复现失败，第一条正常）；
-  - ✗ 回复文本与历史重复（`say exactly: hi` 回复 "hi" 正常渲染）；
-  - ✗ thinking/推理路径（17×23 分步推理正常回复）。
-- 剩余候选假设：该消息要求检索会话早期上下文，可能触发 claude-agent-acp 的特殊行为
-  （microcompact / 权限请求 / 特殊 update 类型），需 ACP 层日志取证。
-- **已买到的教训**：ACP 层零日志，无法取证——修复前置：加可观测性。
+**取证链（五层日志，全部实锤）：**
+
+1. ✅ 协议层正常：Windows 直连 claude-agent-acp + 智谱，`what was my first word` 思考 24 秒后回复完整；
+2. ✅ 真机协议层正常：KiteAcpPrompt 日志显示 114 条 thought + 37 条 message chunk 全部到达，turn 正常 end_turn；
+3. ✅ Store 层正常：KiteConvStore 日志显示 turn 完整（User+Thought+Assistant，Completed）；
+4. ✅ 投影与 diff 正常：composeTurns 输出含 AssistantText（单测复现验证）；KiteConvCommit 显示 itemCount=expected 全部提交；
+5. ❌ **渲染层实锤**：UI 树 dump 发现含回复文本的行被布局成 **4 像素高**（TextView bounds 高度=4），肉眼不可见；
+
+**触发条件**：GLM 对需回忆/长推理问题的回复先思考 16-24 秒（100+ thought chunk，期间 UI 只有 Process 条状态更新），
+思考结束后的正文块在 RecyclerView 测量/复用异常中被压扁；简单问候（1-3 秒直答）不触发。
+
+**修复方向**：AgentConversationAdapter 的 item 测量/复用；同步修 replay merge 路径可能产生的重复项。
 
 ### 问题 1b（伴生）：失败无声
 
