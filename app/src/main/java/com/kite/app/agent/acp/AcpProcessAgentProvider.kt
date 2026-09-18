@@ -480,14 +480,21 @@ private class AcpProcessAgentConnection(
                 AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting)
             )
         }
+        val promptStartedAt = System.currentTimeMillis()
         return try {
             var result: AgentTurnResult? = null
             session.prompt(request.content.map(AgentContent::toAcp)).collect { event ->
                 when (event) {
-                    is Event.SessionUpdateEvent -> endpoint.eventSink.onEvent(
-                        request.sessionId,
-                        AcpAgentMapper.sessionEvent(event.update)
-                    )
+                    is Event.SessionUpdateEvent -> {
+                        android.util.Log.d(
+                            "KiteAcpPrompt",
+                            "stream kind=${event.update::class.simpleName} elapsedMs=${System.currentTimeMillis() - promptStartedAt}",
+                        )
+                        endpoint.eventSink.onEvent(
+                            request.sessionId,
+                            AcpAgentMapper.sessionEvent(event.update)
+                        )
+                    }
                     is Event.PromptResponseEvent -> result = AgentTurnResult(
                         stopReason = AcpAgentMapper.stopReason(event.response.stopReason),
                         userMessageId = event.response.userMessageId?.value,
@@ -511,8 +518,14 @@ private class AcpProcessAgentConnection(
                     AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready)
                 )
             }
-            AgentOperationResult.Success(resolved)
+            AgentOperationResult.Success(resolved).also {
+                android.util.Log.i(
+                    "KiteAcpPrompt",
+                    "turn done stopReason=${resolved.stopReason} elapsedMs=${System.currentTimeMillis() - promptStartedAt} usageThought=${resolved.usage?.thoughtTokens}",
+                )
+            }
         } catch (cancelled: CancellationException) {
+            android.util.Log.w("KiteAcpPrompt", "turn cancelled elapsedMs=${System.currentTimeMillis() - promptStartedAt}")
             if (publishLifecycle && request.sessionId !in steeringSessions) {
                 endpoint.eventSink.onEvent(
                     request.sessionId,
@@ -521,6 +534,11 @@ private class AcpProcessAgentConnection(
             }
             throw cancelled
         } catch (error: Throwable) {
+            android.util.Log.e(
+                "KiteAcpPrompt",
+                "turn failed elapsedMs=${System.currentTimeMillis() - promptStartedAt}: ${error.message}",
+                error,
+            )
             if (publishLifecycle && request.sessionId !in steeringSessions) {
                 endpoint.eventSink.onEvent(
                     request.sessionId,
@@ -695,8 +713,14 @@ private class AcpClientOperations(
         notification: SessionUpdate,
         _meta: kotlinx.serialization.json.JsonElement?
     ) {
+        val updateKind = notification::class.simpleName
+        android.util.Log.d(TAG, "update kind=$updateKind messageId=${(notification as? SessionUpdate.AgentMessageChunk)?.messageId?.value ?: (notification as? SessionUpdate.AgentThoughtChunk)?.messageId?.value ?: "-"}")
         inlineSessionUpdateRelay?.fromSdk(notification)
             ?: endpoint.eventSink.onEvent(sessionId, AcpAgentMapper.sessionEvent(notification))
+    }
+
+    private companion object {
+        const val TAG = "KiteAcpOps"
     }
 }
 

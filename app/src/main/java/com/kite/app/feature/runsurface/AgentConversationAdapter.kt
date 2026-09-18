@@ -174,10 +174,22 @@ internal class ConversationAdapter(
         val projected = AgentConversationPresentation.composeTurns(items, turns, phase) { item ->
             projectedById[item.id].orEmpty()
         }
+        android.util.Log.d(
+            "KiteConvAdapter",
+            "submit items=${items.size} turns=${turns.size} phase=$phase blocks=${projected.size} " +
+                "lastBlocks=${projected.takeLast(6).joinToString(",") { it::class.simpleName ?: "?" }} " +
+                "lastAssistant=${(projected.lastOrNull { it is AgentConversationDisplayItem.AssistantText } as? AgentConversationDisplayItem.AssistantText)?.let { "segs=${it.inline.size} text=${it.inline.firstOrNull()?.text?.take(24)}" } ?: "none"}",
+        )
         processExpansionOverrides.keys.retainAll(
             projected.filterIsInstance<AgentConversationDisplayItem.Process>().mapTo(linkedSetOf()) { it.id }
         )
-        submitList(projected, committed)
+        submitList(projected) {
+            android.util.Log.d(
+                "KiteConvCommit",
+                "committed itemCount=$itemCount expected=${projected.size} last=${projected.lastOrNull()?.let { it::class.simpleName }}",
+            )
+            committed()
+        }
     }
 
     override fun getItemViewType(position: Int): Int = when (getItem(position)) {
@@ -316,6 +328,10 @@ internal class ConversationAdapter(
 
         override fun bind(item: AgentConversationDisplayItem) {
             item as AgentConversationDisplayItem.AssistantText
+            android.util.Log.d(
+                "KiteConvBind",
+                "AssistantText bind id=${item.id.take(28)} inlineSegs=${item.inline.size} firstText=${item.inline.firstOrNull()?.text?.take(30) ?: "-"}",
+            )
             label.visibility = View.GONE
             text.text = styledInlineText(item.inline)
             text.movementMethod = if (item.inline.any { AgentInlineTextSegment.Style.Link in it.styles }) {

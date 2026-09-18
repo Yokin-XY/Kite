@@ -142,6 +142,11 @@ object AgentConversationStore {
         phase: AgentSessionPhase = AgentSessionPhase.Preparing
     ): AgentConversationSnapshot {
         val existing = mutableConversations[key]
+        android.util.Log.d(
+            "KiteConvRoute",
+            "bind instance=${instanceId.take(18)} existing=${existing != null} " +
+                "sameInstance=${existing?.instanceId == instanceId} shadowPending=${replayConversations.containsKey(key)}",
+        )
         val conversation = if (existing == null || existing.instanceId != instanceId) {
             MutableConversation(key = key, instanceId = instanceId, phase = phase).also {
                 mutableConversations[key] = it
@@ -602,7 +607,13 @@ object AgentConversationStore {
                     role = event.role,
                     messageId = event.messageId,
                     turnOrdinal = turnOrdinal
-                ).also { addTimelineItem(it) }
+                ).also {
+                    addTimelineItem(it)
+                    android.util.Log.d(
+                        "KiteConvStore",
+                        "new item role=${event.role} msgId=${event.messageId?.take(24)} turn=$turnOrdinal active=$turnActive chars=${(event.content as? AgentContent.Text)?.text?.length ?: -1}",
+                    )
+                }
             }
             retainedTextChars -= message.retainedTextChars
             retainedInlineBytes -= message.retainedInlineBytes
@@ -642,6 +653,7 @@ object AgentConversationStore {
 
         private fun beginTurn() {
             if (turnActive) finishTurn(AgentConversationTurnState.Completed)
+            android.util.Log.d("KiteConvStore", "beginTurn newOrdinal=${turnOrdinal + 1} liveTiming=$recordsLiveTiming")
             turnOrdinal += 1L
             turnActive = true
             currentTurnHasUser = false
@@ -658,6 +670,10 @@ object AgentConversationStore {
 
         private fun finishTurn(state: AgentConversationTurnState, errorMessage: String? = null) {
             if (!turnActive) return
+            android.util.Log.d(
+                "KiteConvStore",
+                "finishTurn turn=$turnOrdinal state=$state liveTiming=$recordsLiveTiming itemsInTurn=${timeline.count { it.turnOrdinal == turnOrdinal }}",
+            )
             turns[turnOrdinal]?.apply {
                 if (recordsLiveTiming) {
                     this.state = state
