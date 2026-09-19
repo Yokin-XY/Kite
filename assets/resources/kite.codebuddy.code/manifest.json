@@ -86,7 +86,7 @@
     "package": "@tencent-ai/codebuddy-code",
     "command": "npm install -g @tencent-ai/codebuddy-code@latest",
     "uninstallCommand": "npm uninstall -g @tencent-ai/codebuddy-code",
-    "latestVersion": "2.154.0"
+    "latestVersion": "2.155.0"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.codebuddy.code",
