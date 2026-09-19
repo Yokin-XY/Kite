@@ -1,8 +1,16 @@
 # 快速通道整改方案（讨论稿）
 
-> 2026-09-19 · 状态：待用户拍板 · 依据：两份只读审计
+> 2026-09-19 · 状态：P1 核心已落地（`924f1f53`）· 依据：两份只读审计
 > - 运行通道决策审计：`local-artifacts/runtime-lane-decision-audit.md`
 > - 功能面通道审计：本文附录
+
+## P1 落地记录（2026-09-19，真机 OnePlus 8T 实证）
+
+- `HostNodeRuntimeProvider` 删除 FILESYSTEM_VIEW 一票否决；node/node-shebang 命令的容器语义路径参数统一翻译。
+- pi 清单 requirements 去除 full_linux。
+- 真机实测：pi 桥宿主直跑（patched loader，无 proot 包裹，glibc 资产自动补齐）；boot→ModelRuntime.create **39ms**（原 proot 车道温启动约 11 秒、冷启动 85~231 秒）；建会话链 19ms；prompt 回复 4.7s（纯网络+模型）。
+- 工具执行验证：bash 子进程经预载层自动回落 proot，cwd 语义保持 /workspace 视图（宿主物理路径自动双向映射）。
+- 待办：P1 剩余项（会话管理命令去 FULL_LINUX、supervisorctl 原生化、版本探测治理）与 P2/P3 未动。
 
 ## 一、用户判断的验证结果
 
