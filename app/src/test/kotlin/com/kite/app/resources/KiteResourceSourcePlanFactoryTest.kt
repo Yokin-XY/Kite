@@ -57,6 +57,22 @@ class KiteResourceSourcePlanFactoryTest {
     }
 
     @Test
+    fun `plan 结果按输入缓存复用且不同输入不串`() {
+        val manifest = parse(
+            source = """{"type":"npm","package":"cached-sample","registries":["https://registry.npmmirror.com","https://registry.npmjs.org"]}""",
+            management = managed(listOf("cached-sample"), "cached-sample --version")
+        )
+
+        val first = KiteResourceSourcePlanFactory.plan(manifest)
+        val second = KiteResourceSourcePlanFactory.plan(manifest)
+        // 同输入命中缓存：直接复用同一实例
+        assertTrue(first === second)
+
+        val pinned = KiteResourceSourcePlanFactory.plan(manifest, targetVersion = "1.2.3")
+        assertTrue(pinned !== first)
+        assertEquals(first, KiteResourceSourcePlanFactory.plan(manifest))
+    }
+    @Test
     fun `NPM 版本查询遵循用户源顺序`() {
         val manifest = parse(
             source = """{"type":"npm","package":"@scope/example"}""",

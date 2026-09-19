@@ -51,12 +51,40 @@ data class KiteResourceSourcePlan(
 
 /**
  * 把标准来源声明编译成资源动作。复杂资源仍可提供显式 actions，显式动作优先。
+ *
+ * plan() 是纯函数但构建重（多源脚本拼装、列表重建），对账/投影链高频调用：
+ * 同一 manifest 在目录快照内不变，按（manifest 身份， targetVersion, 源偏好）
+ * 缓存重建结果；manifest 被 loader 重建后旧条目随弱引用自然回收。
  */
 object KiteResourceSourcePlanFactory {
+
+    private data class PlanCacheKey(
+        val targetVersion: String?,
+        val preferences: KiteResourceSourcePreferences,
+    )
+
+    private val planCache: MutableMap<KiteResourceManifest, Map<PlanCacheKey, KiteResourceSourcePlan>> =
+        java.util.Collections.synchronizedMap(java.util.WeakHashMap())
+
     fun plan(
         manifest: KiteResourceManifest,
         targetVersion: String? = null,
         sourcePreferences: KiteResourceSourcePreferences = KiteResourceSourcePreferences(),
+    ): KiteResourceSourcePlan {
+        val cacheKey = PlanCacheKey(targetVersion, sourcePreferences)
+        planCache[manifest]?.let { cached -> cached[cacheKey]?.let { return it } }
+        val built = buildPlan(manifest, targetVersion, sourcePreferences)
+        planCache[manifest] = buildMap {
+            putAll(planCache[manifest].orEmpty())
+            put(cacheKey, built)
+        }
+        return built
+    }
+
+    private fun buildPlan(
+        manifest: KiteResourceManifest,
+        targetVersion: String?,
+        sourcePreferences: KiteResourceSourcePreferences,
     ): KiteResourceSourcePlan {
         if (!manifest.management.userLifecycleEnabled) {
             return KiteResourceSourcePlan(
