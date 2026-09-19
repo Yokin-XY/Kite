@@ -47,7 +47,19 @@ internal class ResourceInstallWizardSurface(
 
     init {
         scope.launch {
-            launch { controller.state.collect(screen::render) }
+            launch {
+                // run 状态/流式输出高频 emit：全量重绑+文本测量昂贵，主线程满载即 ANR。
+                // 首帧直通；此后 250ms 静默窗口 debounce（transformLatest 取消待定），
+                // 最后一次 emit（终态）必达，只是进度类中间态被合并。
+                var lastRenderAt = 0L
+                controller.state.transformLatest { state ->
+                    val waitMs = (lastRenderAt + RENDER_SAMPLE_MS - System.currentTimeMillis())
+                        .coerceAtLeast(0L)
+                    if (waitMs > 0L) delay(waitMs)
+                    lastRenderAt = System.currentTimeMillis()
+                    emit(state)
+                }.collect(screen::render)
+            }
             launch {
                 // 安装高峰（如 pip 流式输出）changes 发射密集：目录失效立即处理，
                 // 对账类 ReconcileFacts 合并采样（250ms 静默窗口）——高频重发只落在
@@ -100,5 +112,6 @@ internal class ResourceInstallWizardSurface(
 
     private companion object {
         const val RECONCILE_CHANGES_SAMPLE_MS = 250L
+        const val RENDER_SAMPLE_MS = 250L
     }
 }
