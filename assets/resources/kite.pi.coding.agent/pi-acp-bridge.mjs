@@ -49,7 +49,16 @@ function sessionUpdate(sessionId, update) {
 
 // ---------- pi 会话管理 ----------
 const sessions = new Map(); // sessionId -> { pi, unsubscribe, file, cwd }
-const modelRuntimeP = ModelRuntime.create({ allowModelNetwork: false });
+const bootT0 = Date.now();
+// 启动阶段耗时日志：始终输出到 stderr（Kite 采集后可在诊断中看到；量极小）。
+function phase(msg) {
+  process.stderr.write(`[pi-bridge +${Date.now() - bootT0}ms] ${msg}\n`);
+}
+phase(`boot pid=${process.pid} node=${process.version} cwd=${process.cwd()}`);
+const modelRuntimeP = ModelRuntime.create({ allowModelNetwork: false }).then(
+  (rt) => { phase('ModelRuntime.create ok'); return rt; },
+  (err) => { phase(`ModelRuntime.create FAILED: ${err?.message ?? err}`); throw err; },
+);
 
 async function resolveModel() {
   const runtime = await modelRuntimeP;
@@ -92,9 +101,14 @@ function readJsonFileSync(path) {
 }
 
 async function newPiSession(cwd, sessionManager) {
+  const t0 = Date.now();
   const { runtime, model } = await resolveModel();
+  phase(`resolveModel ok (${Date.now() - t0}ms): ${model ? `${model.providerId}/${model.id}` : 'null'}`);
+  const t1 = Date.now();
   const loader = new DefaultResourceLoader({ cwd, agentDir: getAgentDir() });
   await loader.reload();
+  phase(`resourceLoader.reload ok (${Date.now() - t1}ms)`);
+  const t2 = Date.now();
   const result = await createAgentSession({
     cwd,
     model,
@@ -102,6 +116,7 @@ async function newPiSession(cwd, sessionManager) {
     sessionManager,
     resourceLoader: loader,
   });
+  phase(`createAgentSession ok (${Date.now() - t2}ms)`);
   return { result, loader };
 }
 
@@ -111,6 +126,9 @@ function wireSession(sessionId, pi) {
   const nextMessageId = () => `pi_${randomUUID()}`;
   const unsubscribe = pi.subscribe((event) => {
     try {
+      if (event?.type === 'error') {
+        phase(`pi error event: ${JSON.stringify(event).slice(0, 300)}`);
+      }
       switch (event.type) {
         case 'message_start':
           assistantMessageId = nextMessageId();
@@ -206,15 +224,36 @@ function emitCommands(sessionId, loader) {
 }
 
 // ---------- 模型选择（session/set_model，UNSTABLE 但广泛实现） ----------
-// 只列配置了 key 的供应商（PI_ACP_PROVIDERS，默认 zai-coding-cn），避免全量 1300+ 模型涌入 UI。
-const configuredProviders = () =>
-  (process.env.PI_ACP_PROVIDERS ?? 'zai-coding-cn').split(',').map((s) => s.trim()).filter(Boolean);
+// 列出：PI_ACP_PROVIDERS 指定的内置供应商 + models.json 里带 key 的自定义供应商（Kite 配置写入）。
+// 否则 Kite 模型库默认模型（自定义供应商的）无法映射到会话模型选择，发送前会被拦下。
+const configuredProviders = () => {
+  const env = (process.env.PI_ACP_PROVIDERS ?? 'zai-coding-cn')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  try {
+    const models = readJsonFileSync(join(getAgentDir(), 'models.json'));
+    for (const [pid, node] of Object.entries(models?.providers ?? {})) {
+      const hasKey = typeof node === 'object' && node ? Boolean(node.apiKey) : false;
+      if (hasKey && !env.includes(pid)) env.push(pid);
+    }
+  } catch { /* 缺省文件是正常状态 */ }
+  return env;
+};
 
 async function modelState(entry) {
+  const t0 = Date.now();
   const runtime = await modelRuntimeP;
   const models = [];
   for (const pid of configuredProviders()) {
-    for (const m of runtime.getModels(pid)) {
+    const tp = Date.now();
+    let list;
+    try {
+      list = runtime.getModels(pid);
+    } catch (err) {
+      phase(`modelState getModels(${pid}) THREW after ${Date.now() - tp}ms: ${err?.message ?? err}`);
+      throw err;
+    }
+    phase(`modelState getModels(${pid}) -> ${list.length} models (${Date.now() - tp}ms)`);
+    for (const m of list) {
       models.push({
         modelId: `${pid}/${m.id}`,
         name: m.name ?? m.id,
@@ -227,6 +266,7 @@ async function modelState(entry) {
   }
   const current = entry?.pi?.model;
   const currentId = current ? modelIdOf(current) : (process.env.PI_ACP_MODEL ?? 'zai-coding-cn/glm-5.3');
+  phase(`modelState done (${Date.now() - t0}ms): ${models.length} models, current=${currentId}`);
   return { currentModelId: currentId, availableModels: models };
 }
 
@@ -257,6 +297,7 @@ async function findSessionManager(sessionId, cwd) {
 // ---------- ACP 方法实现 ----------
 const methods = {
   async initialize() {
+    phase('initialize requested');
     return {
       protocolVersion: 1,
       agentCapabilities: {
@@ -265,7 +306,7 @@ const methods = {
         changeMode: false,
         sessionCapabilities: { list: {}, resume: {} },
       },
-      agentInfo: { name: 'pi-acp-bridge', title: 'Pi (Kite bridge)', version: '0.2.0' },
+      agentInfo: { name: 'pi-acp-bridge', title: 'Pi (Kite bridge)', version: '0.2.4' },
       authMethods: [],
     };
   },
@@ -337,6 +378,7 @@ const methods = {
     if (!entry) throw new Error('unknown session');
     const { pi } = entry;
     const text = (params?.prompt ?? []).filter((b) => b?.type === 'text').map((b) => b.text).join('');
+    phase(`prompt received: ${text.slice(0, 40)}`);
     if (text) {
       sessionUpdate(params.sessionId, {
         sessionUpdate: 'user_message_chunk',
@@ -344,7 +386,13 @@ const methods = {
         messageId: undefined,
       });
     }
-    await pi.prompt(text);
+    try {
+      await pi.prompt(text);
+      phase('prompt completed');
+    } catch (err) {
+      phase(`prompt FAILED: ${err?.message ?? err}`);
+      throw err;
+    }
     return { stopReason: 'end_turn' };
   },
 
@@ -357,7 +405,9 @@ const methods = {
 
 // ---------- 主循环 ----------
 process.stdin.setEncoding('utf8');
+let sawFirstLine = false;
 process.stdin.on('data', (chunk) => {
+  if (!sawFirstLine) { sawFirstLine = true; phase('first stdin line received'); }
   buf += chunk;
   let idx;
   while ((idx = buf.indexOf('\n')) >= 0) {
