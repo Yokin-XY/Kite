@@ -1200,22 +1200,42 @@ internal class AndroidAgentRecipeRuntime(
     private suspend fun executeSessionCommand(
         request: AgentSessionCommand,
     ): AgentOperationResult<Unit> = withContext(Dispatchers.IO) {
-        val config = runCatching {
+        // 会话管理命令（列表/删除/重命名）只是结构化 argv：默认走统一裁决器，
+        // node/python 可解析时上宿主车道；真需要 Linux 根的由兜底车道接收。
+        // 不再在构造点硬编码 FULL_LINUX 钦定 PRoot（快速通道整改方案 B）。
+        val launch = runCatching {
             require(request.argv.isNotEmpty()) { "agent_session_command_empty" }
-            WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig(
+            val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(appContext)
+            val activeEnvironment = WorkSurfaceRuntimeBridge.resolveActiveWorkspaceEnvironment(container)
+            val runtimePlan = ManagedRuntimeLaunchPlanner.plan(
                 context = appContext,
+                container = container,
+                workspaceDirectory = File(activeEnvironment.workspacePath),
                 request = RuntimeExecutionRequest(
                     payload = RuntimeExecutionPayload.Argv(request.argv.first(), request.argv.drop(1)),
                     workingDirectory = request.cwd,
-                    requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
                 ),
-                selectionReason = "agent_session_command_requires_proot",
             )
+            when (runtimePlan) {
+                is ManagedRuntimeLaunchPlan.Ready -> AgentProcessLaunch(
+                    command = runtimePlan.config.args.toList(),
+                    environment = runtimePlan.config.env.associateTo(linkedMapOf()) { entry ->
+                        entry.substringBefore('=') to entry.substringAfter('=', "")
+                    },
+                    workingDirectory = runtimePlan.config.workingDirectory,
+                )
+                is ManagedRuntimeLaunchPlan.Proot ->
+                    WorkSurfaceRuntimeBridge.buildProotExecConfig(appContext, runtimePlan.plan).let { config ->
+                        AgentProcessLaunch(command = config.command, environment = config.env)
+                    }
+                is ManagedRuntimeLaunchPlan.Blocked ->
+                    error("agent_session_command_blocked:${runtimePlan.reason}")
+            }
         }.getOrElse { error ->
             return@withContext AgentOperationResult.Failure("会话管理命令准备失败：${error.message}", error)
         }
         val process = runCatching {
-            processFactory.start(AgentProcessLaunch(config.command, config.env))
+            processFactory.start(launch)
         }.getOrElse { error ->
             return@withContext AgentOperationResult.Failure("会话管理命令启动失败：${error.message}", error)
         }

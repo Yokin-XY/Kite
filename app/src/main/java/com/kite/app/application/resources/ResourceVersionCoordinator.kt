@@ -4,6 +4,7 @@ import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceCommandVersionProbe
 import com.kite.app.resources.KiteResourceLatestVersionProbe
 import com.kite.app.resources.KiteResourceRemoteVersionProbe
+import com.kite.app.resources.KiteResourceStaticVersionProbe
 import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceSourcePlanFactory
 import com.kite.app.resources.KiteResourceSourcePreferences
@@ -74,7 +75,7 @@ internal sealed interface PreparedResourceVersionCheck {
         val manifest: KiteResourceManifest,
         val environmentId: String,
         val installedProbe: KiteResourceVersionProbeSpec,
-        val latestProbe: KiteResourceRemoteVersionProbe,
+        val latestProbe: KiteResourceLatestVersionProbe,
         val installedRaw: String,
     ) : PreparedResourceVersionCheck {
         override val lane: ResourceVersionBatchLane = ResourceVersionBatchLane.STRUCTURED_NATIVE_REMOTE
@@ -114,8 +115,10 @@ internal class ResourceVersionCoordinator(
                 ResourceVersionBatchLane.PROOT_COMPATIBILITY,
             )
         val preparationGateway = gateway as? ResourceVersionBatchPreparationGateway
+        val latestIsNative = latestProbe is KiteResourceRemoteVersionProbe ||
+            latestProbe is KiteResourceStaticVersionProbe
         if (installedProbe.structuredMetadata == null ||
-            latestProbe !is KiteResourceRemoteVersionProbe ||
+            !latestIsNative ||
             preparationGateway == null
         ) {
             return PreparedResourceVersionCheck.ProotCompatibility(manifest, environmentId)
@@ -229,6 +232,7 @@ internal object ResourceVersionParser {
 
     fun latest(raw: String, probe: KiteResourceLatestVersionProbe): String? = when (probe) {
         is KiteResourceCommandVersionProbe -> installed(raw, probe.probe)
+        is KiteResourceStaticVersionProbe -> normalize(probe.value)
         is KiteResourceRemoteVersionProbe -> {
             val value = when (probe.format) {
                 "text" -> raw.trim()

@@ -47,7 +47,10 @@ class ResourceVersionBatchSchedulingContractTest {
         val preparation = coordinator.substringAfter("suspend fun prepareBatchCheck")
             .substringBefore("suspend fun check(prepared")
         assertTrue(preparation.contains("installedProbe.structuredMetadata"))
-        assertTrue(preparation.contains("latestProbe !is KiteResourceRemoteVersionProbe"))
+        assertTrue(
+            preparation.contains("latestProbe is KiteResourceRemoteVersionProbe ||") &&
+                preparation.contains("latestProbe is KiteResourceStaticVersionProbe")
+        )
         assertFalse(preparation.contains("probe.command"))
 
         val checking = gateway.indexOf(

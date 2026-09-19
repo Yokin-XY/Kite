@@ -299,6 +299,18 @@ object SupervisordServiceHealthStore {
         record: BackgroundRuntimeRecord,
         workspaceDir: File,
     ): SupervisordHealthCommandResult {
+        // 默认车道：原生 HTTP XML-RPC 直接询问 supervisor（零进程）；
+        // 探测失败时回落既有 PRoot supervisorctl（带日志尾，作诊断兑底）。
+        val nativePort = SUPERVISOR_HTTP_SERVER.substringAfterLast(':').toIntOrNull()
+        if (nativePort != null) {
+            when (val probe = SupervisordHttpProbe.queryAllProcessInfo(nativePort)) {
+                is SupervisordHttpProbe.ProbeResult.Ok -> {
+                    return SupervisordHealthCommandResult(0, probe.statusLines.joinToString("\n"))
+                }
+                is SupervisordHttpProbe.ProbeResult.Unavailable ->
+                    Logger.i(LOG_TAG, "supervisor http probe unavailable: ${probe.reason}, falling back to proot supervisorctl")
+            }
+        }
         return runCatching {
             WorkspaceBuildSupport.ensureSupervisordHealthSnapshotHelper(workspaceDir)
             BoundedProotTaskExecutor.executeBlocking(

@@ -9,6 +9,11 @@ data class KiteResourceCommandVersionProbe(
     val probe: KiteResourceVersionProbeSpec
 ) : KiteResourceLatestVersionProbe
 
+/** 本地静态版本事实（如 official_command 随商店清单分发的 latestVersion）：零网络零进程。 */
+data class KiteResourceStaticVersionProbe(
+    val value: String
+) : KiteResourceLatestVersionProbe
+
 data class KiteResourceRemoteVersionProbe(
     val url: String,
     val jsonField: String = "",
@@ -182,12 +187,10 @@ object KiteResourceSourcePlanFactory {
                 SOURCE_OFFICIAL_SCRIPT -> officialScriptVersionProbe(manifest.source)
                 SOURCE_BUNDLED -> managedScriptProbe(manifest, "latest-version")
                 // official_command：最新版本号随商店清单分发（CI 每日维护），
-                // App 端零网络读取——用 echo 常量当探测器，复用整条检查更新机器。
+                // App 端零网络零进程——静态事实直接返回，复用整条检查更新机器。
                 SOURCE_OFFICIAL_COMMAND ->
                     manifest.source.latestVersion.takeIf { it.isNotBlank() }?.let {
-                        KiteResourceCommandVersionProbe(
-                            KiteResourceVersionProbeSpec(command = "echo '$it'", group = 0)
-                        )
+                        KiteResourceStaticVersionProbe(it)
                     }
                 else -> null
             }

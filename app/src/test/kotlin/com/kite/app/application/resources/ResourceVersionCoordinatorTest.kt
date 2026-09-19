@@ -7,6 +7,8 @@ import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceLatestVersionProbe
 import com.kite.app.resources.KiteResourceMetadataVersionProbeSpec
 import com.kite.app.resources.KiteResourceRemoteVersionProbe
+import com.kite.app.resources.KiteResourceSourcePlanFactory
+import com.kite.app.resources.KiteResourceStaticVersionProbe
 import com.kite.app.resources.KiteResourceSourceCatalog
 import com.kite.app.resources.KiteResourceSourcePreferences
 import com.kite.app.resources.KiteResourceSourceSpec
@@ -219,6 +221,25 @@ class ResourceVersionCoordinatorTest {
         assertEquals("installed_version_blocked:path_escape", (result as ResourceVersionCheckResult.Failed).reason)
         assertEquals(0, gateway.installedReadCount)
         assertEquals(0, gateway.latestReadCount)
+    }
+
+    @Test
+    fun `official_command 最新版本是静态事实，零命令零网络直达原生车道`() = runTest {
+        val officialManifest = manifest().copy(
+            source = KiteResourceSourceSpec(
+                type = "official_command",
+                latestVersion = "0.155.0",
+            ),
+            sourceType = "official_command",
+        )
+
+        val plan = KiteResourceSourcePlanFactory.versionCheckPlan(officialManifest)
+        val latest = plan.latest
+
+        assertTrue(latest is KiteResourceStaticVersionProbe)
+        latest as KiteResourceStaticVersionProbe
+        assertEquals("0.155.0", latest.value)
+        assertEquals("0.155.0", ResourceVersionParser.latest("unused", latest))
     }
 
     private fun manifest() = KiteResourceManifest(

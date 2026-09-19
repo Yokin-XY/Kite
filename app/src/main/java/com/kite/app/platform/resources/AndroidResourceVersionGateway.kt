@@ -19,6 +19,7 @@ import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceCommandVersionProbe
 import com.kite.app.resources.KiteResourceLatestVersionProbe
 import com.kite.app.resources.KiteResourceRemoteVersionProbe
+import com.kite.app.resources.KiteResourceStaticVersionProbe
 import com.kite.app.resources.KiteResourceVersionProbeSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -121,6 +122,7 @@ internal class AndroidResourceVersionGateway(
         is KiteResourceCommandVersionProbe ->
             readCommandVersion(resourceId, "latest_version", probe.probe, environmentId)
         is KiteResourceRemoteVersionProbe -> readRemoteVersion(probe)
+        is KiteResourceStaticVersionProbe -> Result.success(probe.value)
     }
 
     private suspend fun readCommandVersion(
