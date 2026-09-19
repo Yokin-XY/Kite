@@ -272,7 +272,10 @@ class KFShellService : Service() {
             PowerManager.PARTIAL_WAKE_LOCK,
             "KFShell::ContainerWakeLock"
         ).apply {
-            acquire(10 * 60 * 60 * 1000L)
+            // 服务常驻期间容器进程需要持续 CPU；服务销毁时统一释放。
+            // 不设超时：会话超过旧 10 小时上限后会静默掉电。
+            setReferenceCounted(false)
+            acquire()
         }
     }
 

@@ -668,6 +668,8 @@ open class MainActivity : AppCompatActivity() {
         applyRecentTaskVisibilitySetting()
         resumePendingFirstRunPermissionOnboarding()
         resumePendingRuntimePermissionBootstrap()
+        com.kite.app.foundation.service.BatteryOptimizationGuard
+            .maybeRequestExemptionOnce(this)
         StartupTraceStore.markStage(this, "main.resume_runtime_and_visible_state")
         runtimeStatusController.ensureReady()
         browserAuthRedirectCoordinator.reconcile()

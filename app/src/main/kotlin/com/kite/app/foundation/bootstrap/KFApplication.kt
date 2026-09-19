@@ -159,6 +159,17 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
         StartupTraceStore.runApplicationStage(this, "application.notification_channels") {
             createNotificationChannels()
         }
+        // 前台服务驻留保障要在进程一落地就生效：rootfs 已就绪的冷启动不会走
+        // BootstrapCoordinator，而熄屏冻结只看“有没有活跃前台服务”。
+        // 只拉服务（通知+WakeLock），不触发任何容器暖启动。
+        StartupTraceStore.runApplicationStage(this, "application.foreground_residency") {
+            runCatching {
+                com.kite.app.foundation.service.KFShellService
+                    .ensureExecutionHostResident(this)
+            }.onFailure {
+                Logger.e("App", "前台驻留保障拉起失败: ${it.message}")
+            }
+        }
         StartupTraceStore.runApplicationStage(this, "application.run_notifications") {
             RuntimeOverviewStore.start(this, applicationScope)
             ProotTelemetryStore.start(this, applicationScope)

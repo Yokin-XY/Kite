@@ -65,6 +65,11 @@ object BootstrapCoordinator {
             RuntimeBootstrapProgress.beginBootstrapRun()
             try {
                 runCatching {
+                    // 前台保活必须抢在一切重活之前上岗：rootfs/资源恢复要跑一到两分钟，
+                    // 这段窗口里熄屏会被厂商省电策略冻结，服务将永远拉不起来。
+                    // 只取得驻留保障（通知+WakeLock），不触发默认 runtime 暖启动。
+                    KFShellService.ensureExecutionHostResident(appContext)
+                    Logger.i(LOG_TAG, "前台服务驻留保障已抢前生效（rootfs 就绪前）")
                     val startedAt = System.currentTimeMillis()
                     _snapshot.value = BootstrapSnapshot(
                         stage = BootstrapStage.ROOTFS_EXTRACTING,
