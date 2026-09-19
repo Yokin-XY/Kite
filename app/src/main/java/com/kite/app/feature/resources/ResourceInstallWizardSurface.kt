@@ -31,6 +31,7 @@ internal class ResourceInstallWizardSurface(
     private val controller = ResourceFeatureController(gateway)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var disposed = false
+    private var reconcileJob: kotlinx.coroutines.Job? = null
     private val screen = ResourceInstallWizardScreen(
         context = context,
         requestedTargetResourceId = targetResourceId,
@@ -90,7 +91,13 @@ internal class ResourceInstallWizardSurface(
 
     fun reconcile() {
         if (disposed) return
-        scope.launch { controller.dispatch(ResourceFeatureAction.ReconcileFacts) }
+        // runs 流高频变化会连发对账；与 changes 分支同款 250ms debounce 合并，
+        // 避免主线程被 publish 的全量计划重建占满。终态展示由 state 流直发 render 兑底。
+        reconcileJob?.cancel()
+        reconcileJob = scope.launch {
+            delay(RECONCILE_CHANGES_SAMPLE_MS)
+            controller.dispatch(ResourceFeatureAction.ReconcileFacts)
+        }
     }
 
     fun tick(now: Long = System.currentTimeMillis()): Boolean =
