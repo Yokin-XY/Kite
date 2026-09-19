@@ -457,6 +457,12 @@ internal class AndroidRecipeExecutor(
                 }
                 val readyRuntime = runtimeLaunch as? ManagedRuntimeLaunchPlan.Ready
                 val prootRuntime = runtimeLaunch as? ManagedRuntimeLaunchPlan.Proot
+                com.kite.app.foundation.runtime.RuntimeLaneTelemetry.record(
+                    entryPoint = "terminal",
+                    lane = readyRuntime?.lane?.value ?: "proot_shell",
+                    fallbackReason = prootRuntime?.reason ?: "none",
+                    detail = request.recipe.name,
+                )
                 PreparedTerminalLaunch(
                     record = KFWorkspaceManager.createEmbeddedShellSession(
                         spaceId = space.id,

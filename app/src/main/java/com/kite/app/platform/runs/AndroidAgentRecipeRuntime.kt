@@ -337,7 +337,12 @@ internal object ManagedAgentProcessLaunchSelector {
             ),
             runtimeLane = runtimePlan.lane.value,
             fallbackReason = "none",
-        )
+        ).also {
+            com.kite.app.foundation.runtime.RuntimeLaneTelemetry.record(
+                entryPoint = "agent",
+                lane = runtimePlan.lane.value,
+            )
+        }
         is ManagedRuntimeLaunchPlan.Proot -> prootConfig(runtimePlan.plan).let { config ->
             ManagedAgentProcessLaunch(
                 process = AgentProcessLaunch(
@@ -345,6 +350,12 @@ internal object ManagedAgentProcessLaunchSelector {
                     environment = config.env,
                 ),
                 runtimeLane = "proot_shell",
+                fallbackReason = runtimePlan.reason,
+            )
+        }.also {
+            com.kite.app.foundation.runtime.RuntimeLaneTelemetry.record(
+                entryPoint = "agent",
+                lane = "proot_shell",
                 fallbackReason = runtimePlan.reason,
             )
         }
