@@ -67,9 +67,9 @@ internal object SupervisordHttpProbe {
             if (payload.contains("<fault>")) {
                 return ProbeResult.Unavailable("xmlrpc_fault")
             }
-            val lines = parseProcessStructs(payload)
-            if (lines.isEmpty()) ProbeResult.Unavailable("empty_process_list")
-            else ProbeResult.Ok(lines)
+            // 空 data 是合法状态（supervisord 无托管进程）：返回空列表，
+            // 交上层按“仅核心服务”处理；不当作探测失败回落 PRoot。
+            ProbeResult.Ok(parseProcessStructs(payload))
         }
     }.getOrElse { error ->
         ProbeResult.Unavailable("probe_failed:${error.javaClass.simpleName}")

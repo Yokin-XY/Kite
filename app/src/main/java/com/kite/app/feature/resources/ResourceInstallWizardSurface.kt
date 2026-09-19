@@ -8,7 +8,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 
 /** 把 CardRun 显示面接到资源 Feature；不接管安装任务或 CardRun 生命周期。 */
@@ -47,7 +49,17 @@ internal class ResourceInstallWizardSurface(
         scope.launch {
             launch { controller.state.collect(screen::render) }
             launch {
-                gateway.changes.collect { change ->
+                // 安装高峰（如 pip 流式输出）changes 发射密集：目录失效立即处理，
+                // 对账类 ReconcileFacts 合并采样（250ms 静默窗口）——高频重发只落在
+                // 一次 dispatch，避免主线程被全量 render 循环占满导致 ANR。
+                gateway.changes.transformLatest { change ->
+                    if (change.catalogInvalidated) {
+                        emit(change)
+                    } else {
+                        delay(RECONCILE_CHANGES_SAMPLE_MS)
+                        emit(change)
+                    }
+                }.collect { change ->
                     controller.dispatch(
                         if (change.catalogInvalidated) {
                             ResourceFeatureAction.Refresh(forceCatalogRefresh = false)
@@ -84,5 +96,9 @@ internal class ResourceInstallWizardSurface(
         scope.launch {
             controller.dispatch(ResourceFeatureAction.Refresh(forceCatalogRefresh))
         }
+    }
+
+    private companion object {
+        const val RECONCILE_CHANGES_SAMPLE_MS = 250L
     }
 }
