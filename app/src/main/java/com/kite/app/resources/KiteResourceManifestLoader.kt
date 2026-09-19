@@ -67,7 +67,7 @@ data class KiteResourceAgentProfile(
     val argv: List<String>,
     val runtimeGuarantees: Set<String> = emptySet(),
     val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
-    val environmentFiles: Map<String, String> = emptyMap(),
+    val environmentFiles: Map<String, KiteResourceEnvironmentFileSpec> = emptyMap(),
     val runtimeDependencies: List<KiteResourceAgentRuntimeDependency> = emptyList(),
     val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
     val initializeTimeoutMs: Long = DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
@@ -123,7 +123,7 @@ data class KiteResourceAgentRuntimeDependency(
     val environment: Map<String, String> = emptyMap(),
     val runtimeGuarantees: Set<String> = emptySet(),
     val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
-    val environmentFiles: Map<String, String> = emptyMap(),
+    val environmentFiles: Map<String, KiteResourceEnvironmentFileSpec> = emptyMap(),
     val bindAddress: String = "",
     val bindPort: Int? = null,
     val healthHttpPath: String = "",
@@ -837,7 +837,7 @@ class KiteResourceManifestLoader private constructor(
             argv = argv,
             runtimeGuarantees = runtimeGuarantees,
             runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
-            environmentFiles = launch.optJSONObject("environmentFiles").toStringMap(),
+            environmentFiles = launch.optJSONObject("environmentFiles").toEnvironmentFileSpecMap(),
             runtimeDependencies = runtimeDependencies,
             hardLinkMode = hardLinkMode,
             initializeTimeoutMs = launch.optLong(
@@ -932,7 +932,7 @@ class KiteResourceManifestLoader private constructor(
                     environment = dependency.optJSONObject("environment").toStringMap(),
                     runtimeGuarantees = runtimeGuarantees,
                     runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
-                    environmentFiles = dependency.optJSONObject("environmentFiles").toStringMap(),
+                    environmentFiles = dependency.optJSONObject("environmentFiles").toEnvironmentFileSpecMap(),
                     bindAddress = dependency.optString("bindAddress").trim(),
                     bindPort = port,
                     healthHttpPath = dependency.optString("healthHttpPath").trim(),
@@ -1320,6 +1320,31 @@ class KiteResourceManifestLoader private constructor(
             keys().forEach { key ->
                 val value = optString(key)
                 if (key.isNotBlank() && value.isNotBlank()) put(key, value)
+            }
+        }
+    }
+
+    /**
+     * environmentFiles 值支持两种形式：纯路径字符串（必须预先存在），或
+     * 对象 {"path": ..., "autoGenerate": "random_token"}（缺失时自动生成机器令牌）。
+     */
+    private fun JSONObject?.toEnvironmentFileSpecMap(): Map<String, KiteResourceEnvironmentFileSpec> {
+        if (this == null) return emptyMap()
+        return buildMap {
+            keys().forEach { key ->
+                if (key.isBlank()) return@forEach
+                when (val value = opt(key)) {
+                    is String -> if (value.isNotBlank()) {
+                        put(key, KiteResourceEnvironmentFileSpec(path = value))
+                    }
+                    is JSONObject -> {
+                        val path = value.optString("path").trim()
+                        if (path.isBlank()) return@forEach
+                        val autoGenerate = value.optString("autoGenerate").trim()
+                            .takeIf { it.isNotBlank() && it == KiteResourceEnvironmentFileSpec.AUTO_GENERATE_RANDOM_TOKEN }
+                        put(key, KiteResourceEnvironmentFileSpec(path = path, autoGenerate = autoGenerate))
+                    }
+                }
             }
         }
     }

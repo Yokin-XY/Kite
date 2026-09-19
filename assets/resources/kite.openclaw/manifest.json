@@ -98,7 +98,10 @@
           "acp"
         ],
         "environmentFiles": {
-          "OPENCLAW_GATEWAY_TOKEN": "/workspace/.kf/secrets/kite.openclaw-gateway-token"
+          "OPENCLAW_GATEWAY_TOKEN": {
+        "path": "/workspace/.kf/secrets/kite.openclaw-gateway-token",
+        "autoGenerate": "random_token"
+       }
         },
         "runtimeDependencies": [
           {
@@ -121,7 +124,10 @@
               "OPENCLAW_DISABLE_BONJOUR": "1"
             },
             "environmentFiles": {
-              "OPENCLAW_GATEWAY_TOKEN": "/workspace/.kf/secrets/kite.openclaw-gateway-token"
+              "OPENCLAW_GATEWAY_TOKEN": {
+        "path": "/workspace/.kf/secrets/kite.openclaw-gateway-token",
+        "autoGenerate": "random_token"
+       }
             },
             "bindAddress": "127.0.0.1",
             "bindPort": 18789,
