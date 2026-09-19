@@ -25,14 +25,13 @@ internal object HostNodeRuntimeProvider :
         if (RuntimeExecutionRequirement.ANDROID_NATIVE in request.requirements) {
             return unsupported("android_native_required")
         }
+        // 决策方向：宿主通道是默认车道，PRoot 是兼容兑底。
+        // ANDROID_NATIVE：请求显式要求 Android 原生能力，不属于本通道。
+        // FULL_LINUX：调用方显式声明需要完整 Linux 根（特权/服务型依赖），放行进容器。
+        // FILESYSTEM_VIEW 不再拒绝：预载层（kite-node-host-runtime.cjs）已提供
+        // /workspace、/root 与 rootfs 前缀的双向路径翻译，容器文件系统视图
+        // 在宿主车道可用；TMPDIR 等根级路径由通道环境注入。
         if (RuntimeExecutionRequirement.FULL_LINUX in request.requirements) {
-            return unsupported("full_linux_required")
-        }
-        if (
-            RuntimeExecutionRequirement.FILESYSTEM_VIEW in request.requirements ||
-            RuntimeExecutionRequirement.FULL_LINUX in request.requirements
-        ) {
-            // 宿主 node 通道没有完整 Linux 根文件系统（无 /tmp 等）；服务型后台依赖必须进容器。
             return unsupported("full_linux_required")
         }
         val container = context.container

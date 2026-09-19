@@ -88,6 +88,39 @@ class HostNodeRuntimeTest {
     }
 
     @Test
+    fun `node argv container paths translate to physical runtime roots`() {
+        val fixture = fixture()
+        val layout = (HostNodeRuntimeResolver.resolve(
+            fixture.rootfs,
+            fixture.workspace,
+            fixture.assets,
+        ) as HostNodeRuntimeResolution.Ready).layout
+
+        val result = HostNodeCommandResolver.resolve(
+            executable = "node",
+            arguments = listOf(
+                "/workspace/.kf/software/example/bridge.mjs",
+                "--config=/root/.config/example/settings.json",
+                "relative/keep.txt",
+                "--plain",
+            ),
+            layout = layout,
+        ) as HostNodeCommandResolution.Ready
+
+        val expectedEntry = File(fixture.workspace, ".kf/software/example/bridge.mjs")
+        val expectedConfig = File(fixture.rootfs, "root/.config/example/settings.json")
+        assertEquals(
+            listOf(
+                expectedEntry.absoluteFile.normalize().path,
+                "--config=${expectedConfig.absoluteFile.normalize().path}",
+                "relative/keep.txt",
+                "--plain",
+            ),
+            result.invocation.arguments,
+        )
+    }
+
+    @Test
     fun `structured argv resolves an arbitrary managed node shebang without reparsing shell text`() {
         val fixture = fixture()
         val entry = File(fixture.workspace, ".kf/bin/arbitrary-tool").apply {

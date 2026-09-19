@@ -102,9 +102,7 @@
      "/workspace/.kf/software/kite.pi.coding.agent/npm-global/lib/node_modules/pi-acp-bridge.mjs"
     ],
     "bridgeAsset": "resources/kite.pi.coding.agent/pi-acp-bridge.mjs",
-    "requirements": [
-     "full_linux"
-    ],
+    "requirements": [],
     "title": "Pi Coding Agent"
    }
   }

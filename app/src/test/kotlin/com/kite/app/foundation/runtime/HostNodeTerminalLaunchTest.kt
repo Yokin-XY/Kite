@@ -5,6 +5,7 @@ import com.kite.app.foundation.contracts.NetworkMode
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -193,6 +194,29 @@ class HostNodeTerminalLaunchTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun `filesystem view is not a rejection reason and falls through to asset checks`() {
+        val root = temporaryFolder.newFolder()
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val container = container(File(root, "missing-rootfs"), File(root, "missing-workspace"))
+
+        val decision = HostNodeRuntimeProvider.prepare(
+            context = HostNodeProviderContext(
+                context,
+                container,
+                File(root, "missing-workspace"),
+            ),
+            request = RuntimeExecutionRequest(
+                payload = RuntimeExecutionPayload.Argv("node", listOf("--version")),
+                requirements = setOf(RuntimeExecutionRequirement.FILESYSTEM_VIEW),
+            ),
+        ) as RuntimeProviderDecision.Unsupported
+
+        // FILESYSTEM_VIEW 不再是拒绝理由；路径翻译由预载层提供，缺件才是回退原因。
+        assertNotEquals("full_linux_required", decision.reason)
+        assertEquals("workspace_missing", decision.reason)
     }
 
     private fun container(

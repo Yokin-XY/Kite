@@ -209,7 +209,10 @@ internal object HostNodeCommandResolver {
         }
         if (normalizedExecutable == "node") {
             return HostNodeCommandResolution.Ready(
-                HostNodeInvocation(entryFile = null, arguments = arguments)
+                HostNodeInvocation(
+                    entryFile = null,
+                    arguments = arguments.map { mapContainerArgument(it, layout) },
+                )
             )
         }
 
@@ -219,8 +222,28 @@ internal object HostNodeCommandResolver {
             ?: return HostNodeCommandResolution.Fallback("managed_command_link_invalid")
         if (!hasNodeShebang(entryFile)) return HostNodeCommandResolution.Fallback("managed_command_not_node")
         return HostNodeCommandResolution.Ready(
-            HostNodeInvocation(entryFile = entryFile, arguments = arguments)
+            HostNodeInvocation(
+                entryFile = entryFile,
+                arguments = arguments.map { mapContainerArgument(it, layout) },
+            )
         )
+    }
+
+    /**
+     * 容器语义路径参数统一翻译成宿主物理路径：绝对路径直接映射，
+     * `--flag=/abs/path` 形式映射等号后的值；相对路径与其他参数原样保留。
+     * 与 node-host 预载层（kite-node-host-runtime.cjs）的 mapOptionPath 同合同。
+     */
+    private fun mapContainerArgument(value: String, layout: HostNodeRuntimeLayout): String {
+        if (value.startsWith("/")) {
+            return layout.mapContainerPath(value)?.absolutePath ?: value
+        }
+        val separator = value.indexOf('=')
+        if (separator > 0 && value.length > separator + 1 && value[separator + 1] == '/') {
+            val mapped = layout.mapContainerPath(value.substring(separator + 1)) ?: return value
+            return value.substring(0, separator + 1) + mapped.absolutePath
+        }
+        return value
     }
 
     private fun resolveCommandFile(token: String, layout: HostNodeRuntimeLayout): File? = when {
