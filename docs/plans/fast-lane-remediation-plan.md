@@ -92,3 +92,43 @@
 | **交互终端** | proot（构造点钦定） | ⚠️ P2 |
 | **动态 latest 制品下载** | proot curl | ⚠️ 低收益 |
 | git | proot（RF1230 no-go） | 保持 |
+
+## 全局加速（HostPython 车道）真机预检结论 2026-09-20
+
+预检方式：root shell 下 patched-loader 直跑 rootfs python3.12（与宿主 node 车道同构：
+`ld-linux-aarch64.so.1 --library-path <rootfs>/usr/lib/aarch64-linux-gnu:...`），逐层验证。
+
+### 已实证（OnePlus 8T）
+
+1. rootfs `/usr/bin/python3.12`（3.12.3）宿主直跑正常，stdlib 自动归位（sys.path 指向 rootfs 树）。
+2. hermes venv（26 个 C 扩展，cpython-312 ABI）宿主 import 全绿：pydantic_core 2.46.4、
+   yaml(_yaml.so)、anydoc(.so)、rich 等；acp_adapter 入口 import 仅 0.08s（proot 冷启 ~10s）。
+3. `acp.stdio_streams`（connect_read_pipe/connect_write_pipe）宿主直跑读写回环正常。
+4. hermes-acp 完整 initialize 回包（agentInfo hermes-agent 0.21.3）+ 插件发现 58 个 + SQLite 可用。
+
+### ABI 决策
+
+venv 是 rootfs python3.12 生态（ABI cpython-312）；独立资源 kite.python 是 3.14.6，ABI 不匹配。
+正解：HostPython 车道按 node 车道同构方式直跑 rootfs python3.12（venv 语义 = rootfs python +
+site-packages），而不是迁移 hermes 到 3.14 重建 venv。
+
+### 已知环境差异点（车道实现必须处理）
+
+1. venv 是 editable 安装：`__editable___hermes_agent_*_finder.py` 硬编码容器路径
+   `/workspace/.kf/software/...`，宿主下失效。解法：PYTHONPATH 前置源码树根目录（等效覆盖
+   顶层模块映射）+ site-packages。
+2. hermes lazy_deps：initialize 期间会 pip 子进程懒安装（如 boto3），宿主下不可行且阻塞回包。
+   解法：`security.allow_lazy_installs: false`（config.yaml），FeatureUnavailable 优雅降级，
+   核心 provider 不受影响。该配置的注入方式（安装 ensure vs 清单声明）实现时定。
+3. asyncio stdio 要求管道/字符设备：`< file` 重定向不行（真实 ACP 客户端是 ProcessBuilder 管道，
+   不受影响；仅预检脚本陷阱，双层 cat 会秒 EOF 让进程优雅退出、回包来不及写——排查时勿被误导）。
+
+### 实现清单（下一步）
+
+- HostPythonCommandResolver：支持 rootfs 系统布局（/usr/bin/python3.12 + /usr/lib/python3.12 +
+  libpython3.12.so.1.0 于 /usr/lib/aarch64-linux-gnu），现合同只认 .kf/software 受管布局。
+- hermes 清单：argv 改 `["python3.12", "/workspace/.kf/.../venv/bin/hermes-acp"]` +
+  runtimeGuarantees(no_child_process, verified_native_imports) + evidence pythonAbi=
+  cpython-312-aarch64-linux-gnu + environment PYTHONPATH（源码树+site-packages，容器路径由
+  mapEnvironment 映射）。
+- 真机验收：hermes 会话 ≤4s + 遥测 host_python 车道实锤 + P3 面板命中率提升。
