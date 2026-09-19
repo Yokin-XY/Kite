@@ -11,12 +11,24 @@ class HostNodeNativeCompatibilityContractTest {
         val cSource = source("native/kite-glibc-host/kite-glibc-compat.c").readText()
         val assembly = source("native/kite-glibc-host/kite-glibc-syscall-arm64.S").readText()
 
-        assertFalse(cSource.contains("va_arg("))
+        // syscall() 转发必须留在汇编层（C 变参包装会读不存在的参数，UB）。
         assertFalse(cSource.contains("long syscall("))
         assertTrue(assembly.contains(".global syscall"))
         assertTrue(assembly.contains("br x9"))
         assertTrue(assembly.contains("kite_real_syscall"))
         assertTrue(assembly.contains("kite_syscall_enosys"))
+    }
+
+    @Test
+    fun `variadic open family extracts mode only behind O_CREAT gate`() {
+        val cSource = source("native/kite-glibc-host/kite-glibc-compat.c").readText()
+
+        // open/open64/openat/openat64 的 va_list 仅在 O_CREAT 门控内提取，且按 int
+        // 提升读回后 cast 到 mode_t（窄类型直接 va_arg 是 UB）。
+        val gated = Regex("if \\(flags & O_CREA\\w*\\) \\{\\s*va_list").findAll(cSource).count()
+        assertTrue("O_CREAT gated va_list expected at least 4, got $gated", gated >= 4)
+        assertTrue(cSource.contains("va_arg(arguments, int)"))
+        assertFalse(cSource.contains("va_arg(arguments, mode_t)"))
     }
 
     @Test

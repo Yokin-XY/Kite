@@ -14,6 +14,7 @@ const libraryPath = process.env.KITE_NODE_HOST_LIBRARY_PATH || '';
 const compatLibrary = process.env.KITE_NODE_HOST_COMPAT_LIBRARY || '';
 const prootArgv = decodeJson('KITE_NODE_HOST_PROOT_ARGV_B64', []);
 const prootEnv = decodeJson('KITE_NODE_HOST_PROOT_ENV_B64', {});
+const guestTmp = normalizedPath(process.env.KITE_NODE_HOST_GUEST_TMP || '');
 const hostWorkspace = normalizedPath(process.env.KITE_NODE_HOST_WORKSPACE || '');
 const hostControl = normalizedPath(process.env.KITE_NODE_HOST_CONTROL || '');
 const hostRootfs = normalizedPath(process.env.KITE_NODE_HOST_ROOTFS || '');
@@ -37,7 +38,128 @@ const original = {
   exec: childProcess.exec,
   execSync: childProcess.execSync,
   fork: childProcess.fork,
+  stat: fs.stat,
+  statSync: fs.statSync,
+  lstat: fs.lstat,
+  lstatSync: fs.lstatSync,
+  mkdir: fs.mkdir,
+  mkdirSync: fs.mkdirSync,
+  open: fs.open,
+  openSync: fs.openSync,
+  rename: fs.rename,
+  renameSync: fs.renameSync,
+  unlink: fs.unlink,
+  unlinkSync: fs.unlinkSync,
+  rm: fs.rm,
+  rmSync: fs.rmSync,
+  rmdir: fs.rmdir,
+  rmdirSync: fs.rmdirSync,
+  access: fs.access,
+  accessSync: fs.accessSync,
+  realpath: fs.realpath,
+  realpathSync: fs.realpathSync,
 };
+
+/*
+ * 宿主车道没有根级 /tmp。部分软件把锁/临时目录硬编码为 "/tmp"，既不走
+ * TMPDIR 也无配置口。KITE_NODE_HOST_GUEST_TMP 注入后，把 fs 入口里 "/tmp"
+ * 与 "/tmp/..." 形式的路径重写到该目录；与 C 兼容层（KITE_GLIBC_HOST_
+ * GUEST_TMP）指向同一目录，覆盖 glibc 与 libuv 直连 syscall 两条路径。
+ * 未注入时零行为。
+ */
+function mapGuestTmpPath(value) {
+  if (!guestTmp || typeof value !== 'string' || value.length === 0) return value;
+  if (value === '/tmp') return guestTmp;
+  if (value.startsWith('/tmp/')) {
+    const suffix = value.slice('/tmp/'.length).split('/').filter((part) => part.length > 0 && part !== '.');
+    return path.join(guestTmp, ...suffix);
+  }
+  return value;
+}
+
+function isGuestTmpPath(value) {
+  return guestTmp && typeof value === 'string' && (value === '/tmp' || value.startsWith('/tmp/')) && mapGuestTmpPath(value) !== value;
+}
+
+function pathCallback(args, mapper) {
+  let changed = false;
+  const mapped = args.map((argument) => {
+    if (isGuestTmpPath(argument)) {
+      changed = true;
+      return mapper(argument);
+    }
+    return argument;
+  });
+  return changed ? mapped : args;
+}
+
+function wrapFsPathFunction(target, name, mapper) {
+  const delegate = target[name];
+  if (typeof delegate !== 'function') return;
+  const wrapped = function wrappedFsPathFunction(...args) {
+    return delegate.apply(this, pathCallback(args, mapper));
+  };
+  // 保留原函数的自有属性（statSync/lstatSync/realpathSync 的 .native 变体等）。
+  for (const key of Object.getOwnPropertyNames(delegate)) {
+    if (key !== 'length' && key !== 'name' && !(key in wrapped)) {
+      try {
+        Object.defineProperty(wrapped, key, Object.getOwnPropertyDescriptor(delegate, key));
+      } catch {
+        // 只读属性复制失败不影响主路径。
+      }
+    }
+  }
+  target[name] = wrapped;
+}
+
+function installGuestTmpRouting() {
+  if (!guestTmp) return;
+  const mapper = mapGuestTmpPath;
+  for (const name of [
+    'stat', 'statSync', 'lstat', 'lstatSync',
+    'mkdir', 'mkdirSync', 'open', 'openSync',
+    'rename', 'renameSync', 'unlink', 'unlinkSync',
+    'rm', 'rmSync', 'rmdir', 'rmdirSync',
+    'access', 'accessSync', 'realpath', 'realpathSync',
+    'existsSync', 'truncate', 'truncateSync',
+    'readFile', 'readFileSync', 'writeFile', 'writeFileSync',
+    'appendFile', 'appendFileSync', 'copyFile', 'copyFileSync',
+    'readlink', 'readlinkSync', 'symlink', 'symlinkSync',
+    'link', 'linkSync', 'readdir', 'readdirSync',
+    'opendir', 'opendirSync', 'chmod', 'chmodSync',
+    'utimes', 'utimesSync', 'lutimes', 'lutimesSync',
+    'createReadStream', 'createWriteStream',
+  ]) {
+    wrapFsPathFunction(fs, name, mapper);
+  }
+  // .native 变体挂在 wrap 后函数的复制属性上；再包一层路径重写。
+  for (const name of ['statSync', 'lstatSync', 'realpathSync']) {
+    const owner = fs[name];
+    const nativeDelegate = owner && typeof owner.native === 'function' ? owner.native : null;
+    if (!nativeDelegate) continue;
+    Object.defineProperty(owner, 'native', {
+      configurable: true,
+      writable: true,
+      value: function wrappedFsNative(...args) {
+        return nativeDelegate.apply(this, pathCallback(args, mapper));
+      },
+    });
+  }
+  // fs.promises 家族：
+  const promises = fs.promises && typeof fs.promises === 'object' ? fs.promises : null;
+  if (promises) {
+    for (const name of [
+      'stat', 'lstat', 'mkdir', 'open',
+      'rename', 'unlink', 'rm', 'rmdir',
+      'access', 'realpath', 'truncate',
+      'readFile', 'writeFile', 'appendFile', 'copyFile',
+      'readlink', 'symlink', 'link', 'readdir',
+      'opendir', 'chmod', 'utimes', 'lutimes',
+    ]) {
+      wrapFsPathFunction(promises, name, mapper);
+    }
+  }
+}
 
 function decodeJson(name, fallback) {
   const encoded = process.env[name];
@@ -390,6 +512,20 @@ function hostOptions(options) {
 
 function routeFile(file, args, options) {
   const normalizedArgs = Array.isArray(args) ? args : [];
+  // C 启动器形态：[loader, --library-path, X, [--preload, Y,] node, ...]。
+  // node 自身 spawn(execPath) 拿到的是 loader 入口形态，把它重写回启动器形态。
+  if (loader && file === loader) {
+    const nodeIndex = normalizedArgs.findIndex(
+      (value, index) => index > 0 && !String(value).startsWith('-')
+        && (value === nodeBinary || String(value).endsWith('/node')),
+    );
+    const scriptArgs = nodeIndex >= 0 ? normalizedArgs.slice(nodeIndex + 1) : normalizedArgs;
+    return {
+      file: launcher,
+      args: scriptArgs.map((value) => mapOptionPath(value, mapContainerPathToHost)),
+      options: hostOptions(options),
+    };
+  }
   if (isNodeCommand(file)) {
     return {
       file: launcher,
@@ -517,5 +653,7 @@ childProcess.fork = function kiteFork(modulePath, args, options) {
   routedOptions.execPath = launcher;
   return original.fork(modulePath, args, routedOptions);
 };
+
+installGuestTmpRouting();
 
 syncBuiltinESMExports();
