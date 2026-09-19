@@ -172,6 +172,7 @@ internal class RuntimeManagementScreen(
                 summary = context.getString(R.string.runtime_management_unassigned_summary, state.unassignedProcessGroups.sumOf { it.processCount }),
             )
             is Scope.Card -> state.runs.firstOrNull { it.instanceId == current.instanceId }?.let(::buildCardDetail)
+            Scope.RuntimeLane -> buildLaneDetail(state.laneSamples)
         }
         scroll.post { scroll.scrollTo(0, restoredScrollY) }
     }
@@ -201,6 +202,13 @@ internal class RuntimeManagementScreen(
             summary = context.getString(R.string.runtime_management_unassigned_caption),
             count = state.unassignedProcessGroups.sumOf { it.processCount },
             onClick = { openScope(Scope.Unassigned) },
+        ))
+        contentHost.addView(divider(), marginParams(height = 1, top = 10, bottom = 8))
+        contentHost.addView(navigationRow(
+            title = context.getString(R.string.runtime_management_lane_entry_title),
+            summary = laneSummaryLabel(state.laneSamples),
+            count = state.laneSamples.size,
+            onClick = { openScope(Scope.RuntimeLane) },
         ))
     }
 
@@ -799,6 +807,77 @@ internal class RuntimeManagementScreen(
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
     }
 
+    private fun buildLaneDetail(samples: List<RuntimeLaneSampleUiState>) {
+        if (samples.isEmpty()) {
+            contentHost.addView(TextView(context).apply {
+                text = context.getString(R.string.runtime_management_lane_empty)
+                ui.applyTextRole(this, UiTextRole.Supporting)
+                gravity = Gravity.CENTER
+                setPadding(dp(16), dp(26), dp(16), dp(26))
+            })
+            return
+        }
+        contentHost.addView(TextView(context).apply {
+            text = laneSummaryLabel(samples)
+            ui.applyTextRole(this, UiTextRole.Supporting)
+        }, marginParams(top = 8, bottom = 6))
+        samples
+            .groupBy { it.fallbackReason.ifBlank { "none" } }
+            .entries
+            .sortedByDescending { it.value.size }
+            .forEach { (reason, group) ->
+                contentHost.addView(sectionTitle(
+                    context.getString(R.string.runtime_management_lane_reason_group, reason, group.size)
+                ))
+                group.forEach { sample -> contentHost.addView(laneSampleRow(sample)) }
+            }
+    }
+
+    private fun laneSampleRow(sample: RuntimeLaneSampleUiState): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(14), dp(10), dp(14), dp(10))
+        background = ui.containerBackground(tokens.cardBackground, tokens.border, environment.components.card)
+        addView(TextView(context).apply {
+            text = context.getString(
+                R.string.runtime_management_lane_sample_title,
+                laneEntryPointLabel(sample.entryPoint),
+                laneLabel(sample),
+            )
+            ui.applyTextRole(this, UiTextRole.CardTitle)
+        })
+        addView(TextView(context).apply {
+            text = listOfNotNull(
+                laneTimeLabel(sample.timestampMs),
+                sample.detail,
+            ).joinToString(" · ")
+            ui.applyTextRole(this, UiTextRole.Supporting)
+            setPadding(0, dp(4), 0, 0)
+        })
+    }
+
+    private fun laneSummaryLabel(samples: List<RuntimeLaneSampleUiState>): String {
+        if (samples.isEmpty()) return context.getString(R.string.runtime_management_lane_summary_empty)
+        val fast = samples.count(RuntimeLaneSampleUiState::isFastLane)
+        return context.getString(
+            R.string.runtime_management_lane_summary,
+            fast, samples.size,
+        )
+    }
+
+    private fun laneLabel(sample: RuntimeLaneSampleUiState): String = when {
+        sample.isFastLane -> context.getString(R.string.runtime_management_lane_fast, sample.lane)
+        else -> context.getString(R.string.runtime_management_lane_fallback, sample.lane, sample.fallbackReason.ifBlank { "none" })
+    }
+
+    private fun laneEntryPointLabel(entryPoint: String): String = when (entryPoint) {
+        "agent" -> context.getString(R.string.runtime_management_lane_entry_agent)
+        "terminal" -> context.getString(R.string.runtime_management_lane_entry_terminal)
+        "recipe" -> context.getString(R.string.runtime_management_lane_entry_recipe)
+        else -> entryPoint
+    }
+
+    private fun laneTimeLabel(timestampMs: Long): String =
+        java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.ROOT).format(java.util.Date(timestampMs))
     private fun sectionTitle(value: String): View = TextView(context).apply {
         text = value
         ui.applyTextRole(this, UiTextRole.SectionTitle)
@@ -861,6 +940,8 @@ internal class RuntimeManagementScreen(
         append(runs.joinToString { run -> "${run.instanceId}:${run.icon.type}:${run.icon.source}:${run.processGroups.signature()}:${run.surfaces.joinToString { it.key }}" })
         append('|').append(allProcessGroups.signature())
         append('|').append(unassignedProcessGroups.signature())
+        // 运行通道样本变化也要重建（概览摘要与明细列表都消费它）。
+        append("|lane:").append(laneSamples.size).append(':').append(laneSamples.firstOrNull()?.timestampMs ?: 0L)
     }
 
     private fun List<RuntimeManagementProcessGroupUiState>.signature(): String = joinToString { group ->
@@ -881,12 +962,14 @@ internal class RuntimeManagementScreen(
         data object Overview : Scope { override val key: String = "overview" }
         data object All : Scope { override val key: String = "all" }
         data object Unassigned : Scope { override val key: String = "unassigned" }
+        data object RuntimeLane : Scope { override val key: String = "runtime_lane" }
         data class Card(val instanceId: String) : Scope { override val key: String = "card:$instanceId" }
 
         fun title(state: RuntimeManagementUiState, context: Context): String = when (this) {
             Overview -> context.getString(R.string.runtime_management_title)
             All -> context.getString(R.string.runtime_management_all_title)
             Unassigned -> context.getString(R.string.runtime_management_unassigned_title)
+            RuntimeLane -> context.getString(R.string.runtime_management_lane_title)
             is Card -> state.runs.firstOrNull { it.instanceId == instanceId }?.title
                 ?: context.getString(R.string.runtime_management_title)
         }
@@ -895,6 +978,7 @@ internal class RuntimeManagementScreen(
             fun restore(value: String?): Scope = when {
                 value == All.key -> All
                 value == Unassigned.key -> Unassigned
+                value == RuntimeLane.key -> RuntimeLane
                 value?.startsWith("card:") == true -> Card(value.removePrefix("card:"))
                 else -> Overview
             }

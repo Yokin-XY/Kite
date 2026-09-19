@@ -47,6 +47,16 @@ internal data class RuntimeManagementSummaryUiState(
     val runningProcesses: Int = 0
 )
 
+/** 运行通道遥测样本（快车道整改 P3）：每次启动走了哪条车道、为什么。 */
+internal data class RuntimeLaneSampleUiState(
+    val timestampMs: Long,
+    val entryPoint: String,
+    val lane: String,
+    val isFastLane: Boolean,
+    val fallbackReason: String,
+    val detail: String? = null
+)
+
 internal data class RuntimeManagementSurfaceUiState(
     val key: String,
     val instanceId: String,
@@ -121,6 +131,7 @@ internal data class RuntimeManagementUiState(
     val runs: List<RuntimeManagementRunUiState> = emptyList(),
     val allProcessGroups: List<RuntimeManagementProcessGroupUiState> = emptyList(),
     val unassignedProcessGroups: List<RuntimeManagementProcessGroupUiState> = emptyList(),
+    val laneSamples: List<RuntimeLaneSampleUiState> = emptyList(),
     val refreshedAt: Long = 0L
 ) {
     val isEmpty: Boolean

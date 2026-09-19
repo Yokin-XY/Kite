@@ -6,6 +6,7 @@ import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.application.runtimemanagement.RuntimeManagementSnapshot
 import com.kite.app.application.runtimemanagement.RuntimeManagementSubmitResult
+import com.kite.app.foundation.runtime.RuntimeLaneTelemetry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +26,23 @@ internal class RuntimeManagementFeatureController(
         coordinator.reconcile(snapshot)
         publish(snapshot)
     }
+
+    /** 遥测环形缓冲变化时刷新通道样本（轻量 copy，不触发进程快照对账）。 */
+    fun refreshLaneSamples() {
+        mutableState.value = mutableState.value.copy(laneSamples = laneSampleSnapshot())
+    }
+
+    private fun laneSampleSnapshot(): List<RuntimeLaneSampleUiState> =
+        RuntimeLaneTelemetry.entries.value.map { entry ->
+            RuntimeLaneSampleUiState(
+                timestampMs = entry.timestampMs,
+                entryPoint = entry.entryPoint,
+                lane = entry.lane,
+                isFastLane = entry.isFastLane,
+                fallbackReason = entry.fallbackReason,
+                detail = entry.detail
+            )
+        }
 
     suspend fun dispatch(action: RuntimeManagementFeatureAction): RuntimeManagementFeatureEffect? = when (action) {
         is RuntimeManagementFeatureAction.Refresh -> {
@@ -104,5 +122,6 @@ internal class RuntimeManagementFeatureController(
             )
         }
         mutableState.value = RuntimeManagementProjector.project(snapshot, mutations, text)
+            .let { state -> state.copy(laneSamples = laneSampleSnapshot()) }
     }
 }

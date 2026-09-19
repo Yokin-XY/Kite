@@ -240,6 +240,32 @@ class RuntimeManagementScreenTest {
         assertNotNull(screen.processRootForTesting("child"))
     }
 
+    @Test
+    fun `lane diagnostics row shows summary on overview and detail groups by fallback reason`() {
+        val screen = RuntimeManagementScreen(
+            context = themedContext(),
+            initialScrollY = 0,
+            onBack = {},
+            onRefresh = {},
+            onAction = {},
+        )
+        Robolectric.buildActivity(Activity::class.java).setup().get().setContentView(screen.root)
+
+        val state = RuntimeManagementUiState(
+            laneSamples = listOf(
+                RuntimeLaneSampleUiState(1000L, "agent", "host_node", true, "none"),
+                RuntimeLaneSampleUiState(2000L, "agent", "proot_shell", false, "managed_command_not_node"),
+                RuntimeLaneSampleUiState(3000L, "terminal", "proot_shell", false, "managed_command_not_node"),
+            )
+        )
+        screen.render(state)
+
+        // 概览出现入口行：标题 + 1/3 摘要
+        val overviewTexts = screen.root.textViews().map(TextView::getText).map(Any::toString)
+        val laneTitle = themedContext().getString(com.kite.app.R.string.runtime_management_lane_entry_title)
+        assertTrue(overviewTexts.any { it.contains(laneTitle) })
+        assertTrue(overviewTexts.any { it.contains("1/3") })
+    }
     private fun projected() = RuntimeManagementProjector.project(snapshot())
 
     private fun snapshot() = RuntimeManagementSnapshot(

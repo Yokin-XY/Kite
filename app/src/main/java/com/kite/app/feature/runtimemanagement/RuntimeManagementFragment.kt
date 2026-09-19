@@ -71,6 +71,11 @@ internal class RuntimeManagementFragment : Fragment() {
                 launch { controller.state.collect { state -> screen?.render(state) } }
                 launch { gateway.snapshots.collect { snapshot -> controller.reconcile(snapshot) } }
                 launch {
+                    com.kite.app.foundation.runtime.RuntimeLaneTelemetry.entries.collect {
+                        controller.refreshLaneSamples()
+                    }
+                }
+                launch {
                     coordinator.commands.collectLatest { commands ->
                         controller.reconcile(gateway.currentSnapshot())
                         val deadlineAt = commands.values
