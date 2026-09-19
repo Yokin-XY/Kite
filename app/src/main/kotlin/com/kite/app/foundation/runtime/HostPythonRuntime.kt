@@ -24,6 +24,10 @@ internal data class HostPythonRuntimeLayout(
     val pythonLibraryDirectory: File,
     val glibcLibraryDirectories: List<File>,
     val assets: GlibcHostRuntimeAssets,
+    /** rootfs 系统布局（/usr/bin/pythonX.Y + /usr/lib/pythonX.Y，解释器随容器发行版）：
+     *  venv 生态与它同源，ABI 天然一致；不注入 PYTHONHOME（让解释器按自身路径自动推导
+     *  prefix，与 rootfs 内运行语义一致）。 */
+    val isSystemLayout: Boolean = false,
 ) {
     val pythonAbi: String
         get() = "cpython-${pythonVersion.replace(".", "")}-aarch64-linux-gnu"
@@ -96,32 +100,43 @@ internal object HostPythonCommandResolver {
         val commandName = candidateName(executable)
             ?.takeIf(safePythonCommand::matches)
             ?: return unsupported("managed_command_not_python")
-        val initial = when {
-            executable == commandName -> File(workspaceControlDirectory, "bin/$commandName")
-            executable.startsWith('/') -> mapContainerPath(
-                executable,
-                rootfsDirectory,
-                workspaceDirectory,
-                workspaceControlDirectory,
+        // 裸名解析顺序：受管 .kf/bin 优先（可能是指向独立资源树的软链），
+        // miss 时回退 rootfs 系统解释器（/usr/bin/pythonX.Y，venv 生态与其同源）。
+        val initialCandidates = when {
+            executable == commandName -> listOf(
+                File(workspaceControlDirectory, "bin/$commandName"),
+                File(rootfsDirectory, "usr/bin/$commandName"),
             )
-            else -> null
-        } ?: return unsupported("python_command_missing")
-        val pythonBinary = followLinks(
-            initial = initial,
-            rootfsDirectory = rootfsDirectory,
-            workspaceDirectory = workspaceDirectory,
-            workspaceControlDirectory = workspaceControlDirectory,
-            linkTargetReader = linkTargetReader,
-        ) ?: return blocked("python_command_link_invalid")
+            executable.startsWith('/') -> listOfNotNull(
+                mapContainerPath(
+                    executable,
+                    rootfsDirectory,
+                    workspaceDirectory,
+                    workspaceControlDirectory,
+                )
+            )
+            else -> emptyList()
+        }
+        if (initialCandidates.isEmpty()) return unsupported("python_command_missing")
+        val pythonBinary = initialCandidates.firstNotNullOfOrNull { candidate ->
+            followLinks(
+                initial = candidate,
+                rootfsDirectory = rootfsDirectory,
+                workspaceDirectory = workspaceDirectory,
+                workspaceControlDirectory = workspaceControlDirectory,
+                linkTargetReader = linkTargetReader,
+            )
+        } ?: return blocked("python_command_link_invalid")
         if (!pythonBinary.isFile || !pythonBinary.canExecute()) return unsupported("python_binary_missing")
         if (!isArm64Elf(pythonBinary)) return blocked("python_binary_abi_mismatch")
         val managedSoftwareDirectory = File(workspaceControlDirectory, "software").absoluteFile.normalize()
         val pythonRoot = pythonBinary.parentFile?.parentFile
-            ?.takeIf {
-                it.isDirectory &&
-                    it.parentFile?.parentFile?.absoluteFile?.normalize() == managedSoftwareDirectory
-            }
-            ?: return blocked("python_root_invalid")
+        val systemLayout = pythonRoot?.absoluteFile?.normalize() == File(rootfsDirectory, "usr").absoluteFile.normalize()
+        val pythonRootValid = pythonRoot != null && pythonRoot.isDirectory && (
+            systemLayout ||
+                pythonRoot.parentFile?.parentFile?.absoluteFile?.normalize() == managedSoftwareDirectory
+            )
+        if (!pythonRootValid) return blocked("python_root_invalid")
         val pythonLibraryDirectory = File(pythonRoot, "lib")
         if (!pythonLibraryDirectory.isDirectory) return unsupported("python_libraries_missing")
         val stdlibDirectory = pythonLibraryDirectory.listFiles().orEmpty()
@@ -130,7 +145,15 @@ internal object HostPythonCommandResolver {
             .firstOrNull { File(it, "os.py").isFile }
             ?: return unsupported("python_stdlib_missing")
         val version = stdlibDirectory.name.removePrefix("python")
-        if (!File(pythonLibraryDirectory, "libpython$version.so.1.0").isFile) {
+        // 受管布局（独立资源树）要求 libpython 与 stdlib 同级；rootfs 系统布局的解释器
+        // 静态内嵌（Ubuntu 发行版不带 libpython 共享库，预检直跑已实证），libpython 可选，
+        // 找到则补进库路径（Debian 系位于 lib/aarch64-linux-gnu）。
+        val libpythonCandidates = listOf(
+            File(pythonLibraryDirectory, "libpython$version.so.1.0"),
+            File(pythonLibraryDirectory, "aarch64-linux-gnu/libpython$version.so.1.0"),
+        )
+        val libpython = libpythonCandidates.firstOrNull(File::isFile)
+        if (libpython == null && !systemLayout) {
             return unsupported("python_shared_library_missing")
         }
         val glibcDirectories = listOf(
@@ -155,6 +178,7 @@ internal object HostPythonCommandResolver {
                 pythonLibraryDirectory = pythonLibraryDirectory.absoluteFile.normalize(),
                 glibcLibraryDirectories = glibcDirectories.map { it.absoluteFile.normalize() },
                 assets = assets,
+                isSystemLayout = systemLayout,
             ),
             invocation = HostPythonInvocation(mappedArguments),
         )
@@ -381,8 +405,12 @@ internal object HostPythonRuntimeProvider :
         additionalEnvironment.forEach { (key, value) ->
             if (ENVIRONMENT_NAME.matches(key)) environment[key] = value
         }
+        // 系统布局不注入 PYTHONHOME：解释器按自身路径自动推导 prefix（预检实证）；
+        // 受管布局保留注入（独立资源树的固定安装位置）。
+        if (!layout.isSystemLayout) {
+            environment["PYTHONHOME"] = layout.pythonRoot.absolutePath
+        }
         environment.putAll(linkedMapOf(
-            "PYTHONHOME" to layout.pythonRoot.absolutePath,
             "KITE_GLIBC_HOST_LANE" to "direct_glibc_v1",
             "KITE_GLIBC_HOST_LOADER" to layout.assets.patchedLoader.absolutePath,
             "KITE_GLIBC_HOST_LIBRARY_PATH" to layout.libraryPath,
@@ -406,8 +434,13 @@ internal object HostPythonRuntimeProvider :
     ): Map<String, String>? {
         val mapped = linkedMapOf<String, String>()
         environment.forEach { (key, value) ->
-            mapped[key] = when (key) {
-                "PYTHONPATH" -> {
+            mapped[key] = when {
+                // 路径型环境变量统一映射（*_HOME 家族与 Python 语义变量）：
+                // 清单以容器路径声明（与安装脚本合同一致），宿主车道翻译为物理路径。
+                key == "HOME" || key.endsWith("_HOME") || key == "PYTHONHOME" ->
+                    if (!value.startsWith('/')) value
+                    else layout.mapContainerPath(value)?.absolutePath ?: return null
+                key == "PYTHONPATH" -> {
                     val entries = mutableListOf<String>()
                     for (entry in value.split(':')) {
                         entries += if (entry.isBlank() || !entry.startsWith('/')) {
@@ -418,7 +451,7 @@ internal object HostPythonRuntimeProvider :
                     }
                     entries.joinToString(":")
                 }
-                "PYTHONSTARTUP" -> if (!value.startsWith('/')) {
+                key == "PYTHONSTARTUP" -> if (!value.startsWith('/')) {
                     value
                 } else {
                     layout.mapContainerPath(value)?.absolutePath ?: return null

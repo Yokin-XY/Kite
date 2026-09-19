@@ -13,7 +13,9 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["hermes"],
+    "managedCommands": [
+      "hermes"
+    ],
     "versionProbe": {
       "command": "cat /workspace/.kf/software/kite.hermes.core/.kite-version",
       "pattern": "(v?[0-9]+(?:\\.[0-9]+)+)"
@@ -22,13 +24,17 @@
       "command": "printf '%s\\n' 'v2026.8.27.5'",
       "pattern": "(v?[0-9]+(?:\\.[0-9]+)+)"
     },
-    "preservePaths": ["home"]
+    "preservePaths": [
+      "home"
+    ]
   },
   "display": {
     "sections": [
       "ai-community"
     ],
-    "tabs": ["angel-cli"],
+    "tabs": [
+      "angel-cli"
+    ],
     "order": 40,
     "category": "AI",
     "accent": "teal",
@@ -89,19 +95,39 @@
         {
           "id": "nous",
           "name": "Nous Portal 官方",
-          "modelGroupIds": ["nous", "hermes"],
+          "modelGroupIds": [
+            "nous",
+            "hermes"
+          ],
           "status": {
-            "argv": ["hermes", "portal", "info"],
-            "loggedInPatterns": ["logged in"],
-            "loggedOutPatterns": ["not logged in"],
+            "argv": [
+              "hermes",
+              "portal",
+              "info"
+            ],
+            "loggedInPatterns": [
+              "logged in"
+            ],
+            "loggedOutPatterns": [
+              "not logged in"
+            ],
             "timeoutMs": 15000
           },
           "login": {
-            "argv": ["hermes", "portal", "login"],
+            "argv": [
+              "hermes",
+              "portal",
+              "login"
+            ],
             "timeoutMs": 300000
           },
           "logout": {
-            "argv": ["hermes", "auth", "logout", "nous"],
+            "argv": [
+              "hermes",
+              "auth",
+              "logout",
+              "nous"
+            ],
             "timeoutMs": 30000
           }
         }
@@ -111,8 +137,24 @@
         "providerId": "hermes",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["hermes", "acp"],
-        "title": "Hermes"
+        "argv": [
+          "python3.12",
+          "/workspace/.kf/software/kite.hermes.core/hermes-agent/venv/bin/hermes-acp"
+        ],
+        "title": "Hermes",
+        "runtimeGuarantees": [
+          "no_child_process",
+          "verified_native_imports"
+        ],
+        "runtimeGuaranteeEvidence": {
+          "pythonAbi": "cpython-312-aarch64-linux-gnu"
+        },
+        "environment": {
+          "HOME": "/workspace/.kf/software/kite.hermes.core/hermes-agent/user-home",
+          "HERMES_HOME": "/workspace/.kf/software/kite.hermes.core/hermes-agent/home",
+          "HERMES_DISABLE_LAZY_INSTALLS": "1",
+          "PYTHONPATH": "/workspace/.kf/software/kite.hermes.core/hermes-agent:/workspace/.kf/software/kite.hermes.core/hermes-agent/venv/lib/python3.12/site-packages"
+        }
       }
     }
   ],
@@ -131,9 +173,21 @@
             ],
             "destination": "$install_root/hermes-agent",
             "latestVersionWindow": [
-              { "version": "v2026.9.14", "ref": "v2026.9.14", "commit": "345cd2b057a452236de401d3534b8502a7465e8d" },
-              { "version": "v2026.9.11", "ref": "v2026.9.11", "commit": "939e45c91d751fadd94dcd1b873ac3cb44846213" },
-              { "version": "v2026.9.7", "ref": "v2026.9.7", "commit": "2237be355906fbe6065ce1815711eee52b2d646e" }
+              {
+                "version": "v2026.9.14",
+                "ref": "v2026.9.14",
+                "commit": "345cd2b057a452236de401d3534b8502a7465e8d"
+              },
+              {
+                "version": "v2026.9.11",
+                "ref": "v2026.9.11",
+                "commit": "939e45c91d751fadd94dcd1b873ac3cb44846213"
+              },
+              {
+                "version": "v2026.9.7",
+                "ref": "v2026.9.7",
+                "commit": "2237be355906fbe6065ce1815711eee52b2d646e"
+              }
             ],
             "depth": 1,
             "retryAttempts": 1,

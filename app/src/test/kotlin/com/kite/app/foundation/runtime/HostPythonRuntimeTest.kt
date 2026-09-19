@@ -8,6 +8,7 @@ import com.kite.app.foundation.contracts.NetworkMode
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -56,7 +57,8 @@ class HostPythonRuntimeTest {
                     null
                 }
             },
-        ) as HostPythonCommandResolution.Ready
+        )
+        check(resolution is HostPythonCommandResolution.Ready) { "resolution=$resolution" }
 
         assertEquals(fixture.pythonBinary.canonicalFile, resolution.layout.pythonBinary.canonicalFile)
         assertEquals(listOf(script.absolutePath, "value"), resolution.invocation.arguments)
@@ -265,6 +267,69 @@ class HostPythonRuntimeTest {
         guarantees = guarantees,
     )
 
+    @Test
+    fun `resolver accepts rootfs system python layout for venv ecosystems`() {
+        val fixture = fixture()
+        // rootfs 系统布局：/usr/bin/python3.12 + /usr/lib/python3.12 stdlib +
+        // libpython3.12.so.1.0 于 /usr/lib/aarch64-linux-gnu（Debian 系）。
+        val systemPython = arm64Elf(File(fixture.rootfs, "usr/bin/python3.12"))
+        File(fixture.rootfs, "usr/lib/python3.12/os.py").apply {
+            checkNotNull(parentFile).mkdirs()
+            writeText("# stdlib marker")
+        }
+        // Ubuntu 系统布局无 libpython 共享库（解释器静态内嵌），不创建。
+        File(fixture.rootfs, "usr/lib/aarch64-linux-gnu").apply { mkdirs() }
+        val script = File(fixture.workspace, "tool/run.py").apply {
+            checkNotNull(parentFile).mkdirs()
+            writeText("print('ok')")
+        }
+
+        // 裸名 miss 受管 .kf/bin 后回退 rootfs/usr/bin。
+        val resolution = HostPythonCommandResolver.resolve(
+            executable = "python3.12",
+            arguments = listOf("/workspace/tool/run.py"),
+            rootfsDirectory = fixture.rootfs,
+            workspaceDirectory = fixture.workspace,
+            assets = fixture.assets,
+            linkTargetReader = { null },
+        ) as HostPythonCommandResolution.Ready
+
+        assertEquals(systemPython.canonicalFile, resolution.layout.pythonBinary.canonicalFile)
+        assertTrue(resolution.layout.isSystemLayout)
+        assertEquals("cpython-312-aarch64-linux-gnu", resolution.layout.pythonAbi)
+        assertEquals(listOf(script.absolutePath), resolution.invocation.arguments)
+    }
+
+    @Test
+    fun `system layout buildConfig omits PYTHONHOME so interpreter derives prefix`() {
+        val fixture = fixture()
+        val systemPythonRoot = File(fixture.rootfs, "usr")
+        val layout = HostPythonRuntimeLayout(
+            rootfsDirectory = fixture.rootfs,
+            workspaceDirectory = fixture.workspace,
+            workspaceControlDirectory = fixture.control,
+            pythonBinary = File(systemPythonRoot, "bin/python3.12"),
+            pythonRoot = systemPythonRoot,
+            pythonVersion = "3.12",
+            pythonLibraryDirectory = File(systemPythonRoot, "lib"),
+            glibcLibraryDirectories = listOf(File(fixture.rootfs, "usr/lib/aarch64-linux-gnu")),
+            assets = fixture.assets,
+            isSystemLayout = true,
+        )
+
+        val config = HostPythonRuntimeProvider.buildConfig(
+            container = fixture.container,
+            layout = layout,
+            invocation = HostPythonInvocation(listOf("-c", "print(1)")),
+            workingDirectory = fixture.workspace,
+        )
+
+        val env = config.env.associate { entry ->
+            entry.substringBefore('=') to entry.substringAfter('=')
+        }
+        assertNull(env["PYTHONHOME"])
+        assertEquals(layout.pythonBinary.absolutePath, env["KITE_GLIBC_HOST_TARGET"])
+    }
     private fun fixture(): Fixture {
         val root = Files.createTempDirectory("kite-host-python-test").toFile()
         val rootfs = File(root, "rootfs").apply { mkdirs() }

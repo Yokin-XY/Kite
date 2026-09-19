@@ -67,6 +67,8 @@ data class KiteResourceAgentProfile(
     val argv: List<String>,
     val runtimeGuarantees: Set<String> = emptySet(),
     val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
+    /** 清单声明的启动环境（容器路径由车道映射）；如 hermes 的 PYTHONPATH 源码树前置。 */
+    val environment: Map<String, String> = emptyMap(),
     val environmentFiles: Map<String, KiteResourceEnvironmentFileSpec> = emptyMap(),
     val runtimeDependencies: List<KiteResourceAgentRuntimeDependency> = emptyList(),
     val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
@@ -837,6 +839,7 @@ class KiteResourceManifestLoader private constructor(
             argv = argv,
             runtimeGuarantees = runtimeGuarantees,
             runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
+            environment = launch.optJSONObject("environment").toStringMap(),
             environmentFiles = launch.optJSONObject("environmentFiles").toEnvironmentFileSpecMap(),
             runtimeDependencies = runtimeDependencies,
             hardLinkMode = hardLinkMode,

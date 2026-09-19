@@ -424,6 +424,7 @@ internal class AndroidAgentRecipeRuntime(
         val runtimeGuarantees: Set<String>,
         val runtimeGuaranteeEvidence: Map<String, String>,
         val hardLinkMode: RuntimeHardLinkMode,
+        val environment: Map<String, String> = emptyMap(),
         val environmentFiles: Map<String, com.kite.app.resources.KiteResourceEnvironmentFileSpec>,
         val runtimeDependencies: List<KiteResourceAgentRuntimeDependency>,
         val initializeTimeoutMs: Long,
@@ -546,7 +547,7 @@ internal class AndroidAgentRecipeRuntime(
             val processLaunch = runCatching {
                 managedRuntimeDependencyPreparer.prepare(resolved.runtimeDependencies)
                 ensureEnvironmentFilesPresent(resolved.environmentFiles)
-                val resolvedEnvironment = environment + resolveEnvironmentFiles(
+                val resolvedEnvironment = environment + resolved.environment + resolveEnvironmentFiles(
                     resolved.environmentFiles.mapValues { it.value.path }
                 )
                 installBridgeAssetIfNeeded(resolved)
@@ -1044,6 +1045,7 @@ internal class AndroidAgentRecipeRuntime(
                     argv = launch.argv,
                     runtimeGuarantees = launch.runtimeGuarantees,
                     runtimeGuaranteeEvidence = launch.runtimeGuaranteeEvidence,
+                    environment = launch.environment,
                     hardLinkMode = profile?.hardLinkMode ?: RuntimeHardLinkMode.EMULATED,
                     environmentFiles = profile?.environmentFiles.orEmpty(),
                     runtimeDependencies = profile?.runtimeDependencies.orEmpty(),

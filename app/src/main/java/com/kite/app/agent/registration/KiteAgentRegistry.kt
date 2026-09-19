@@ -37,6 +37,7 @@ internal object AgentResourceRegistrationMapper {
                 argv = argv,
                 runtimeGuarantees = runtimeGuarantees,
                 runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
+                environment = environment,
                 requirements = requirements,
                 bridgeAsset = bridgeAsset,
             )
