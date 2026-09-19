@@ -394,6 +394,12 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
             environment[entry.substringBefore('=')] = entry.substringAfter('=', "")
         }
         environment.putAll(plan.environment)
+        // 交互终端 PATH 前置宿主车道 shim：手敲 node/python 转发快车道，
+        // 桥不可用或被拒时 shim 自动回退容器原生命令（可用性优先）。
+        environment["PATH"] = com.kite.app.foundation.runtime.HostTerminalShim.injectIntoPath(
+            context,
+            environment["PATH"].orEmpty(),
+        )
         return config.copy(env = environment.map { (key, value) -> "$key=$value" }.toTypedArray())
     }
 

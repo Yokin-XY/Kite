@@ -991,6 +991,7 @@ class TerminalSessionController(
         val launchOverrides = launchEnvOverrides.remove(record.id).orEmpty()
         val directLaunchConfig = launchConfigOverrides.remove(record.id)
         RuntimeLaunchTrace.markTerminal(record.id, RuntimeLaunchTrace.TERMINAL_CONFIG_STARTED)
+        com.kite.app.foundation.runtime.HostExecBridge.ensureStarted(appContext)
         val config = directLaunchConfig ?: withContext(Dispatchers.IO) {
             // 终端会话属于工作面动作；真正的容器 launch 配置统一经 bridge 向建房层索取。
             val prootPlan = ProotCompatibilityRuntimeProvider.requirePlan(
