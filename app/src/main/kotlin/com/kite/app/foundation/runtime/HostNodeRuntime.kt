@@ -207,6 +207,13 @@ internal object HostNodeCommandResolver {
         if (normalizedExecutable.contains('=')) {
             return HostNodeCommandResolution.Fallback("environment_assignment")
         }
+        // `/usr/bin/env CMD` 是通用转发壳：剥掉后按目标命令继续解析（跳过 VAR=value）。
+        // 谁都能用，不针对具体应用；目标仍需通过 node/受管 node 脚本判定。
+        if (normalizedExecutable == "/usr/bin/env" || normalizedExecutable == "env") {
+            val remaining = arguments.dropWhile { it.contains('=') && !it.startsWith('-') }
+            if (remaining.isEmpty()) return HostNodeCommandResolution.Fallback("env_target_missing")
+            return resolve(remaining.first(), remaining.drop(1), layout, linkTargetReader)
+        }
         if (normalizedExecutable == "node") {
             return HostNodeCommandResolution.Ready(
                 HostNodeInvocation(

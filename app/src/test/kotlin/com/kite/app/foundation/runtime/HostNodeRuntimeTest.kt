@@ -88,6 +88,50 @@ class HostNodeRuntimeTest {
     }
 
     @Test
+    fun `env wrapper argv resolves through to the managed node command`() {
+        val fixture = fixture()
+        val entry = File(fixture.workspace, ".kf/bin/env-agent").apply {
+            writeText("#!/usr/bin/env node\nconsole.log('ok')\n")
+            setExecutable(true)
+        }
+        val layout = (HostNodeRuntimeResolver.resolve(
+            fixture.rootfs,
+            fixture.workspace,
+            fixture.assets,
+        ) as HostNodeRuntimeResolution.Ready).layout
+
+        val result = HostNodeCommandResolver.resolve(
+            executable = "/usr/bin/env",
+            arguments = listOf("FOO=bar", "env-agent", "--flag"),
+            layout = layout,
+        )
+
+        assertEquals(
+            HostNodeCommandResolution.Ready(HostNodeInvocation(entry, listOf("--flag"))),
+            result,
+        )
+    }
+
+    @Test
+    fun `env wrapper without target stays a fallback`() {
+        val fixture = fixture()
+        val layout = (HostNodeRuntimeResolver.resolve(
+            fixture.rootfs,
+            fixture.workspace,
+            fixture.assets,
+        ) as HostNodeRuntimeResolution.Ready).layout
+
+        assertEquals(
+            HostNodeCommandResolution.Fallback("env_target_missing"),
+            HostNodeCommandResolver.resolve(
+                executable = "/usr/bin/env",
+                arguments = listOf("FOO=bar"),
+                layout = layout,
+            ),
+        )
+    }
+
+    @Test
     fun `node argv container paths translate to physical runtime roots`() {
         val fixture = fixture()
         val layout = (HostNodeRuntimeResolver.resolve(
