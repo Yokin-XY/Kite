@@ -1,215 +1,215 @@
 {
- "schemaVersion": 1,
- "id": "kite.openclaw",
- "base": {
-  "name": "OpenClaw",
-  "description": "多通道 AI Agent 网关",
-  "version": "npm",
-  "icon": {
-   "type": "asset",
-   "value": "resources/kite.openclaw/icon.png",
-   "fallbackText": "Cl"
-  }
- },
- "management": {
-  "mode": "managed_extension",
-  "managedCommands": [
-   "openclaw"
-  ],
-  "versionProbe": {
-   "command": "openclaw --version",
-   "pattern": "([0-9]+(?:\\.[0-9]+)+)"
-  }
- },
- "display": {
-  "sections": [
-   "ai-community"
-  ],
-  "tabs": [
-   "angel-cli"
-  ],
-  "order": 20,
-  "category": "AI",
-  "accent": "mint",
-  "sizeLabel": "网络包",
-  "longDescription": "OpenClaw 是偏网关和多通道协作的 AI Agent 工具。Kite 把它作为 Node.js 上层资源接入：获取阶段安装 openclaw npm 包并暴露 openclaw 命令，打开后直接进入本地对话界面；模型与网络搜索服务由 OpenClaw 自己管理。",
-  "recommendations": [
-   {
-    "resourceId": "kite.nodejs",
-    "label": "运行时"
-   },
-   {
-    "resourceId": "kite.opencode",
-    "label": "同类 Agent"
-   },
-   {
-    "resourceId": "kite.codex.cli",
-    "label": "终端 Agent"
-   }
-  ],
-  "tags": [
-   "openclaw",
-   "agent",
-   "gateway",
-   "terminal",
-   "ai"
-  ]
- },
- "relations": {
-  "provides": [
-   "cli.openclaw",
-   "agent.openclaw"
-  ],
-  "base": [
-   "kite.nodejs",
-   "kite.git"
-  ],
-  "defaults": [],
-  "extensions": []
- },
- "source": {
-  "type": "official_command",
-  "package": "openclaw",
-  "command": "npm install -g openclaw@latest",
-  "uninstallCommand": "npm uninstall -g openclaw",
-  "latestVersion": "2026.9.4"
- },
- "paths": {
-  "cacheRoot": "/workspace/.kf/cache/resources/kite.openclaw",
-  "installRoot": "/workspace/.kf/software/kite.openclaw",
-  "binRoot": "/workspace/.kf/bin"
- },
- "agents": [
-  {
-   "id": "openclaw",
-   "name": "OpenClaw",
-   "description": "连接 OpenClaw Gateway 的 ACP 会话",
-   "configuration": {
-    "required": false,
-    "adapter": "openclaw"
-   },
-   "launch": {
-    "mode": "managed",
-    "providerId": "openclaw",
-    "protocol": "acp",
-    "transport": "stdio",
-    "argv": [
-     "openclaw",
-     "acp"
-    ],
-    "environmentFiles": {
-     "OPENCLAW_GATEWAY_TOKEN": {
-      "path": "/workspace/.kf/secrets/kite.openclaw-gateway-token",
-      "autoGenerate": "random_token"
-     }
-    },
-    "runtimeDependencies": [
-     {
-      "id": "openclaw-gateway",
-      "title": "OpenClaw 网关",
-      "argv": [
-       "openclaw",
-       "gateway",
-       "run",
-       "--bind",
-       "loopback",
-       "--port",
-       "18789",
-       "--auth",
-       "token",
-       "--allow-unconfigured"
-      ],
-      "workdir": "/workspace",
-      "environment": {
-       "OPENCLAW_DISABLE_BONJOUR": "1"
-      },
-      "environmentFiles": {
-       "OPENCLAW_GATEWAY_TOKEN": {
-        "path": "/workspace/.kf/secrets/kite.openclaw-gateway-token",
-        "autoGenerate": "random_token"
-       }
-      },
-      "bindAddress": "127.0.0.1",
-      "bindPort": 18789,
-      "healthHttpPath": "/readyz",
-      "startupTimeoutMs": 30000,
-      "healthCheckStartupDelayMs": 0,
-      "restartPolicy": "on_failure",
-      "retentionClass": "resident",
-      "runtimeGuarantees": [
-       "openat2_degrade"
-      ]
-     }
-    ],
-    "title": "OpenClaw",
-    "requirements": [
-     "full_linux"
-    ]
-   }
-  }
- ],
- "actions": {
-  "open": {
-   "runtime": "kite_recipe",
-   "recipe": {
-    "base": {
-     "id": "",
-     "name": "OpenClaw",
-     "description": "启动 OpenClaw Agent 会话",
-     "icon": {
-      "type": "builtin",
-      "name": "bot"
-     }
-    },
-    "launch": {
-     "openInstance": true
-    },
-    "recipe": [
-     {
-      "type": "agent",
-      "agentId": "openclaw",
-      "workdir": "/workspace"
-     }
-    ]
-   }
+  "schemaVersion": 1,
+  "id": "kite.openclaw",
+  "base": {
+    "name": "OpenClaw",
+    "description": "多通道 AI Agent 网关",
+    "version": "npm",
+    "icon": {
+      "type": "asset",
+      "value": "resources/kite.openclaw/icon.png",
+      "fallbackText": "Cl"
+    }
   },
-  "uninstall": [
-   {
-    "type": "shell",
-    "cmd": ":",
+  "management": {
+    "mode": "managed_extension",
     "managedCommands": [
-     "openclaw"
+      "openclaw"
     ],
-    "npmUninstallPackage": "openclaw",
-    "timeoutMs": 180000
-   }
-  ]
- },
- "homeCards": [
-  {
-   "label": "OpenClaw",
-   "policy": "manual",
-   "recipe": {
-    "base": {
-     "id": "",
-     "name": "OpenClaw",
-     "description": "启动 OpenClaw Agent 会话",
-     "icon": {
-      "type": "builtin",
-      "name": "bot"
-     }
-    },
-    "launch": {
-     "openInstance": true
-    },
-    "recipe": [
-     {
-      "type": "agent",
-      "agentId": "openclaw",
-      "workdir": "/workspace"
-     }
+    "versionProbe": {
+      "command": "openclaw --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    }
+  },
+  "display": {
+    "sections": [
+      "ai-community"
+    ],
+    "tabs": [
+      "angel-cli"
+    ],
+    "order": 20,
+    "category": "AI",
+    "accent": "mint",
+    "sizeLabel": "网络包",
+    "longDescription": "OpenClaw 是偏网关和多通道协作的 AI Agent 工具。Kite 把它作为 Node.js 上层资源接入：获取阶段安装 openclaw npm 包并暴露 openclaw 命令，打开后直接进入本地对话界面；模型与网络搜索服务由 OpenClaw 自己管理。",
+    "recommendations": [
+      {
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.opencode",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.codex.cli",
+        "label": "终端 Agent"
+      }
+    ],
+    "tags": [
+      "openclaw",
+      "agent",
+      "gateway",
+      "terminal",
+      "ai"
     ]
-   }
-  }
- ]
+  },
+  "relations": {
+    "provides": [
+      "cli.openclaw",
+      "agent.openclaw"
+    ],
+    "base": [
+      "kite.nodejs",
+      "kite.git"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "official_command",
+    "package": "openclaw",
+    "command": "npm install -g openclaw@latest",
+    "uninstallCommand": "npm uninstall -g openclaw",
+    "latestVersion": "2026.9.4"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.openclaw",
+    "installRoot": "/workspace/.kf/software/kite.openclaw",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "agents": [
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "description": "连接 OpenClaw Gateway 的 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "openclaw"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "openclaw",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": [
+          "openclaw",
+          "acp"
+        ],
+        "environmentFiles": {
+          "OPENCLAW_GATEWAY_TOKEN": {
+            "path": "/workspace/.kf/secrets/kite.openclaw-gateway-token",
+            "autoGenerate": "random_token"
+          }
+        },
+        "runtimeDependencies": [
+          {
+            "id": "openclaw-gateway",
+            "title": "OpenClaw 网关",
+            "argv": [
+              "openclaw",
+              "gateway",
+              "run",
+              "--bind",
+              "loopback",
+              "--port",
+              "18789",
+              "--auth",
+              "token",
+              "--allow-unconfigured"
+            ],
+            "workdir": "/workspace",
+            "environment": {
+              "OPENCLAW_DISABLE_BONJOUR": "1"
+            },
+            "environmentFiles": {
+              "OPENCLAW_GATEWAY_TOKEN": {
+                "path": "/workspace/.kf/secrets/kite.openclaw-gateway-token",
+                "autoGenerate": "random_token"
+              }
+            },
+            "bindAddress": "127.0.0.1",
+            "bindPort": 18789,
+            "healthHttpPath": "/readyz",
+            "startupTimeoutMs": 30000,
+            "healthCheckStartupDelayMs": 0,
+            "restartPolicy": "on_failure",
+            "retentionClass": "resident",
+            "runtimeGuarantees": [
+              "openat2_degrade"
+            ]
+          }
+        ],
+        "title": "OpenClaw",
+        "runtimeGuarantees": [
+          "openat2_degrade"
+        ]
+      }
+    }
+  ],
+  "actions": {
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "OpenClaw",
+          "description": "启动 OpenClaw Agent 会话",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "agent",
+            "agentId": "openclaw",
+            "workdir": "/workspace"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": [
+          "openclaw"
+        ],
+        "npmUninstallPackage": "openclaw",
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "OpenClaw",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "OpenClaw",
+          "description": "启动 OpenClaw Agent 会话",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "agent",
+            "agentId": "openclaw",
+            "workdir": "/workspace"
+          }
+        ]
+      }
+    }
+  ]
 }

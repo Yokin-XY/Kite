@@ -91,19 +91,28 @@ internal object HostNodeRuntimePreparer {
                 !launcher.isFile || !preload.isFile || !patchedLoader.isFile || !patchedLibc.isFile ||
                 !compatLibrary.isFile || !syscallTracer.isFile
             ) {
-                val patchedLoaderBytes = patchSetRobustListSyscalls(
-                    sourceLoader.readBytes(),
-                    expectedReplacements = EXPECTED_LOADER_SET_ROBUST_LIST_CALLS,
-                )
-                val patchedLibcBytes = patchClone3Syscalls(
+                val patchedLoaderBytes = patchRseqSyscalls(
                     patchSetRobustListSyscalls(
-                        patchResolverPath(
-                            sourceLibc.readBytes(),
-                            expectedReplacements = EXPECTED_LIBC_RESOLVER_PATHS,
-                        ),
-                        expectedReplacements = EXPECTED_LIBC_SET_ROBUST_LIST_CALLS,
+                        sourceLoader.readBytes(),
+                        expectedReplacements = EXPECTED_LOADER_SET_ROBUST_LIST_CALLS,
                     ),
-                    expectedReplacements = EXPECTED_LIBC_CLONE3_CALLS,
+                    expectedReplacements = EXPECTED_LOADER_RSEQ_CALLS,
+                )
+                val patchedLibcBytes = patchGetrandomSyscalls(
+                    patchRseqSyscalls(
+                        patchClone3Syscalls(
+                            patchSetRobustListSyscalls(
+                                patchResolverPath(
+                                    sourceLibc.readBytes(),
+                                    expectedReplacements = EXPECTED_LIBC_RESOLVER_PATHS,
+                                ),
+                                expectedReplacements = EXPECTED_LIBC_SET_ROBUST_LIST_CALLS,
+                            ),
+                            expectedReplacements = EXPECTED_LIBC_CLONE3_CALLS,
+                        ),
+                        expectedReplacements = EXPECTED_LIBC_RSEQ_CALLS,
+                    ),
+                    expectedReplacements = EXPECTED_LIBC_GETRANDOM_CALLS,
                 )
                 writeBytesAtomic(launcher, launcherBytes)
                 check(launcher.setExecutable(true, false) || launcher.canExecute()) {
@@ -187,35 +196,14 @@ internal object HostNodeRuntimePreparer {
     internal fun patchSetRobustListSyscalls(
         source: ByteArray,
         expectedReplacements: Int,
-    ): ByteArray {
-        val patched = source.copyOf()
-        var replacements = 0
-        executableFileRanges(patched).forEach { range ->
-            var offset = alignInstructionOffset(range.first)
-            while (offset <= range.last - (AARCH64_INSTRUCTION_BYTES - 1)) {
-                if (readInstruction(patched, offset) == AARCH64_MOV_X8_SET_ROBUST_LIST) {
-                    val limit = minOf(
-                        range.last - (AARCH64_INSTRUCTION_BYTES - 1),
-                        offset + AARCH64_SET_ROBUST_LIST_SCAN_BYTES,
-                    )
-                    var candidate = offset + AARCH64_INSTRUCTION_BYTES
-                    while (candidate <= limit) {
-                        if (readInstruction(patched, candidate) == AARCH64_SVC_ZERO) {
-                            writeInstruction(patched, candidate, AARCH64_MOV_X0_ZERO)
-                            replacements += 1
-                            break
-                        }
-                        candidate += AARCH64_INSTRUCTION_BYTES
-                    }
-                }
-                offset += AARCH64_INSTRUCTION_BYTES
-            }
-        }
-        check(replacements == expectedReplacements) {
-            "glibc set_robust_list marker count mismatch: expected=$expectedReplacements actual=$replacements"
-        }
-        return patched
-    }
+    ): ByteArray = patchSyscallInstructions(
+        source,
+        markerInstruction = AARCH64_MOV_X8_SET_ROBUST_LIST,
+        scanBytes = AARCH64_SET_ROBUST_LIST_SCAN_BYTES,
+        replacementInstruction = AARCH64_MOV_X0_ZERO,
+        expectedReplacements = expectedReplacements,
+        label = "set_robust_list",
+    )
 
     /**
      * Android 应用 seccomp 会以 SIGSYS 拒绝 clone3(435)。glibc 已经为旧内核实现了
@@ -224,21 +212,74 @@ internal object HostNodeRuntimePreparer {
     internal fun patchClone3Syscalls(
         source: ByteArray,
         expectedReplacements: Int,
+    ): ByteArray = patchSyscallInstructions(
+        source,
+        markerInstruction = AARCH64_MOV_X8_CLONE3,
+        scanBytes = AARCH64_CLONE3_SCAN_BYTES,
+        replacementInstruction = AARCH64_MOV_X0_NEGATIVE_ENOSYS,
+        expectedReplacements = expectedReplacements,
+        label = "clone3",
+    )
+
+    /**
+     * Android 应用域 seccomp 会以 SIGSYS 拒绝 getrandom(278)。glibc 对 ENOSYS
+     * 自带降级路径：回退 /dev/urandom（模拟态纲领雷库 GUEST-SYSCALL-01）。
+     */
+    internal fun patchGetrandomSyscalls(
+        source: ByteArray,
+        expectedReplacements: Int,
+    ): ByteArray = patchSyscallInstructions(
+        source,
+        markerInstruction = AARCH64_MOV_X8_GETRANDOM,
+        scanBytes = AARCH64_GETRANDOM_SCAN_BYTES,
+        replacementInstruction = AARCH64_MOV_X0_NEGATIVE_ENOSYS,
+        expectedReplacements = expectedReplacements,
+        label = "getrandom",
+    )
+
+    /**
+     * Android 应用域 seccomp 会以 SIGSYS 拒绝 rseq(293)。glibc 对 ENOSYS 的处理
+     * 是禁用可重启序列加速并继续常规执行路径（可选能力）。
+     */
+    internal fun patchRseqSyscalls(
+        source: ByteArray,
+        expectedReplacements: Int,
+    ): ByteArray = patchSyscallInstructions(
+        source,
+        markerInstruction = AARCH64_MOV_X8_RSEQ,
+        scanBytes = AARCH64_RSEQ_SCAN_BYTES,
+        replacementInstruction = AARCH64_MOV_X0_NEGATIVE_ENOSYS,
+        expectedReplacements = expectedReplacements,
+        label = "rseq",
+    )
+
+    /**
+     * 通用 syscall 雷补丁核心：在可执行段内定位 `mov x8,#<nr>` 后扫描窗口内的
+     * `svc #0`，替换为给定指令（典型为 movn x0,#37 即 -ENOSYS）。只处理带 svc
+     * 的调用点；被当作立即数搬运的 mov（如压栈保存的 syscall 号）不会命中。
+     */
+    private fun patchSyscallInstructions(
+        source: ByteArray,
+        markerInstruction: Int,
+        scanBytes: Int,
+        replacementInstruction: Int,
+        expectedReplacements: Int,
+        label: String,
     ): ByteArray {
         val patched = source.copyOf()
         var replacements = 0
         executableFileRanges(patched).forEach { range ->
             var offset = alignInstructionOffset(range.first)
             while (offset <= range.last - (AARCH64_INSTRUCTION_BYTES - 1)) {
-                if (readInstruction(patched, offset) == AARCH64_MOV_X8_CLONE3) {
+                if (readInstruction(patched, offset) == markerInstruction) {
                     val limit = minOf(
                         range.last - (AARCH64_INSTRUCTION_BYTES - 1),
-                        offset + AARCH64_CLONE3_SCAN_BYTES,
+                        offset + scanBytes,
                     )
                     var candidate = offset + AARCH64_INSTRUCTION_BYTES
                     while (candidate <= limit) {
                         if (readInstruction(patched, candidate) == AARCH64_SVC_ZERO) {
-                            writeInstruction(patched, candidate, AARCH64_MOV_X0_NEGATIVE_ENOSYS)
+                            writeInstruction(patched, candidate, replacementInstruction)
                             replacements += 1
                             break
                         }
@@ -249,7 +290,7 @@ internal object HostNodeRuntimePreparer {
             }
         }
         check(replacements == expectedReplacements) {
-            "glibc clone3 marker count mismatch: expected=$expectedReplacements actual=$replacements"
+            "glibc $label marker count mismatch: expected=$expectedReplacements actual=$replacements"
         }
         return patched
     }
@@ -302,6 +343,7 @@ internal object HostNodeRuntimePreparer {
         syscallTracer: ByteArray,
     ): String = buildString {
         appendLine(MARKER_SCHEMA)
+        appendLine("patchAlgo=$GLIBC_PATCH_ALGO_VERSION")
         appendLine("loader=${sourceLoader.canonicalPath}")
         appendLine("loaderSha256=${sha256(sourceLoader)}")
         appendLine("libc=${sourceLibc.canonicalPath}")
@@ -406,14 +448,24 @@ internal object HostNodeRuntimePreparer {
     private const val AARCH64_INSTRUCTION_BYTES = 4
     private const val AARCH64_SET_ROBUST_LIST_SCAN_BYTES = 32
     private const val AARCH64_CLONE3_SCAN_BYTES = 32
+    private const val AARCH64_GETRANDOM_SCAN_BYTES = 32
+    private const val AARCH64_RSEQ_SCAN_BYTES = 32
     private const val AARCH64_MOV_X8_SET_ROBUST_LIST = 0xd2800c68.toInt()
     private const val AARCH64_MOV_X8_CLONE3 = 0xd2803668.toInt()
+    private const val AARCH64_MOV_X8_GETRANDOM = 0xd28022c8.toInt()
+    private const val AARCH64_MOV_X8_RSEQ = 0xd28024a8.toInt()
     private const val AARCH64_SVC_ZERO = 0xd4000001.toInt()
     private const val AARCH64_MOV_X0_ZERO = 0xd2800000.toInt()
     private const val AARCH64_MOV_X0_NEGATIVE_ENOSYS = 0x928004a0.toInt()
     private const val EXPECTED_LOADER_SET_ROBUST_LIST_CALLS = 1
     private const val EXPECTED_LIBC_SET_ROBUST_LIST_CALLS = 2
     private const val EXPECTED_LIBC_CLONE3_CALLS = 1
+    private const val EXPECTED_LIBC_GETRANDOM_CALLS = 5
+    private const val EXPECTED_LIBC_RSEQ_CALLS = 1
+    private const val EXPECTED_LOADER_RSEQ_CALLS = 1
+
+    /** glibc 雷补丁算法版本：变化时强制全部车道重新发布（源文件 sha 未变也要重打）。 */
+    private const val GLIBC_PATCH_ALGO_VERSION = "2:getrandom+rseq"
     private const val EXPECTED_LIBC_RESOLVER_PATHS = 1
     private const val ELF64_HEADER_BYTES = 64
     private const val ELF64_PROGRAM_HEADER_BYTES = 56

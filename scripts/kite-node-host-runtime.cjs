@@ -542,17 +542,42 @@ function hostOptions(options) {
 function routeFile(file, args, options) {
   const normalizedArgs = Array.isArray(args) ? args : [];
   // C 启动器形态：[loader, --library-path, X, [--preload, Y,] node, ...]。
-  // node 自身 spawn(execPath) 拿到的是 loader 入口形态，把它重写回启动器形态。
+  // node 自身 spawn(execPath) 拿到的是 loader 入口形态；npm 包装脚本 respawn
+  // （spawnSync(process.execPath, [flag..., 脚本, ...])）也会走到这里。
+  // 统一归一到启动器形态：loader 选项对丢弃（启动器重建），node execArgv
+  // （以 - 开头的 flag）转入子进程 NODE_OPTIONS（--disable-warning 等
+  // execArgv 均在 NODE_OPTIONS 白名单内，不能丢也不能交给启动器 argv），
+  // 首个非 flag 的 node 真身跳过后，脚本与参数交给启动器。
   if (loader && file === loader) {
-    const nodeIndex = normalizedArgs.findIndex(
-      (value, index) => index > 0 && !String(value).startsWith('-')
-        && (value === nodeBinary || String(value).endsWith('/node')),
-    );
-    const scriptArgs = nodeIndex >= 0 ? normalizedArgs.slice(nodeIndex + 1) : normalizedArgs;
+    let index = 0;
+    const execFlags = [];
+    while (index < normalizedArgs.length && String(normalizedArgs[index]).startsWith('-')) {
+      const flag = String(normalizedArgs[index]);
+      if (flag === '--library-path' || flag === '--preload') {
+        index += 2;
+        continue;
+      }
+      execFlags.push(flag);
+      index += 1;
+    }
+    if (index < normalizedArgs.length
+      && (normalizedArgs[index] === nodeBinary || String(normalizedArgs[index]).endsWith('/node'))) {
+      index += 1;
+    }
+    const scriptArgs = normalizedArgs.slice(index);
+    const rewrittenOptions = hostOptions(options);
+    if (execFlags.length > 0) {
+      const base = (rewrittenOptions.env && rewrittenOptions.env.NODE_OPTIONS)
+        || process.env.NODE_OPTIONS || '';
+      rewrittenOptions.env = {
+        ...rewrittenOptions.env,
+        NODE_OPTIONS: [...execFlags, base].filter(Boolean).join(' '),
+      };
+    }
     return {
       file: launcher,
       args: scriptArgs.map((value) => mapOptionPath(value, mapContainerPathToHost)),
-      options: hostOptions(options),
+      options: rewrittenOptions,
     };
   }
   if (isNodeCommand(file)) {
@@ -610,6 +635,7 @@ function shellCommand(file, args) {
   return [file, ...(Array.isArray(args) ? args : [])].join(' ');
 }
 
+const spawnDebug = process.env.KITE_NODE_HOST_SPAWN_DEBUG === '1';
 childProcess.spawn = function kiteSpawn(file, args, options) {
   if (!Array.isArray(args)) {
     options = args;
@@ -618,6 +644,9 @@ childProcess.spawn = function kiteSpawn(file, args, options) {
   const routed = options && options.shell
     ? shellRoute(shellCommand(file, args), options)
     : routeFile(file, args, options);
+  if (spawnDebug) {
+    process.stderr.write(`[kite-spawn] ${file} ${JSON.stringify(args).slice(0, 220)} -> ${routed.file} ${JSON.stringify(routed.args).slice(0, 220)}\n`);
+  }
   return original.spawn(routed.file, routed.args, routed.options);
 };
 
@@ -629,6 +658,9 @@ childProcess.spawnSync = function kiteSpawnSync(file, args, options) {
   const routed = options && options.shell
     ? shellRoute(shellCommand(file, args), options)
     : routeFile(file, args, options);
+  if (spawnDebug) {
+    process.stderr.write(`[kite-spawn-sync] ${file} ${JSON.stringify(args).slice(0, 220)} -> ${routed.file} ${JSON.stringify(routed.args).slice(0, 220)}\n`);
+  }
   return original.spawnSync(routed.file, routed.args, routed.options);
 };
 

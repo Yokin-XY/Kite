@@ -74,15 +74,10 @@ internal object HostNodeRuntimeProvider :
         val workingDirectory = layout.mapContainerPath(request.workingDirectory)
             ?.takeIf(File::isDirectory)
             ?: return unsupported("working_directory_invalid")
-        // 声明 openat2_degrade 的调用（老内核上的锁型 glibc 程序，典型是网关型依赖）：
-        // 用静态监护进程包住整条启动链，在内核入口把 openat2 现场降级为 openat。
-        val syscallTracer = request.guarantees.contains(RuntimeExecutionGuarantee.OPENAT2_DEGRADE)
-        if (syscallTracer) {
-            val tracer = layout.assets.syscallTracer
-            if (!tracer.isFile || !tracer.canExecute()) {
-                return unsupported("host_tracer_missing")
-            }
-        }
+        // 声明 openat2_degrade 的调用（应用域雷区网关型依赖，典型是 openclaw）：
+        // 雷已由地基拔除（glibc 雷补丁随 preparer 发布、直发调用方由资源补丁处理），
+        // 车道只注入 /tmp 重写与兼容层定位环境，不再套运行时监护进程（tracer 仅诊断用）。
+        val minefieldLane = request.guarantees.contains(RuntimeExecutionGuarantee.OPENAT2_DEGRADE)
         return RuntimeProviderDecision.Ready(
             provider = kind,
             plan = buildConfig(
@@ -91,7 +86,7 @@ internal object HostNodeRuntimeProvider :
                 invocation,
                 workingDirectory,
                 AndroidRuntimeHttpProxy.environment() + request.environment,
-                syscallTracer = syscallTracer,
+                minefieldLane = minefieldLane,
             ),
             reason = "host_node_ready",
         )
@@ -108,7 +103,7 @@ internal object HostNodeRuntimeProvider :
         invocation: HostNodeInvocation,
         workingDirectory: File,
         additionalEnvironment: Map<String, String> = emptyMap(),
-        syscallTracer: Boolean = false,
+        minefieldLane: Boolean = false,
     ): ContainerLaunchConfig {
         val runtimeRoot = layout.assets.launcher.parentFile
         val tmpDirectory = File(runtimeRoot, "tmp").also(File::mkdirs)
@@ -138,7 +133,10 @@ internal object HostNodeRuntimeProvider :
             }
         }
         environment.putAll(linkedMapOf(
-            "NODE_OPTIONS" to "--require=${layout.assets.preloadScript.absolutePath}",
+            // --no-warnings 是车道级通用策略：抑制 node 实验性/弃用警告刷屏，
+            // 同时让 npm 包装脚本的 "重 exec 补警告 flag" 模式失去诱因（respawn 在
+            // 宿主车道会重建链失败，见模拟态纲领；预置后 wrapper 判定无需 respawn）。
+            "NODE_OPTIONS" to "--no-warnings --require=${layout.assets.preloadScript.absolutePath}",
             "KITE_NODE_HOST_LANE" to "direct_glibc_v1",
             "KITE_NODE_HOST_LAUNCHER" to layout.assets.launcher.absolutePath,
             "KITE_NODE_HOST_LOADER" to layout.loader.absolutePath,
@@ -153,23 +151,21 @@ internal object HostNodeRuntimeProvider :
         if (certificateFile.isFile) {
             environment["SSL_CERT_FILE"] = certificateFile.absolutePath
         }
-        if (syscallTracer) {
-            // 监护进程（静态 ptrace+seccomp，宿主域直接 exec）所需的定位信息：
-            // loader 用于解析 _r_debug 偏移，library path 用于在 libc 里扫 svc 指令。
+        if (minefieldLane) {
+            // 兼容层定位信息：loader 用于 C 兼容层解析，library path 用于符号拦截。
+            // GUEST_TMP 激活双层 /tmp 重写：C 兼容层符号拦截（KITE_GLIBC_HOST_GUEST_TMP）
+            // 与 Node 预载钩子（KITE_NODE_HOST_GUEST_TMP），两者指向同一宿主 tmp 目录，
+            // 任何一层缺失都会让硬编码 /tmp 的程序退回不存在的 /tmp 导致 ENOENT。
             environment["KITE_GLIBC_HOST_LOADER"] = layout.loader.absolutePath
             environment["KITE_GLIBC_HOST_LIBRARY_PATH"] = layout.libraryPath
-        }
-        val executablePath = if (syscallTracer) layout.assets.syscallTracer else layout.assets.launcher
-        val commandPrefix = if (syscallTracer) {
-            listOf(executablePath.absolutePath, layout.assets.launcher.absolutePath)
-        } else {
-            listOf(executablePath.absolutePath)
+            environment["KITE_GLIBC_HOST_GUEST_TMP"] = tmpDirectory.absolutePath
+            environment["KITE_NODE_HOST_GUEST_TMP"] = tmpDirectory.absolutePath
         }
         return ContainerLaunchConfig(
             container = container,
-            executablePath = executablePath.absolutePath,
+            executablePath = layout.assets.launcher.absolutePath,
             workingDirectory = workingDirectory.absolutePath,
-            args = (commandPrefix + invocation.nodeArguments()).toTypedArray(),
+            args = (listOf(layout.assets.launcher.absolutePath) + invocation.nodeArguments()).toTypedArray(),
             env = environment.map { (key, value) -> "$key=$value" }.toTypedArray(),
         )
     }

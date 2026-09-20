@@ -104,6 +104,52 @@ class HostNodeRuntimePreparerTest {
         )
     }
 
+    @Test
+    fun `patches nearby aarch64 getrandom syscall to negative enosys`() {
+        val source = executableElf(
+            instructions = intArrayOf(
+                0xd28022c8.toInt(),
+                0xd503201f.toInt(),
+                0xd4000001.toInt(),
+            ),
+        )
+
+        val patched = HostNodeRuntimePreparer.patchGetrandomSyscalls(source, expectedReplacements = 1)
+
+        assertArrayEquals(instruction(0x928004a0.toInt()), patched.copyOfRange(CODE_OFFSET + 8, CODE_OFFSET + 12))
+    }
+
+    @Test
+    fun `patches nearby aarch64 rseq syscall to negative enosys`() {
+        val source = executableElf(
+            instructions = intArrayOf(
+                0xd28024a8.toInt(),
+                0xd503201f.toInt(),
+                0xd4000001.toInt(),
+            ),
+        )
+
+        val patched = HostNodeRuntimePreparer.patchRseqSyscalls(source, expectedReplacements = 1)
+
+        assertArrayEquals(instruction(0x928004a0.toInt()), patched.copyOfRange(CODE_OFFSET + 8, CODE_OFFSET + 12))
+    }
+
+    @Test
+    fun `does not patch getrandom marker without nearby svc`() {
+        // 立即数搬运场景：mov x8,#278 后是 stp 而非 svc，不应被补丁命中。
+        val source = executableElf(
+            instructions = intArrayOf(
+                0xd28022c8.toInt(),
+                0xa90353f3.toInt(),
+                0xd4000001.toInt(),
+            ),
+        )
+
+        HostNodeRuntimePreparer.patchGetrandomSyscalls(source, expectedReplacements = 0)
+
+        assertArrayEquals(instruction(0xd4000001.toInt()), source.copyOfRange(CODE_OFFSET + 8, CODE_OFFSET + 12))
+    }
+
     @Test(expected = IllegalStateException::class)
     fun `rejects malformed ELF program headers before scanning instructions`() {
         HostNodeRuntimePreparer.executableFileRanges(ByteArray(64))
