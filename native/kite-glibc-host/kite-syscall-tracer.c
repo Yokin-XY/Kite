@@ -83,14 +83,20 @@ static long long peek_word(pid_t tid, unsigned long long addr) {
 }
 
 static int install_openat2_trace_filter(void) {
+    /* 拦截 openat2（降级 openat）与路径型锁操作（/tmp 前缀翻译）。
+     * 结构：LD nr; 每号 JEQ 命中跳 6（越过其余 JEQ 与 ALLOW）到各自的 RET_TRACE。 */
     struct sock_filter code[] = {
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, arch)),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_AARCH64, 1, 0),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_openat2, 0, 1),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRACE | (SECCOMP_RET_DATA & (unsigned int) __NR_openat2)),
+        /* 只拦 openat2（降级）与 mkdirat（/tmp 锁目录翻译）：openat/faccessat 等
+         * 高频号全量 stop 的 ptrace 往返会让 node 启动慢到分钟级，绝不拦。 */
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_openat2, 2, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_mkdirat, 2, 0),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRACE | (SECCOMP_RET_DATA & (unsigned int) __NR_openat2)),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRACE | (SECCOMP_RET_DATA & (unsigned int) __NR_mkdirat)),
     };
     struct sock_fprog prog = {
         .len = (unsigned short) (sizeof(code) / sizeof(code[0])),
@@ -412,6 +418,94 @@ static int rewrite_openat2(pid_t tid, struct regs_arm64 *regs,
     return set_regs(tid, regs);
 }
 
+/*
+ * 路径型 syscall 的 /tmp 前缀翻译（fs-safe 等 native addon 经 syscall() 直连，
+ * JS 预载层与 glibc 符号拦截都覆盖不到）。做法与 openat2 降级同构：
+ * seccomp stop 时把 PC 跳到 libc 的裸 svc 指令，寄存器预置翻译后的调用；
+ * 内核先完成缓存的旧调用（对 /tmp 通常 ENOENT，无副作用），再执行注入的
+ * 新调用，其返回值即最终结果。新路径写入 tracee 栈下方的 scratch 区。
+ */
+static char g_guest_tmp[2048];
+static size_t g_guest_tmp_len;
+static int g_debug;
+
+static int peek_path(pid_t tid, unsigned long long addr, char *out, size_t cap) {
+    if (!addr) return -1;
+    size_t n = 0;
+    while (n + 8 <= cap) {
+        errno = 0;
+        long word = ptrace(PTRACE_PEEKDATA, tid, (void *) (uintptr_t) (addr + n), 0);
+        if (errno != 0) return -1;
+        unsigned char *bytes = (unsigned char *) &word;
+        for (int i = 0; i < 8 && n < cap; i++, n++) {
+            out[n] = (char) bytes[i];
+            if (bytes[i] == 0) return (int) n;
+        }
+    }
+    return -1;
+}
+
+static int poke_bytes(pid_t tid, unsigned long long addr,
+                      const char *data, size_t length) {
+    size_t done = 0;
+    while (done < length) {
+        size_t chunk = length - done;
+        long word = 0;
+        if (chunk >= 8) {
+            memcpy(&word, data + done, 8);
+        } else {
+            errno = 0;
+            long orig = ptrace(PTRACE_PEEKDATA, tid, (void *) (uintptr_t) (addr + done), 0);
+            if (errno != 0) return -1;
+            word = orig;
+            memcpy(&word, data + done, chunk);
+        }
+        if (ptrace(PTRACE_POKEDATA, tid, (void *) (uintptr_t) (addr + done),
+                   (void *) (uintptr_t) word) != 0) return -1;
+        done += chunk >= 8 ? 8 : chunk;
+    }
+    return 0;
+}
+
+/* 命中路径型 syscall 且路径以 "/tmp" 开头时注入翻译调用；返回 0 表示已注入。 */
+static int rewrite_tmp_path_syscall(pid_t tid, struct regs_arm64 *regs,
+                                    unsigned long long nr,
+                                    unsigned long long *orig_lr,
+                                    unsigned long long *orig_x0_out,
+                                    unsigned long long *gadget_out) {
+    if (g_guest_tmp_len == 0) return -1;
+    /* 所有目标 syscall 的 pathname 都在 a2（x1）。 */
+    char path[1024];
+    int length = peek_path(tid, regs->regs[1], path, sizeof(path));
+    if (length < 4) return -1;
+    if (path[1] != 't' || path[2] != 'm' || path[3] != 'p') return -1;
+    if (path[4] != 0 && path[4] != '/') return -1;
+    char mapped[3072];
+    int written = snprintf(mapped, sizeof(mapped), "%s%s",
+                           g_guest_tmp, path + 4);
+    if (written <= 0 || (size_t) written >= sizeof(mapped)) return -1;
+
+    unsigned long long libc_base = find_libc_base(tid);
+    if (!libc_base || !g_gadget_off) return -1;
+    unsigned long long gadget = libc_base + g_gadget_off;
+    unsigned long long scratch = (regs->sp - 8192) & ~7ULL;
+    if (poke_bytes(tid, scratch, mapped, (size_t) written + 1) != 0) return -1;
+
+    *orig_lr = regs->regs[30];
+    orig_x0_out[0] = regs->regs[0];
+    *gadget_out = gadget;
+    regs->regs[0] = (unsigned long long) -100; /* AT_FDCWD；绝对路径忽略 dirfd */
+    regs->regs[1] = scratch;
+    /* openat 的 flags/mode 在 a3/a4：搬移到注入调用的 x2/x3。 */
+    if (nr == (unsigned long long) __NR_openat) {
+        regs->regs[2] = regs->regs[2];
+        regs->regs[3] = regs->regs[3];
+    }
+    regs->regs[30] = regs->pc; /* seccomp stop 时 pc 已是 svc+4（返回点）。 */
+    regs->pc = gadget;
+    return set_regs(tid, regs);
+}
+
 #define TRACEE_OPT (PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | \
                     PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXEC | \
                     PTRACE_O_TRACESECCOMP | PTRACE_O_TRACEEXIT | \
@@ -432,6 +526,17 @@ static int run_traced(char *exec_path, char **exec_argv) {
         return 125;
     }
     const char *library_path = required_env("KITE_GLIBC_HOST_LIBRARY_PATH");
+    g_debug = getenv("KITE_SYSCALL_TRACER_DEBUG") != NULL;
+    const char *guest_tmp = getenv("KITE_GLIBC_HOST_GUEST_TMP");
+    if (guest_tmp != NULL && guest_tmp[0] == '/' && guest_tmp[1] != 0) {
+        size_t n = strlen(guest_tmp);
+        while (n > 0 && guest_tmp[n - 1] == '/') n -= 1;
+        if (n > 0 && n + 1 <= sizeof(g_guest_tmp)) {
+            memcpy(g_guest_tmp, guest_tmp, n);
+            g_guest_tmp[n] = 0;
+            g_guest_tmp_len = n;
+        }
+    }
     g_gadget_off = locate_libc_gadget_off(library_path, lib_path, sizeof(lib_path));
     if (!g_gadget_off) {
         fputs("KITE_GLIBC_HOST_TRACE_GADGET_NOT_FOUND\n", stderr);
@@ -487,13 +592,19 @@ static int run_traced(char *exec_path, char **exec_argv) {
         if (!WIFSTOPPED(status)) continue;
         unsigned event = (unsigned) status >> 16;
         int sig = WSTOPSIG(status);
+        if (sig == SIGTRAP && event == 0) {
+            /* 兜底：裸 TRAP（含 TRACEME exec 停）到达时确保 options 在位。 */
+            ptrace(PTRACE_SETOPTIONS, tid, 0, TRACEE_OPT);
+        }
         if (sig == SIGTRAP && event == PTRACE_EVENT_SECCOMP) {
             unsigned long long nr = 0;
             ptrace(PTRACE_GETEVENTMSG, tid, 0, &nr);
             struct regs_arm64 regs;
             unsigned long long orig_lr = 0, orig_x0 = 0, gadget_addr = 0;
-            if ((long) nr == __NR_openat2 && get_regs(tid, &regs) == 0 &&
-                rewrite_openat2(tid, &regs, &orig_lr, &orig_x0, &gadget_addr) == 0) {
+            if (get_regs(tid, &regs) == 0 &&
+                ((long) nr == __NR_openat2
+                     ? rewrite_openat2(tid, &regs, &orig_lr, &orig_x0, &gadget_addr)
+                     : rewrite_tmp_path_syscall(tid, &regs, nr, &orig_lr, &orig_x0, &gadget_addr)) == 0) {
                 inject_register(tid, regs.regs[30], orig_lr, orig_x0, gadget_addr);
                 ptrace(PTRACE_SINGLESTEP, tid, 0, 0);
             } else {

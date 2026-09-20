@@ -4,6 +4,7 @@ import android.content.Context
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.runtime.HostProcessInspector
+import com.kite.app.foundation.runtime.RuntimeExecutionGuarantee
 import com.kite.app.foundation.runtime.HostProcessRecord
 import com.kite.app.foundation.runtime.HostStopAuditor
 import com.kite.app.foundation.runtime.HostProcessTerminator
@@ -1448,9 +1449,13 @@ object BackgroundRuntimeHost {
                     environment = resolvedEnvironment,
                     guarantees = runtimeGuarantees,
                     guaranteeEvidence = guaranteeEvidence,
-                    // 服务型依赖（声明端口/健康检查）必须落完整 Linux 环境：
-                    // 宿主 node 通道没有根级 /tmp，OpenClaw 等网关的状态锁会直接 ENOENT 崩溃循环。
-                    requirements = if (record.bindPort != null || !record.healthHttpPath.isNullOrBlank()) {
+                    // 服务型依赖（声明端口/健康检查）默认落完整 Linux 环境。
+                    // 例外：声明 openat2_degrade 保证的依赖由监护进程在宿主车道上现场降级
+                    // openat2（老内核锁型 glibc 程序，如 OpenClaw 网关），不再强制完整环境。
+                    requirements = if (
+                        (record.bindPort != null || !record.healthHttpPath.isNullOrBlank()) &&
+                        runtimeGuarantees?.contains(RuntimeExecutionGuarantee.OPENAT2_DEGRADE) != true
+                    ) {
                         setOf(RuntimeExecutionRequirement.FULL_LINUX)
                     } else {
                         emptySet()

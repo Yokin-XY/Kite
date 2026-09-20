@@ -27,6 +27,7 @@ internal object HostNodeRuntimePreparer {
     private const val ASSET_LAUNCHER = "node-runtime/kite-node-host-launcher-arm64"
     private const val ASSET_PRELOAD = "node-runtime/kite-node-host-runtime.cjs"
     private const val ASSET_GLIBC_COMPAT = "node-runtime/libkite-node-glibc-compat.so"
+    private const val ASSET_SYSCALL_TRACER = "node-runtime/kite-syscall-tracer-arm64"
     private const val MARKER_SCHEMA = "kite_node_host_assets_v5"
     private val loaderRelativeCandidates = listOf(
         "usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
@@ -71,6 +72,8 @@ internal object HostNodeRuntimePreparer {
             ?: return HostNodeRuntimePreparation.Fallback("host_preload_asset_missing")
         val compatBytes = readAsset(appContext, ASSET_GLIBC_COMPAT)
             ?: return HostNodeRuntimePreparation.Fallback("host_compat_asset_missing")
+        val tracerBytes = readAsset(appContext, ASSET_SYSCALL_TRACER)
+            ?: return HostNodeRuntimePreparation.Fallback("host_tracer_asset_missing")
 
         val runtimeRoot = File(workspaceControlDirectory, "system/node-runtime/host")
         val launcher = File(runtimeRoot, "kite-node-host")
@@ -78,14 +81,15 @@ internal object HostNodeRuntimePreparer {
         val patchedLoader = File(runtimeRoot, "glibc/ld-linux-aarch64.so.1")
         val patchedLibc = File(runtimeRoot, "glibc/libc.so.6")
         val compatLibrary = File(runtimeRoot, "glibc/libkite-node-glibc-compat.so")
+        val syscallTracer = File(runtimeRoot, "kite-syscall-tracer")
         val resolvConf = RuntimeDnsFilePublisher.sharedResolverFile(appContext)
         val marker = File(runtimeRoot, "assets.identity")
-        val identity = buildIdentity(sourceLoader, sourceLibc, launcherBytes, preloadBytes, compatBytes)
+        val identity = buildIdentity(sourceLoader, sourceLibc, launcherBytes, preloadBytes, compatBytes, tracerBytes)
 
         val published = runCatching {
             if (marker.readTextOrNull() != identity ||
                 !launcher.isFile || !preload.isFile || !patchedLoader.isFile || !patchedLibc.isFile ||
-                !compatLibrary.isFile
+                !compatLibrary.isFile || !syscallTracer.isFile
             ) {
                 val patchedLoaderBytes = patchSetRobustListSyscalls(
                     sourceLoader.readBytes(),
@@ -112,6 +116,10 @@ internal object HostNodeRuntimePreparer {
                 }
                 writeBytesAtomic(patchedLibc, patchedLibcBytes)
                 writeBytesAtomic(compatLibrary, compatBytes)
+                writeBytesAtomic(syscallTracer, tracerBytes)
+                check(syscallTracer.setExecutable(true, false) || syscallTracer.canExecute()) {
+                    "syscall tracer is not executable"
+                }
                 writeBytesAtomic(marker, identity.toByteArray(StandardCharsets.UTF_8))
             } else if (!launcher.canExecute() || !patchedLoader.canExecute()) {
                 check(launcher.setExecutable(true, false) || launcher.canExecute()) {
@@ -133,6 +141,7 @@ internal object HostNodeRuntimePreparer {
                 patchedLoader = patchedLoader,
                 patchedLibc = patchedLibc,
                 compatLibrary = compatLibrary,
+                syscallTracer = syscallTracer,
                 resolvConf = resolvConf,
             )
         )
@@ -290,6 +299,7 @@ internal object HostNodeRuntimePreparer {
         launcher: ByteArray,
         preload: ByteArray,
         compat: ByteArray,
+        syscallTracer: ByteArray,
     ): String = buildString {
         appendLine(MARKER_SCHEMA)
         appendLine("loader=${sourceLoader.canonicalPath}")
@@ -299,6 +309,7 @@ internal object HostNodeRuntimePreparer {
         appendLine("launcherSha256=${sha256(launcher)}")
         appendLine("preloadSha256=${sha256(preload)}")
         appendLine("compatSha256=${sha256(compat)}")
+        appendLine("tracerSha256=${sha256(syscallTracer)}")
     }
 
     private fun readInstruction(bytes: ByteArray, offset: Int): Int =

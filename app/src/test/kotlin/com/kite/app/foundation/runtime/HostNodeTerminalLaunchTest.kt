@@ -5,6 +5,7 @@ import com.kite.app.foundation.contracts.NetworkMode
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
@@ -40,6 +41,10 @@ class HostNodeTerminalLaunchTest {
             writeText("compat")
         }
         val resolv = File(launcher.parentFile, "resolv.conf").apply { writeText("nameserver 1::1\n") }
+        val tracer = File(launcher.parentFile, "kite-syscall-tracer").apply {
+            writeText("#!/system/bin/sh\n")
+            setExecutable(true)
+        }
         val node = File(workspace, ".kf/software/kite.nodejs/node-v26.4.0/bin/node")
         val nodeLib = File(node.parentFile.parentFile, "lib").apply { mkdirs() }
         val layout = HostNodeRuntimeLayout(
@@ -50,7 +55,7 @@ class HostNodeTerminalLaunchTest {
             nodeBinary = node,
             nodeLibraryDirectory = nodeLib,
             glibcLibraryDirectories = listOf(File(rootfs, "usr/lib/aarch64-linux-gnu")),
-            assets = HostNodeRuntimeAssets(launcher, preload, patchedLoader, patchedLibc, compat, resolv),
+            assets = HostNodeRuntimeAssets(launcher, preload, patchedLoader, patchedLibc, compat, tracer, resolv),
         )
         val entry = File(workspace, ".kf/software/example/cli.mjs")
 
@@ -98,6 +103,10 @@ class HostNodeTerminalLaunchTest {
         val patchedLoader = File(launcher.parentFile, "glibc/ld-linux-aarch64.so.1").apply { writeText("loader") }
         val compat = File(launcher.parentFile, "glibc/libkite-node-glibc-compat.so").apply { writeText("compat") }
         val resolv = File(launcher.parentFile, "resolv.conf").apply { writeText("nameserver 1::1\n") }
+        val tracer = File(launcher.parentFile, "kite-syscall-tracer").apply {
+            writeText("#!/system/bin/sh\n")
+            setExecutable(true)
+        }
         val node = File(workspace, ".kf/software/kite.nodejs/node-v26.4.0/bin/node")
         val layout = HostNodeRuntimeLayout(
             rootfsDirectory = rootfs,
@@ -107,7 +116,7 @@ class HostNodeTerminalLaunchTest {
             nodeBinary = node,
             nodeLibraryDirectory = File(node.parentFile.parentFile, "lib"),
             glibcLibraryDirectories = listOf(File(rootfs, "usr/lib/aarch64-linux-gnu")),
-            assets = HostNodeRuntimeAssets(launcher, preload, patchedLoader, patchedLibc, compat, resolv),
+            assets = HostNodeRuntimeAssets(launcher, preload, patchedLoader, patchedLibc, compat, tracer, resolv),
         )
 
         val config = HostNodeRuntimeProvider.buildConfig(
@@ -152,6 +161,84 @@ class HostNodeTerminalLaunchTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun `syscall tracer wraps launch chain with locator environment`() {
+        val root = temporaryFolder.newFolder()
+        val rootfs = File(root, "rootfs").apply { mkdirs() }
+        val workspace = File(root, "workspace").apply { mkdirs() }
+        val workdir = File(workspace, "project").apply { mkdirs() }
+        val launcher = File(workspace, ".kf/system/node-runtime/host/kite-node-host").apply {
+            parentFile.mkdirs()
+            writeText("launcher")
+            setExecutable(true)
+        }
+        val preload = File(launcher.parentFile, "kite-node-host-runtime.cjs").apply { writeText("preload") }
+        val patchedLibc = File(launcher.parentFile, "glibc/libc.so.6").apply {
+            parentFile.mkdirs()
+            writeText("libc")
+        }
+        val patchedLoader = File(launcher.parentFile, "glibc/ld-linux-aarch64.so.1").apply { writeText("loader") }
+        val compat = File(launcher.parentFile, "glibc/libkite-node-glibc-compat.so").apply { writeText("compat") }
+        val resolv = File(launcher.parentFile, "resolv.conf").apply { writeText("nameserver 1::1\n") }
+        val tracer = File(launcher.parentFile, "kite-syscall-tracer").apply {
+            writeText("#!/system/bin/sh\n")
+            setExecutable(true)
+        }
+        val node = File(workspace, ".kf/software/kite.nodejs/node-v26.4.0/bin/node")
+        val nodeLib = File(node.parentFile.parentFile, "lib").apply { mkdirs() }
+        val layout = HostNodeRuntimeLayout(
+            rootfsDirectory = rootfs,
+            workspaceDirectory = workspace,
+            workspaceControlDirectory = File(workspace, ".kf"),
+            loader = patchedLoader,
+            nodeBinary = node,
+            nodeLibraryDirectory = nodeLib,
+            glibcLibraryDirectories = listOf(File(rootfs, "usr/lib/aarch64-linux-gnu")),
+            assets = HostNodeRuntimeAssets(launcher, preload, patchedLoader, patchedLibc, compat, tracer, resolv),
+        )
+        val entry = File(workspace, ".kf/software/example/cli.mjs")
+
+        val config = HostNodeRuntimeProvider.buildConfig(
+            container = container(rootfs, workspace),
+            layout = layout,
+            invocation = HostNodeInvocation(entry, listOf("gateway", "run")),
+            workingDirectory = workdir,
+            syscallTracer = true,
+        )
+        val environment = config.env.associate { value ->
+            value.substringBefore('=') to value.substringAfter('=', "")
+        }
+
+        // 监护进程包住整条链：argv = [tracer, launcher, node args...]。
+        assertEquals(tracer.absolutePath, config.executablePath)
+        assertArrayEquals(
+            arrayOf(tracer.absolutePath, launcher.absolutePath, entry.absolutePath, "gateway", "run"),
+            config.args,
+        )
+        // tracer 的定位信息（loader/_r_debug 偏移 + libc 扫 svc）随链注入。
+        assertEquals(patchedLoader.absolutePath, environment["KITE_GLIBC_HOST_LOADER"])
+        assertEquals(layout.libraryPath, environment["KITE_GLIBC_HOST_LIBRARY_PATH"])
+    }
+
+    @Test
+    fun `syscall tracer asset participates in runtime identity and deploy`() {
+        // 监护进程资产随车道资产一起部署：源码合同（资产名/落盘名/身份摘要）不可漂移。
+        val preparer = sequenceOf(
+            java.io.File("src/main/kotlin/com/kite/app/foundation/runtime/HostNodeRuntimePreparer.kt"),
+            java.io.File("../src/main/kotlin/com/kite/app/foundation/runtime/HostNodeRuntimePreparer.kt"),
+            java.io.File("app/src/main/kotlin/com/kite/app/foundation/runtime/HostNodeRuntimePreparer.kt"),
+        ).firstOrNull(java.io.File::isFile)?.let { it.readText() }
+            ?: error("missing preparer source")
+        assertTrue(preparer.contains("kite-syscall-tracer-arm64"))
+        assertTrue(preparer.contains("kite-syscall-tracer"))
+        assertTrue(preparer.contains("tracerSha256"))
+        val asset = sequenceOf(
+            java.io.File("../assets/node-runtime/kite-syscall-tracer-arm64"),
+            java.io.File("assets/node-runtime/kite-syscall-tracer-arm64"),
+        ).firstOrNull(java.io.File::isFile)
+        assertTrue("syscall tracer asset must ship with the lane assets", asset?.isFile == true)
     }
 
     @Test

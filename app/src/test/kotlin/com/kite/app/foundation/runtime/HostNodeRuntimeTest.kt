@@ -293,12 +293,13 @@ class HostNodeRuntimeTest {
         val libc = elf(File(assetRoot, "glibc/libc.so.6"))
         val compat = elf(File(assetRoot, "glibc/libkite-node-glibc-compat.so"))
         val resolv = File(assetRoot, "resolv.conf").apply { writeText("nameserver 127.0.0.1\n") }
+        val tracer = executable(File(assetRoot, "kite-syscall-tracer"))
         return Fixture(
             rootfs,
             workspace,
             loader,
             node,
-            HostNodeRuntimeAssets(launcher, preload, patchedLoader, libc, compat, resolv),
+            HostNodeRuntimeAssets(launcher, preload, patchedLoader, libc, compat, tracer, resolv),
         )
     }
 

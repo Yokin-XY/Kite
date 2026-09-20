@@ -57,6 +57,13 @@ internal enum class RuntimeExecutionRequirement {
 internal enum class RuntimeExecutionGuarantee(val wireValue: String) {
     NO_CHILD_PROCESS("no_child_process"),
     VERIFIED_NATIVE_IMPORTS("verified_native_imports"),
+
+    /**
+     * 声明方保证：老内核（无 openat2，如 4.19）上由 Kite 监护进程把 openat2 现场降级
+     * 为 openat（ptrace + seccomp SECCOMP_RET_TRACE）。带此保证的端口型依赖允许进入
+     * glibc 宿主车道，不再强制完整 Linux 环境。
+     */
+    OPENAT2_DEGRADE("openat2_degrade"),
 }
 
 /** 清单声明的运行需求（wire 名 = 枚举名小写）；未知值拒绝，不默认容忍。 */

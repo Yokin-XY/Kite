@@ -9,6 +9,7 @@ internal data class HostNodeRuntimeAssets(
     val patchedLoader: File,
     val patchedLibc: File,
     val compatLibrary: File,
+    val syscallTracer: File,
     val resolvConf: File,
 )
 

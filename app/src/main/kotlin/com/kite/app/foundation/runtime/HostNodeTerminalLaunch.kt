@@ -74,6 +74,15 @@ internal object HostNodeRuntimeProvider :
         val workingDirectory = layout.mapContainerPath(request.workingDirectory)
             ?.takeIf(File::isDirectory)
             ?: return unsupported("working_directory_invalid")
+        // 声明 openat2_degrade 的调用（老内核上的锁型 glibc 程序，典型是网关型依赖）：
+        // 用静态监护进程包住整条启动链，在内核入口把 openat2 现场降级为 openat。
+        val syscallTracer = request.guarantees.contains(RuntimeExecutionGuarantee.OPENAT2_DEGRADE)
+        if (syscallTracer) {
+            val tracer = layout.assets.syscallTracer
+            if (!tracer.isFile || !tracer.canExecute()) {
+                return unsupported("host_tracer_missing")
+            }
+        }
         return RuntimeProviderDecision.Ready(
             provider = kind,
             plan = buildConfig(
@@ -82,6 +91,7 @@ internal object HostNodeRuntimeProvider :
                 invocation,
                 workingDirectory,
                 AndroidRuntimeHttpProxy.environment() + request.environment,
+                syscallTracer = syscallTracer,
             ),
             reason = "host_node_ready",
         )
@@ -98,6 +108,7 @@ internal object HostNodeRuntimeProvider :
         invocation: HostNodeInvocation,
         workingDirectory: File,
         additionalEnvironment: Map<String, String> = emptyMap(),
+        syscallTracer: Boolean = false,
     ): ContainerLaunchConfig {
         val runtimeRoot = layout.assets.launcher.parentFile
         val tmpDirectory = File(runtimeRoot, "tmp").also(File::mkdirs)
@@ -142,11 +153,23 @@ internal object HostNodeRuntimeProvider :
         if (certificateFile.isFile) {
             environment["SSL_CERT_FILE"] = certificateFile.absolutePath
         }
+        if (syscallTracer) {
+            // 监护进程（静态 ptrace+seccomp，宿主域直接 exec）所需的定位信息：
+            // loader 用于解析 _r_debug 偏移，library path 用于在 libc 里扫 svc 指令。
+            environment["KITE_GLIBC_HOST_LOADER"] = layout.loader.absolutePath
+            environment["KITE_GLIBC_HOST_LIBRARY_PATH"] = layout.libraryPath
+        }
+        val executablePath = if (syscallTracer) layout.assets.syscallTracer else layout.assets.launcher
+        val commandPrefix = if (syscallTracer) {
+            listOf(executablePath.absolutePath, layout.assets.launcher.absolutePath)
+        } else {
+            listOf(executablePath.absolutePath)
+        }
         return ContainerLaunchConfig(
             container = container,
-            executablePath = layout.assets.launcher.absolutePath,
+            executablePath = executablePath.absolutePath,
             workingDirectory = workingDirectory.absolutePath,
-            args = (listOf(layout.assets.launcher.absolutePath) + invocation.nodeArguments()).toTypedArray(),
+            args = (commandPrefix + invocation.nodeArguments()).toTypedArray(),
             env = environment.map { (key, value) -> "$key=$value" }.toTypedArray(),
         )
     }
