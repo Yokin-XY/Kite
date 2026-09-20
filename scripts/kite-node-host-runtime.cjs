@@ -161,6 +161,35 @@ function installGuestTmpRouting() {
   }
 }
 
+/*
+ * node:sqlite 的 DatabaseSync 在 native 层打开数据库文件，路径不经
+ * node:fs 表面（JS 劫持与 glibc 符号拦截都覆盖不到）。宿主车道下把
+ * 构造参数里的 "/tmp" 前缀路径翻译到 guest 目录，语义与 fs 层一致。
+ */
+function installGuestTmpSqliteRouting() {
+  if (!guestTmp) return;
+  let sqlite;
+  try {
+    sqlite = require('node:sqlite');
+  } catch {
+    return;
+  }
+  const DatabaseSync = sqlite && sqlite.DatabaseSync;
+  if (typeof DatabaseSync !== 'function') return;
+  sqlite.DatabaseSync = function KiteDatabaseSync(path, ...rest) {
+    if (path && typeof path === 'object' && typeof path.path === 'string') {
+      // node:sqlite 允许 (optionsObject) 单参形态。
+      return new DatabaseSync(mapGuestTmpPath(path.path), ...rest);
+    }
+    return new DatabaseSync(mapGuestTmpPath(path), ...rest);
+  };
+  try {
+    Object.defineProperty(sqlite.DatabaseSync, 'name', { value: 'DatabaseSync', configurable: true });
+  } catch {
+    // 非关键。
+  }
+}
+
 function decodeJson(name, fallback) {
   const encoded = process.env[name];
   if (!encoded) return fallback;
@@ -655,5 +684,6 @@ childProcess.fork = function kiteFork(modulePath, args, options) {
 };
 
 installGuestTmpRouting();
+installGuestTmpSqliteRouting();
 
 syncBuiltinESMExports();

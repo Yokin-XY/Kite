@@ -17,6 +17,12 @@ class HostNodeNativeCompatibilityContractTest {
         assertTrue(assembly.contains("br x9"))
         assertTrue(assembly.contains("kite_real_syscall"))
         assertTrue(assembly.contains("kite_syscall_enosys"))
+        // 路径型 syscall 进 C 重写层（Rust/静态二进制 inline svc 之外的调用面），
+        // C 侧按号精确转发。
+        assertTrue(assembly.contains("kite_syscall_path"))
+        assertTrue(cSource.contains("long kite_syscall_path(long number, long a1, long a2, long a3, long a4, long a5)"))
+        assertTrue(cSource.contains("SYS_mkdirat"))
+        assertTrue(cSource.contains("SYS_openat2"))
     }
 
     @Test

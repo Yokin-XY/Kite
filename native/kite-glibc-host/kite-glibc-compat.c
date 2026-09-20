@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -196,6 +197,55 @@ int openat64(int directory, const char *path, int flags, ...) {
     return kite_real_openat64(directory, kite_map_path(path, buffer), flags, mode);
 }
 
+static long kite_fallback_openat(long dirfd, const char *path, long flags, long mode);
+
+struct kite_open_how {
+    unsigned long long flags;
+    unsigned long long mode;
+    unsigned long long resolve;
+};
+
+typedef int (*kite_openat2_fn)(int, const char *, const struct kite_open_how *, size_t);
+
+/*
+ * glibc 2.34+ 提供 openat2() 封装；Rust std 的 resolve_flags 语义走这里。
+ * 旧内核（Android 4.19 等）没有该 syscall，proot 里曾由其模拟兜底，宿主
+ * 直跑暴露真实 ENOSYS。这里按语义降级 openat（丢弃 resolve 约束），并做
+ * 与符号层一致的 "/tmp" 前缀重写。
+ */
+int openat2(int directory, const char *path, const struct kite_open_how *how, size_t size) {
+    char buffer[KITE_PATH_BUFFER];
+    static kite_openat2_fn real_openat2;
+    const struct kite_open_how empty = {0, 0, 0};
+    if (how == NULL) how = &empty;
+    (void) size;
+    const char *mapped = kite_map_path(path, buffer);
+    if (real_openat2 == NULL) {
+        real_openat2 = (kite_openat2_fn) dlsym(RTLD_NEXT, "openat2");
+        if (real_openat2 != NULL) {
+            int result = real_openat2(directory, mapped, how, sizeof(*how));
+            if (result >= 0 || errno != ENOSYS) return result;
+        }
+    } else {
+        int result = real_openat2(directory, mapped, how, sizeof(*how));
+        if (result >= 0 || errno != ENOSYS) return result;
+    }
+    errno = 0;
+    if (kite_real_syscall == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    long flags = (long) how->flags;
+    long mode = (long) how->mode;
+    long syscall_result = kite_real_syscall(
+        SYS_openat2, (long) directory, (long) mapped, (long) how, (long) sizeof(*how));
+    if (syscall_result == -1 && errno == ENOSYS) {
+        errno = 0;
+        return (int) kite_fallback_openat(directory, mapped, flags, mode);
+    }
+    return (int) syscall_result;
+}
+
 int mkdir(const char *path, mode_t mode) {
     char buffer[KITE_PATH_BUFFER];
     KITE_RESOLVE("mkdir", kite_path_mode_fn, kite_real_mkdir)
@@ -286,6 +336,110 @@ int truncate(const char *path, off_t length) {
     char buffer[KITE_PATH_BUFFER];
     KITE_RESOLVE("truncate", kite_truncate_fn, kite_real_truncate)
     return kite_real_truncate(kite_map_path(path, buffer), length);
+}
+
+/*
+ * 路径型 syscall 重写层（与汇编 kite-glibc-syscall-arm64.S 的分流配套）。
+ *
+ * Rust 与静态二进制在宿主车道里直接内联 svc 发 syscall（不经 glibc 符号），
+ * 但它们同时以动态符号引用 glibc 的 syscall() 函数包装；把带路径参数的
+ * 常见文件 syscall 引到这里，用与符号拦截层相同的规则重写 "/tmp" 前缀。
+ * 参数个数由 syscall 号精确决定，不做盲读；未知语义的号不会进入本层。
+ */
+long kite_syscall_path(long number, long a1, long a2, long a3, long a4, long a5);
+
+struct kite_path_args {
+    long args[5];
+    int path_index;   /* -1 表示无路径参数 */
+    int path_count;   /* 路径参数个数（renameat/linkat 有两个） */
+};
+
+static int kite_syscall_path_layout(long number, struct kite_path_args *layout) {
+    layout->path_count = 1;
+    switch (number) {
+        case SYS_mkdirat:
+        case SYS_mknodat:
+        case SYS_unlinkat:
+        case SYS_openat:
+        case SYS_openat2:
+        case SYS_newfstatat:
+#ifdef SYS_fstatat
+        case SYS_fstatat:
+#endif
+        case SYS_readlinkat:
+        case SYS_faccessat:
+        case SYS_faccessat2:
+        case SYS_fchmodat:
+        case SYS_fchownat:
+        case SYS_statx:
+            layout->path_index = 1;   /* (dirfd, path, ...) */
+            return 1;
+        case SYS_symlinkat:
+        case SYS_linkat:
+        case SYS_renameat:
+        case SYS_renameat2:
+            layout->path_index = 1;   /* (olddirfd, oldpath, newdirfd, newpath, ...) */
+            layout->path_count = 2;
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static long kite_fallback_openat(long dirfd, const char *path, long flags, long mode) {
+    if (flags & O_CREAT) {
+        return kite_real_syscall(SYS_openat, dirfd, (long) path, flags, mode);
+    }
+    return kite_real_syscall(SYS_openat, dirfd, (long) path, flags);
+}
+
+long kite_syscall_path(long number, long a1, long a2, long a3, long a4, long a5) {
+    if (kite_real_syscall == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    struct kite_path_args layout;
+    if (kite_guest_tmp_len == 0 || !kite_syscall_path_layout(number, &layout)) {
+        if (number == SYS_openat2) {
+            long result = kite_real_syscall(number, a1, a2, a3, a4, a5);
+            if (result == -1 && errno == ENOSYS) {
+                struct { unsigned long long flags; unsigned long long mode; unsigned long long resolve; } how;
+                memcpy(&how, (const void *) a3, sizeof(how));
+                errno = 0;
+                return kite_fallback_openat(a1, (const char *) a2, (long) how.flags, (long) how.mode);
+            }
+        }
+        return kite_real_syscall(number, a1, a2, a3, a4, a5);
+    }
+    long args[5] = {a1, a2, a3, a4, a5};
+    char buffer_a[KITE_PATH_BUFFER];
+    char buffer_b[KITE_PATH_BUFFER];
+    const char *original_a = (const char *) args[layout.path_index];
+    const char *original_b = layout.path_count > 1 ? (const char *) args[layout.path_index + 2] : NULL;
+    int rewritten = 0;
+    (void) rewritten;
+    if (original_a != NULL) {
+        const char *mapped = kite_map_path(original_a, buffer_a);
+        if (mapped != original_a) {
+            args[layout.path_index] = (long) mapped;
+            rewritten = 1;
+        }
+    }
+    if (original_b != NULL) {
+        const char *mapped = kite_map_path(original_b, buffer_b);
+        if (mapped != original_b) {
+            args[layout.path_index + 2] = (long) mapped;
+            rewritten = 1;
+        }
+    }
+    long result = kite_real_syscall(number, args[0], args[1], args[2], args[3], args[4]);
+    if (result == -1 && errno == ENOSYS && number == SYS_openat2) {
+        struct { unsigned long long flags; unsigned long long mode; unsigned long long resolve; } how;
+        memcpy(&how, (const void *) args[2], sizeof(how));
+        errno = 0;
+        result = kite_fallback_openat(args[0], (const char *) args[1], (long) how.flags, (long) how.mode);
+    }
+    return result;
 }
 
 long kite_syscall_enosys(void) {
