@@ -9,6 +9,7 @@ Kite 不维护第二份 Skill/MCP 事实源。适配器在进入管理页、显�
 | Kimi Code | `/root/.kimi-code/skills`、`/root/.agents/skills` | `/root/.kimi-code/mcp.json` | `readLive/backfill` |
 | MiMo Code | `/root/.config/mimocode/skills`、`/root/.agents/skills`、`/root/.claude/skills`、`/root/.codex/skills`、`/root/.opencode/skills` | `/root/.config/mimocode/mimocode.jsonc` 的 `mcp` | `readLive/backfill` |
 | OpenClaw | `/root/.openclaw/skills`、`/root/.agents/skills` | `/root/.openclaw/openclaw.json` 的 `mcp.servers` | `readLive/backfill` |
+| pi | `~/.pi/agent/skills`（随 pi 配置目录） | pi 设置的 MCP 段 | `readLive`（薄桥资产随 APK，会话事实在 pi 侧） |
 | Claude Code | `/root/.claude/skills` | `/root/.claude.json` 的 `mcpServers` | `readLive/backfill` |
 | Codex | `/root/.agents/skills` | `/root/.codex/config.toml` 的 MCP 表 | `readLive/backfill` |
 | Hermes | `/workspace/.kf/software/kite.hermes.core/home/skills` | 同一目录 `config.yaml` 的 `mcp_servers` | `readLive/backfill` |

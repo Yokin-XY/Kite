@@ -44,6 +44,7 @@ Android 应用域没有 Ubuntu `/etc/resolv.conf`。Kite 在身份绑定 libc �
 宿主通道必须引用同一文件；默认网络变化时原地改写文件而不替换 inode，确保已经打开 fd 的长驻进程也能看到 VPN 切换后的 DNS。
 
 Android seccomp 拒绝部分普通发行版允许的新 syscall。兼容副本只转换已有标准回退语义：
+（2026-09-21 起统一口径：App 域已知雷为 99 set_robust_list / 278 getrandom / 293 rseq / 437 openat2 四个，处置走[模拟态纲领](ubuntu-simulation-doctrine.md)的雷源头补丁——补丁版 glibc 让前三者走自带退路，fs-safe 类直发 openat2 返回 ENOSYS 自动降级；本通道不再各自维护单点清单。）
 
 - robust mutex 的公开 pthread API 对不支持能力返回 `ENOTSUP`；
 - `clone3` 返回 `ENOSYS`，由 glibc 回退传统 `clone`；

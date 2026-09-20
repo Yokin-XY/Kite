@@ -34,7 +34,7 @@ powershell -File scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1
 
 ## 真机范围
 
-用户可见改动优先在 OnePlus 8T `3f8bbaad` 验证。一次完整稳定版检查至少覆盖：
+用户可见改动按双机口径验证：OnePlus 8T（`3f8bbaad`）开发验证，魅族 18（`181QGEYH222B9`）作为默认验收机复验；涉及运行时/兼容层的改动必须双机都过（见 [Ubuntu 模拟态纲领](../architecture/ubuntu-simulation-doctrine.md)）。一次完整稳定版检查至少覆盖：
 
 1. 首次启动或覆盖安装后进入首页。
 2. 首页卡片启动、返回、停止和再次启动。

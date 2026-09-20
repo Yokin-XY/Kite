@@ -16,7 +16,7 @@
 | FAST-PY-03 | 任意第三方 C 扩展、manylinux wheel、`dlopen` 和直接 syscall | 当前只证明精确 CPython ABI 与固定导入闭包，不能外推 | 缺少精确 ABI/代次证据时走 PRoot | 按 ABI、wheel 资产、导入闭包和不可变代次逐类开放 |
 | FAST-PY-04 | 网络 pip、编译工具链和任意包升级 | 安装脚本和编译器可能创建外部进程；原地 target 升级会残留旧元数据 | 完整安装生命周期走 PRoot | 新代次安装、验证、切换与旧租约回收 |
 | FAST-GIT-01 | direct Host Git | hooks、filters、pager、remote helper、submodule 等外部 child 无法在启动前完整预判 | Git 继续 PRoot | 只有通用 child relay 完整保持语义后重开 |
-| FAST-RELAY-01 | unrestricted glibc child relay | missing/EACCES/坏 shebang 的同步错误会变成 wrapper 的异步退出；fork/lifecycle 也未闭环 | 不打入正式 compat 资产 | 重新设计 fork-safe relay，并保持 fd、信号、errno、退出和唯一执行 |
+| FAST-RELAY-01 | unrestricted glibc child relay | missing/EACCES/坏 shebang 的同步错误会变成 wrapper 的异步退出；fork/lifecycle 也未闭环 | 不打入正式 compat 资产 | 按[模拟态纲领](ubuntu-simulation-doctrine.md)优先级重新评估（雷源头补丁/兼容垫片优先，运行时方案不再默认考虑） |
 
 证据回指：[宿主 Node 快速运行时](host-node-runtime.md)、[宿主 Python 性能与兼容矩阵](host-python-performance-matrix.md)、任务 `RF1200` 与 `RF1300`。
 
@@ -40,10 +40,10 @@
 | PROOT-SCHED-02 | 自动性能升档 | 当前没有可信 thermal 信号，失败率也不能证明由并发造成 | 内存高压可降档；升档由固定用户档位/校准结果决定 | 接入可信温度与因果窗口后重开 |
 | PROOT-SCHED-03 | 通用 PRoot 启动窗口协调 | 两套真机矩阵没有稳定降低 batch wall/P95，部分等待反而增加 | 正式入口保持现状 | 运行时或设备代次改变后按原矩阵复验 |
 | PROOT-SCHED-04 | 把 RF1800 依赖调度外推到任意资源安装或卡片步骤 | 普通安装事务可能共享目录、带取消/回滚，卡片步骤还可能是任意 shell；不能从步骤文本猜并发安全 | 只允许首次内置 6 资源使用已证明的显式图和 2 槽调度，其余保持原事务/顺序 | 只有多个正式调用方能在副作用前提交依赖、写入边界和失败语义时另立父任务 |
-| PROOT-RUNTIME-01 | 用库存 PRoot 替换正式 v23 | 库存来源未知，缺少 lifecycle、registry、保护与 View；约 100ms 差异不由六层 Kite patch、loader 或 NDK 版本造成 | 正式 v23 保持不变 | 获得同源、同能力、可复现候选后先过语义矩阵 |
+| PROOT-RUNTIME-01 | 用库存 PRoot 替换正式 v24 | 库存来源未知，缺少 lifecycle、registry、保护与 View；约 100ms 差异不由六层 Kite patch、loader 或 NDK 版本造成 | 正式 v24 保持不变 | 获得同源、同能力、可复现候选后先过语义矩阵 |
 | PROOT-RUNTIME-02 | lifecycle registry 局部减费 | 单写、持久 fd、活跃计数三个候选保持事件语义但没有端到端收益 | 保留完整生命周期与强身份 | 若重构原子快照协议，必须同时覆盖恢复、gap、异常中断和旧 reader |
 
-证据回指：[统一 PRoot 容量](unified-proot-capacity.md)、[启动窗口协调](proot-launch-window-coordination.md)、[活跃运行时开销](proot-active-runtime-overhead.md)与任务 `RF400`～`RF1440`。
+证据回指：[统一 PRoot 容量](unified-proot-capacity.md)、[启动窗口协调（归档）](../archive/architecture/proot-launch-window-coordination.md)、[活跃运行时开销](proot-active-runtime-overhead.md)与任务 `RF400`～`RF1440`。
 
 ## 产品层后续组合方向
 
@@ -53,3 +53,16 @@
 2. 若用户需要完全独立的 Linux Python，可提供第二个明确标识的 PRoot Python 环境；它不能覆盖或替换快速 Python 的资产和命令所有权。
 3. 包管理和扩展安装采用“新代次安装 → 验证 → 切换 → 活动租约退出后回收”，不允许原地覆盖正在使用的依赖。
 4. 任何新快速能力先按依赖/ABI/语义选择，不按 OpenClaw、资源 ID、页面或应用名称选择。
+
+## 安卓域直跑（App 域雷库）——2026-09-21 新增
+
+App 域（untrusted_app + zygote seccomp filter）原生直跑 Ubuntu/glibc 程序的已知边界，按[模拟态纲领](ubuntu-simulation-doctrine.md)管理：
+
+| 编号 | 边界 | 已确认事实 | 当前路线 | 处置 |
+| --- | --- | --- | --- | --- |
+| GUEST-SYSCALL-01 | set_robust_list(99) / getrandom(278) / rseq(293) 被厂商门禁 KILL | 2026-09-20/21 App 域实证；root/shell 域无此雷；glibc 三者均有降级路径 | 雷源头补丁：补丁版 glibc 视为不支持 → 自带退路（robust list 跳过 / urandom / 禁用 rseq） | 纲领第七节雷库首批 |
+| GUEST-SYSCALL-02 | openat2(437) 被 KILL（fs-safe 等 Rust 内联直发） | 444 等未知号同样被杀；rustix 有 openat 降级退路 | 源头补丁：fs-safe 的 openat2 返回 ENOSYS → 自动降级 openat | 同上 |
+| GUEST-SYSCALL-03 | ptrace 运行时兜底不可靠 | PTRACE_SYSCALL 入口/出口交替判定在多线程+信号环境下单轮错位 142 次（openclaw）；跨机型时序不可预测 | tracer 转职雷探测器（诊断），不参与生产链路 | [纲领第五节](ubuntu-simulation-doctrine.md)优先级纪律 |
+| GUEST-PY-00 | rootfs python3.12 宿主直跑 | 2026-09-20 全链路实证通过 | HostPython 车道（2f82ed63） | 通用层落地后重估 FAST-PY-01/02 边界 |
+
+证据回指：[Ubuntu 模拟态纲领](ubuntu-simulation-doctrine.md)、[通用车道方案](../plans/ubuntu-fast-lane-plan.md)、openclaw App 域攻坚记录（2026-09-20/21）。

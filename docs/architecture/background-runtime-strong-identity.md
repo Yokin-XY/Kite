@@ -4,7 +4,7 @@
 
 本文固定 `BackgroundRuntimeRegistry` 进入长期 PRoot owner lease 前的生产事实、缺口和迁移顺序。
 
-强身份采集、恢复和停止安全规则覆盖 `BackgroundRuntimeMode.PROCESS` 后台运行项；RF840 的长期 owner lease 生产试接只覆盖实际运行通道为 PRoot 的记录。以下对象不在 RF840 顺带迁移：
+强身份采集、恢复和停止安全规则覆盖 `BackgroundRuntimeMode.PROCESS` 后台运行项；`BackgroundRuntimeKind.OPENCLAW_GATEWAY`（openclaw 网关车道，2026-09 上线）同属该强身份体系——网关 lease 的身份、恢复与停止语义与通用 PROCESS 一致，"不迁移终端/Agent"禁令指会话进程，不禁止网关车道；RF840 的长期 owner lease 生产试接只覆盖实际运行通道为 PRoot 的记录。以下对象不在 RF840 顺带迁移：
 
 - `SERVICE` 模式的一次性服务命令；
 - 终端会话；

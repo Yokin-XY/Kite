@@ -2,7 +2,7 @@
 
 ## 定位
 
-PRoot 是 Kite 的完整 Linux 兼容底座和最终兼容 Provider。复杂 shell、Linux ELF、编译器、完整文件系统视图、未验证运行时和
+PRoot 是 Kite 的完整 Linux 兼容底座和最终兼容 Provider；在[模拟态纲领](ubuntu-simulation-doctrine.md)的三层架构中处于**保底层**（优先级 4），随地基收编覆盖面扩大，其份额逐步压缩但不移除。复杂 shell、Linux ELF、编译器、完整文件系统视图、未验证运行时和
 无法由原生能力完整表达的请求都进入 PRoot。
 
 Provider 化不是替换或重写现有 PRoot，而是让终端、资源、Agent 和后台入口通过同一个 Planner 获得唯一 PRoot 计划，避免

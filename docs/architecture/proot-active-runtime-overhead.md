@@ -77,7 +77,7 @@ OnePlus 8T 九轮结果：
 结论边界：
 
 - 默认 `kf_procfs`/`mountinfo` 扩展分派与 loader 模式不是 small-write 的稳定主因，不能通过默认关闭功能取得收益；
-- active no-telemetry 的 small-write 差值仍属于 v23 总体 patch/build 差异，只有重建同源候选后才能继续二分；
+- active no-telemetry 的 small-write 差值仍属于 v23（现行 v24 的直系基线）总体 patch/build 差异，只有重建同源候选后才能继续二分；
 - child-fanout 的 4 并发增量不由 active registry 或共享日志争用主导；独立日志仍保留约 90ms，因此热点是 lifecycle 每事件同步采集、格式化与落盘总路径；
 - 8 并发已经落入设备吞吐平台，任何只在 8 并发好看的方案都不能算优化；
 - RF1432 只能优化事件实现，不减少事件、不关闭 telemetry、不弱化强身份与退出确认。候选必须先在 Debug 私有路径与正式资产并行，不能直接覆盖 runtime descriptor。
@@ -106,10 +106,10 @@ OnePlus 8T 九轮结果：
 | `patch_03_transaction` | 再加 transaction | `E52501DA...6D5A` |
 | `patch_04_protection` | 再加 protection | `DC57AE34...8B28` |
 | `patch_05_view` | 再加 View v1 | `7B1B4C5C...4247` |
-| active | 再加 block View v2，即正式 v23 | `0A465CE2...4BC` |
+| active | 再加 block View v2，即正式 v23（现行 v24 基线；v24 = v23 + procfs 符号链接投影修复） | `0A465CE2...4BC` |
 | `patch_06_unbundled` | 完整 v23，编译时 external loader | `205C06FA...A1A` |
 | `patch_07_ndk28` | 完整 v23，改用 NDK 28.2 | `57778BB2...769B` |
 
 三套 OnePlus 8T 九轮矩阵均结果正确、零残留。4 并发样本受升频和调度影响存在约 130ms/240ms 两簇，但各补丁层中位数均为 `132～160ms`，stock 为 `136～139ms`，没有层级台阶。8 并发结果稳定：所有 `d30b988` 同源层为 `299～317ms`，stock 为 `204～209ms`；unbundled 为 `305/314ms`，NDK 28 为 `314ms`。
 
-所以当前 high-concurrency small-write 差异在第一个 Kite patch 之前已经存在，也不由 embedded loader 或 NDK 26 引起。库存资产报告 PRoot 5.1.0，但源码和构建来源未知，且不具备正式 lifecycle、active registry、保护与 View 语义，不能作为生产替代。RF1400 最终 no-go：正式 v23 保持不变，后续只有拿到同源、同能力的新 PRoot 基线并通过完整语义矩阵时才允许重开。
+所以当前 high-concurrency small-write 差异在第一个 Kite patch 之前已经存在，也不由 embedded loader 或 NDK 26 引起。库存资产报告 PRoot 5.1.0，但源码和构建来源未知，且不具备正式 lifecycle、active registry、保护与 View 语义，不能作为生产替代。RF1400 最终 no-go：正式基线保持不变（现行生产为 v24），后续只有拿到同源、同能力的新 PRoot 基线并通过完整语义矩阵时才允许重开。

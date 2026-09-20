@@ -5,7 +5,7 @@
 - Windows PowerShell 或兼容 Shell。
 - JDK 17。
 - Android SDK，能够编译 API 34。
-- 需要真机验证时准备 ADB；项目默认测试设备为 OnePlus 8T。
+- 需要真机验证时准备 ADB。双机角色：OnePlus 8T（`3f8bbaad`，开发调试）+ 魅族 18（`181QGEYH222B9`，默认验收机，见 AGENTS.md）。
 
 本机 SDK 路径写入 `local.properties`，该文件不得提交到 Git。
 

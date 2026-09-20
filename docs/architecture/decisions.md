@@ -131,3 +131,19 @@ Agent 会话重命名是可选原生能力，不是 Kite 显示别名。`AgentSe
 Agent 注册和资源清单可以声明 `runtimeGuarantees` 与 `runtimeGuaranteeEvidence`，`AndroidAgentRecipeRuntime` 只负责把这些事实连同结构化 argv、工作目录和环境提交给统一 `ManagedRuntimeLaunchPlanner`。Planner 必须在创建业务进程前给出唯一结果：Host Ready、单次 PRoot 计划或明确 Blocked；Host 业务进程启动后不得因失败再静默重跑一份 PRoot 任务。后台运行依赖使用同一运行保证字段，但事实继续由 `BackgroundRuntimeRegistry` 持有。
 
 运行底座只决定进程创建前的执行车道，不拥有 Agent 会话语义。会话固定 Agent、草稿和模型、恢复、请求发送、状态文案、rename/delete 的能力判断、stdin、超时、错误反馈和回调顺序继续由 Kite Agent SDK、Runtime 与专用 Adapter 持有。官方账号动作不伪造运行保证；会话管理命令需要完整 Linux 时可使用统一 FULL_LINUX PRoot Provider，但不能借此改写用户可见操作语义。
+
+## 六 Agent 名册与“桥随 APK、Agent 走资源通道”接入合同
+
+正式 Agent 名册为六个：pi、claude code、codex、opencode、hermes、openclaw（2026-09 全部真机上线）。接入合同：**ACP 桥随 APK 内置分发（如 pi 的 `pi-acp-bridge.mjs` 薄桥），Agent 本体走资源卡安装**（requirements 声明依赖，安装后才可会话）。桥不认识具体 Agent，不为单个 Agent 写死特判；Agent 差异留在注册信息、ACP 协议或专用 Adapter。openclaw 采用网关常驻 + `openclaw acp` 桥接入；发现路径上 ACP Registry 与“桥+资源化”两条通道并存，以后者为主。详细矩阵见 [Agent 发现目录](agent-discovery-catalog.md) 与 [原生扩展矩阵](agent-native-extension-matrix.md)。
+
+## 供应商预设目录内嵌 CC Switch 数据源
+
+供应商预设目录采用双源：models.dev 在线拉取之外，内置基于 CC Switch 数据转换的全量预设目录（`CcSwitchCatalogBundle`，约 590 条），随 APK 提供、无网可用。内嵌目录只作首次快照与免费来源候选；用户编辑、刷新与官方登录仍按三层合同由 `AgentProviderCatalogStore` 统一持有，不存在第二事实源。
+
+## openclaw 网关作为后台运行车道
+
+openclaw 以网关进程（`BackgroundRuntimeKind.OPENCLAW_GATEWAY`）作为后台常驻车道：首次打开会话时拉起网关（host 车道优先），网关就绪（readyz）后会话通过网关地址接入；网关异常退出按后台恢复策略评估重启，不伪装成功。网关身份、生命周期与遥测归 `BackgroundRuntimeRegistry`，与通用 PROCESS 后台项同一强身份体系。后台迁移禁令“不把终端/Agent 随后台桥接迁移”指会话进程，不禁止网关车道本身。
+
+## 运行时统一遵循 Ubuntu 模拟态纲领
+
+所有运行时（车道/兼容层/补丁）工作遵循[Ubuntu 模拟态纲领](ubuntu-simulation-doctrine.md)：系统级视角优先、95/5 原则、只依赖安卓全国统一保底动作集、双机验收（OnePlus 8T 开发 + 魅族 18 验收）。实现手段优先级固定为：雷源头文件补丁 > 兼容垫片 > 运行时保镖（仅诊断）> PRoot 保底；ptrace 类运行时兜底不作为通关依赖。新雷按“探测器→雷库→文件补丁→回归→双机验收”闭环收编。

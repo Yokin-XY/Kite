@@ -18,6 +18,8 @@ Kite 同时保留三种执行能力，但不让资源卡、页面或最终应用
 这三种能力是同一运行底座的三条车道，不是三个平行产品。快速通道负责确定性收益，原生能力负责 Android 已能直接兑现的
 通用操作，PRoot 负责完整 Linux 兼容性。
 
+三车道是**运行选路**维度；与之正交的**兼容手段**维度见 [Ubuntu 模拟态纲领](ubuntu-simulation-doctrine.md)：地基收编（雷源头补丁，优先级 1）→ 兼容垫片（优先级 2）→ 运行时保镖（仅诊断，优先级 3）→ PRoot 保底（优先级 4）。车道回答“在哪儿跑”，兼容手段回答“怎么让它跑得起来”。
+
 ## 当前基线与目标差距
 
 当前已经具备：
@@ -25,6 +27,7 @@ Kite 同时保留三种执行能力，但不让资源卡、页面或最终应用
 - `AndroidNativeDownloadCapabilityProvider` 与流式执行器，已能把封闭的 HTTPS 下载＋SHA-256 请求编译为原生计划；
 - `AndroidNativeStructuredJsonStringProvider` 已在默认 npm 已安装版本入口生产化；结构化文件事实完整时原生读取，事实不完整在首个业务进程前单次回到旧 PRoot 探针；
 - `HostNodeRuntimeProvider`、`HostPythonRuntimeProvider` 与 `ManagedRuntimeLaunchPlanner`，可在创建进程前选择 Host Node、Host Python 或 PRoot；
+- 9 月新增的兼容层事实：`libkite-glibc-compat.so` 版本化符号拦截（GLIBC_2.17 版本节点直导，覆盖 worker/ESM 绕过层）、`kite-syscall-tracer`（转职雷探测器）、初始雷库（99/293/278/437，见纲领第七节）、rootfs python3.12 宿主直跑实证；
 - 终端、Agent、后台运行共用的受管运行时准备入口；终端命令文本仍保持 PRoot，结构化 Node/Python argv 才参与快速选择；
 - `runtimeLane`、`runtimeFallbackReason` 在 `CardRunStore` 与后台运行记录中的事实保存；
 - `ProotJobAdmissionController`、温热 Runner 协议和固定维护任务的第一条生产接线；
@@ -95,9 +98,9 @@ Action Intake
 ## 业务通用批量操作
 
 三条 Provider 车道之外，Orchestrator 可以对软件内部反复出现的结构化业务操作做有界批量调度。这不是第四条运行车道，也不能让
-页面或资源身份参与选路。RF1700 的资源批量版本检查就是首个生产样板：全部目标先写入原 Store 的“检查中”状态，再在任何业务
+页面或资源身份参与选路。资源批量版本检查（RF1700）是首个生产样板：全部目标先写入原 Store 的“检查中”状态，再在任何业务
 进程前完成版本事实预检；只有受控 JSON Provider 实际 Ready 且最新版本是独立远端请求的目标进入最多 3 个原生/远端槽，事实不足
-或显式命令目标整项进入最多 1 个 PRoot 兼容槽，Blocked 直接失败关闭。
+或显式命令目标整项进入最多 1 个 PRoot 兼容槽，Blocked 直接失败关闭。结论同步登记于[兼容总账](runtime-compatibility-backlog.md) NATIVE-VERSION-02。
 
 调度器只消费预先关闭的 lane，不读取资源 ID、包名、命令文本或页面；同一目标只执行一次，两类槽可以重叠，结果仍按输入顺序交给
 原 `ResourceVersionCoordinator` 与 `KiteResourceInstallStore`。固定矩阵与 OnePlus 真实双车道链通过后才生产放行。该模式可以复用

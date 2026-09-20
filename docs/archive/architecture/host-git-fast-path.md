@@ -1,5 +1,7 @@
 # Host Git 快速通道
 
+> **已归档**（2026-09-21）· Host Git 直跑研究。RF1210–1230 收口：direct Host 生产 no-go（子进程语义不可预判），结论沉淀于 runtime-compatibility-backlog.md FAST-GIT-01。
+
 ## 候选依据
 
 正式资源关系中，Git 被 10 个上层资源依赖，是 Node 之后覆盖面最大的通用底层工具。Git 的本地 `status/add/diff/log` 会大量访问仓库小文件和元数据，理论上可能放大 PRoot 路径翻译成本。

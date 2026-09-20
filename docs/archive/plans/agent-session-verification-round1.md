@@ -1,5 +1,7 @@
 # Agent 会话链路验证（第一轮：Claude Code + 智谱 Coding Max）
 
+> **已归档**（2026-09-21）· 会话验证第一轮取证。OpenClaw 网关循环崩溃已终结（9b77c231）；6×4 矩阵移交 problem-agents-adoption（已归档）。
+
 > 目标：验证"新建会话 / 加载恢复 / 会话间交互"的通畅性与稳定性——5 Agent 匹配的地基层。
 > 供应商：智谱 GLM Coding Plan（key 由用户提供，仅存设备端，不入库）。
 

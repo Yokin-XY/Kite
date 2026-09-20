@@ -61,4 +61,29 @@ RF950 已关闭后台通用 PRoot PROCESS 的生产门。OnePlus 8T 固定矩阵
 
 该生产结论只覆盖后台实际 `proot_shell` 的通用 PROCESS。Host Node 不占 PRoot 容量；终端和 Agent 仍未迁移，也不能因为共享某些进程工具便自动继承此门。
 
-长期 owner 对短任务的保底边界见 [PRoot 长期 owner 与短任务余量合同](proot-short-task-headroom.md)。
+## 长期 owner 保底余量（原 proot-short-task-headroom.md 并入，2026-09-21）
+
+统一容量关闭了总量超售，但不可抢占的长期 holder 若占满总容量，后到的交互短任务即使优先级最高也只能等待到超时。这不是队列排序错误，不能靠提高优先级、轮询或另建 controller 解决，也不能为短任务静默杀死后台 owner。因此只对 `MANAGED_OWNER` 长期 holder 增加一条通用上限：
+
+```text
+effectiveGlobalMax <= 1: managedOwnerMax = 1
+effectiveGlobalMax >= 2: managedOwnerMax = effectiveGlobalMax - 1
+```
+
+| 档位 | 总容量 | 长期 owner 上限 | 给非长期任务留下的最小余量 |
+| --- | ---: | ---: | ---: |
+| 低功耗 | 1 | 1 | 0 |
+| 均衡 | 2 | 1 | 1 |
+| 高性能 | 4 | 3 | 1 |
+
+低功耗只有一个物理名额，无法同时运行长期 owner 与短任务；本合同不伪造第二容量、不抢占长期进程，需要短任务并发时选均衡或高性能档。
+
+调度语义要点：上限只看 `cancellationMode=MANAGED_OWNER`，不识别资源、命令或 owner id；长期 owner 达上限后其等待项不能挡住后面的可运行短任务，共享写任务保留队首屏障防写饥饿；压力缩档与控制面恢复不驱逐既有 holder，恢复后超额仅标记 overcommitted 并拒绝新长期准入。
+
+## 健康与验证
+
+正式健康面只发布固定数字与枚举（`longAdmissionMax`、`longAdmissionRemaining`、`shortHeadroomCapacity`、`shortHeadroomProtected` 及 `proot_unified_actual_*` 系列），不输出 owner、PID、命令、路径或等待项身份。
+
+生产门验证矩阵（OnePlus 8T 固定矩阵，RF1030/RF950 已过）：均衡档一长期 owner 后第二长期排队但交互短任务仍可准入；高性能档三长期 owner 后仍有一个短任务位置；低功耗档保持总量 1；压力 4→1 收缩不驱逐三个既有长期 holder；恢复导入的超额 holder 不被释放或覆盖，显式停止后余量自然恢复；PID/boot 反例、应用重启、外死、重复启动与 owner 树停止均按失败关闭验证。
+
+该结论只覆盖后台实际 `proot_shell` 的通用 PROCESS；Host Node 不占 PRoot 容量；终端和 Agent 仍未迁移，也不能因共享进程工具自动继承此门。

@@ -1,5 +1,9 @@
 # 通用依赖快速通道
 
+## 定位（2026-09-21 更新）
+
+本通道是**解释器级逐 Provider 车道**（Node/Python 已验证基线）。它正被[Ubuntu 模拟态纲领](ubuntu-simulation-doctrine.md)的通用层逐步取代：通用层（地基收编 + 兼容垫片）覆盖任意 rootfs 程序后，per-tool 车道保留为优质预设，不再新增单独车道。工程分期见[通用车道方案](../plans/ubuntu-fast-lane-plan.md)。
+
 ## 定位
 
 快速通道面向 Node.js、Python 等高复用运行时依赖，不面向 OpenClaw 或其他最终应用制作特殊发行版。Provider 只根据解释器、

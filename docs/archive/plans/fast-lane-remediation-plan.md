@@ -1,5 +1,7 @@
 # 快速通道整改方案（讨论稿）
 
+> **已归档**（2026-09-21）· 快速通道整改计划。P1/P3 与 HostPython 已落地（924f1f53/f02ab6a7/2f82ed63/e7fb01fc），P2 一期完成（b3a90a1b）；剩余默认反转与收编由现行主计划 docs/plans/ubuntu-fast-lane-plan.md 接管。
+
 > 2026-09-19 · 状态：P1 核心已落地（`924f1f53`）· 依据：两份只读审计
 > - 运行通道决策审计：`local-artifacts/runtime-lane-decision-audit.md`
 > - 功能面通道审计：本文附录

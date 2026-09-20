@@ -94,7 +94,7 @@ hook 层与监护层是**分工**不是叠加：glibc 正常调用（apt/dpkg �
 
 | 坑 | 来源 | 防线 |
 |---|---|---|
-| 内联 svc 绕过 PLT | proroot #5/#11（uv renameat2）、#4（curl SIGSYS） | tracer 捕获名单（U3） |
+| 内联 svc 绕过 PLT | proroot #5/#11（uv renameat2）、#4（curl SIGSYS） | 雷库 + 源头文件补丁（U3）；修不动的退 PRoot |
 | renameat2 降级丢 flags → 静默覆盖用户文件 | lroot | 降级保 flags 或显式拒绝（U3） |
 | ptrace 自锁（hook 导出 ptrace 桩 + tracer 走 PLT） | lroot | tracer 静态独立进程 + 全裸 syscall（现有架构已具备，保持） |
 | 返回值方向泄漏（getcwd/maps/cmdline） | lroot | U2b 精确相等断言 |

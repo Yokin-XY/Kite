@@ -1,5 +1,7 @@
 # 通用 glibc Child Relay
 
+> **已归档**（2026-09-21）· glibc child relay 研究。RF1300 收口：窄协议可行、生产 no-go，结论沉淀于 runtime-compatibility-backlog.md FAST-RELAY-01；后续按模拟态纲领优先级评估。
+
 ## 问题边界
 
 Node、纯 Python 与 Git 已证明同一条分层事实：Ubuntu glibc 父 ELF 可以通过 Kite Host launcher 直接运行，但父进程一旦创建外部 child，child 会重新遇到 Android 根目录、动态链接器、PATH 与 Linux 工具语义差异。

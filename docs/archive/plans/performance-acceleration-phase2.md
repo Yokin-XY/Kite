@@ -1,5 +1,7 @@
 # 性能加速二期计划
 
+> **已归档**（2026-09-21）· 性能二期计划。P0（rg/fd/jq 原生车道）已完成（feb8c537）；逐工具 Bionic 编译方向与 Ubuntu 模拟态纲领（系统级优先）不符，剩余意图并入 ubuntu-fast-lane-plan。
+
 > 一期已完成：Node.js/Python/uv/pnpm 通过 glibc Host 原生执行（3-10x 加速）。
 > 二期目标：把 Agent 最高频调用的工具也从 PRoot 加速到原生层。
 

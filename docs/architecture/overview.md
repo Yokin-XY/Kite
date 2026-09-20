@@ -36,6 +36,7 @@ Feature 按用户可见能力组织：
 - `home`：首页卡片和启动入口。
 - `recipeeditor`：卡片创建、编辑与 JSON 预览。
 - `resources`：资源首页、详情、管理和安装向导。
+- `agent`：Agent 会话页、会话列表、模型库与配置（六 Agent；会话语义在 Kite Agent SDK）。
 - `runsurface`：实例窗口、报告、终端和网页显示面。
 - `runtimemanagement`：卡片、终端与进程的统一运行视图。
 - `terminal`、`web`、`settings`：各自显示生命周期和交互合同。
@@ -89,9 +90,21 @@ Platform 是 Android 适配器；Foundation 保存可跨 Feature 复用的运行
 
 普通本地页面留在 WebView。识别到 OAuth/SSO 授权请求后，Browser Handoff 把请求交给系统浏览器；`kite-auth://callback` 或 CLI 的 loopback 回调由进程级认证桥送回原始消费者。
 
+### Agent 会话
+
+```text
+会话页（模型/权限/推理/工作模式选择）
+-> Kite Agent SDK（会话语义与能力目录）
+-> ACP 桥（随 APK）或专用 Adapter
+-> 六 Agent（pi / claude code / codex / opencode / hermes / openclaw，资源卡安装）
+-> 会话列表、归档与恢复（AgentConversationStore + Agent 原生事实）
+```
+
+Agent 本体经资源卡安装；模型库、Provider、Skill 与 MCP 管理由设置中心入口承接。openclaw 通过后台网关车道接入（首次会话拉起网关，就绪后接入）。运行车道选择（Host 快速通道 / PRoot）由统一 Planner 在进程创建前决定，遵循 [Ubuntu 模拟态纲领](ubuntu-simulation-doctrine.md)。
+
 ## 稳定与实验边界
 
-稳定主线包含卡片、资源、终端、运行实例、运行管理和 WebView + 系统浏览器认证桥。
+稳定主线包含卡片、资源、终端、运行实例、运行管理、WebView + 系统浏览器认证桥，以及六 Agent 会话体系（会话、模型库、Provider 目录、后台网关车道）。
 
 浏览器自动化和 X11 仍是实验实现。它们可以使用既有模块边界继续研究，但不得改变稳定能力的默认路径，也不作为正式版本完成标准。
 

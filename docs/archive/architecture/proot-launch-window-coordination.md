@@ -1,5 +1,7 @@
 # PRoot 进程启动窗口协调
 
+> **已归档**（2026-09-21）· PRoot 启动窗口协调研究。RF1130 生产 no-go，结论沉淀于 runtime-compatibility-backlog.md PROOT-SCHED-03。
+
 ## 要解决的问题
 
 多个 PRoot 进程同时冷启动时，会并发读取 rootfs 大量小文件、建立 bind/loader 状态并创建 tracee。现有 1/2/4 admission 只覆盖已经迁移的有界任务和后台长期 owner；普通终端、Agent 与若干兼容 exec 仍可同时启动。

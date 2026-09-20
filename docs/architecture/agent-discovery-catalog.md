@@ -14,6 +14,13 @@ Kite 不再为每个新 Agent 从零手工寻找包名、版本和 Android arm64
 
 外部候选不能直接写进 Agent 名册。这样 Registry 中出现一个新包时，Kite 可以立刻发现它，但不会在未经过 Android、PRoot、ACP 握手和安全校验前把它伪装成可安装、可运行的 Agent。
 
+Registry 发现之外还有两条已定稿的接入通道（2026-09 六 Agent 全部上线）：
+
+- **桥 + 资源化**（主力）：ACP 桥随 APK 内置（如 pi 的 `pi-acp-bridge.mjs` 薄桥），Agent 本体经资源卡安装（requirements 声明依赖）。桥不认识具体 Agent，不为单个 Agent 写特判。
+- **网关常驻**：openclaw 以 `openclaw acp` 桥 + 后台网关车道接入（`BackgroundRuntimeKind.OPENCLAW_GATEWAY`）。
+
+正式名册六个：pi、claude code、codex、opencode、hermes、openclaw。
+
 ## 刷新与回退
 
 - 普通页面绑定只读取内存、缓存或随包目录，不触发网络请求。

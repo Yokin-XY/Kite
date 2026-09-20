@@ -10,6 +10,9 @@ Kite 不允许页面长期保存业务事实副本。主要事实源如下：
 | 资源安装计划和处理中状态 | `KiteResourceInstallStore` | 资源页和向导消费同一快照 |
 | 已安装资源 | `KiteResourceRegistry` 与安装快照 | 资源卡片投影安装结果 |
 | 终端会话 | `TerminalSessionController` | 终端显示面只绑定目标会话 |
+| Agent 会话与运行能力 | Kite Agent SDK / `AgentRuntimeRegistry`（六 Agent） | 会话页消费能力投影与会话列表 |
+| Provider 与能力目录 | `AgentProviderCatalogStore`（含 CC Switch 内嵌预设） | 供应商/模型选择只读写该目录 |
+| 后台运行项（含 openclaw 网关） | `BackgroundRuntimeRegistry`（OPENCLAW_GATEWAY kind） | 后台状态页消费恢复策略投影 |
 | owner 与进程存活 | PRoot telemetry / RuntimeHealth | 运行管理消费统一拓扑 |
 | 浏览器认证会话 | `BrowserAuthSessionStore` | 认证协调器恢复和交付回调 |
 

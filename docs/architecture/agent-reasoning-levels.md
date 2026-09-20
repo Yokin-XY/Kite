@@ -40,7 +40,9 @@ Kite 不设置“跟随默认”档位。清除原生覆盖属于配置恢复动
 7. 普通页面只消费已经投影的能力，不在绘制、列表绑定或点击处理中扫描配置、进程或网络。
 8. 推理强度不进入跨会话草稿能力缓存；新会话和模型变化必须等待当前运行时重新公布。
 
-## 五个正式 Agent 的边界
+## 六个正式 Agent 的边界
+
+pi 已上线（自带七级思考档位，piThinkingProfiles 映射），当前名册：pi、claude code、codex、opencode、hermes、openclaw。
 
 - OpenCode：Variant 由当前模型目录和 Provider 配置决定；只映射能够识别的纯推理值，不根据 `fast`、`deep` 等自定义名称猜测。
 - OpenClaw：支持 Provider/Model profile 公布的有序档位、二值开启和 `adaptive`；带编排的 `ultra` 不进入本目录。
