@@ -7,6 +7,24 @@ import java.io.File
 
 class HostNodeNativeCompatibilityContractTest {
     @Test
+    fun `syscall tracer degrades openat2 with two-phase singlestep injection`() {
+        val tracerSource = source("native/kite-glibc-host/kite-syscall-tracer.c").readText()
+        // 1) PTRACE_O_TRACESECCOMP 必须在 options 里——不设它，SECCOMP_RET_TRACE
+        //    命中时内核直接给 ENOSYS、不通知 tracer（4.19 真机实证）。
+        assertTrue(tracerSource.contains("PTRACE_O_TRACESECCOMP"))
+        // 2) 本机 4.19 OEM 内核不采纳 seccomp stop 中修改的 syscall 号，必须走
+        //    PC 注入 + 两段 SINGLESTEP（而非只改号）。
+        assertTrue(tracerSource.contains("PTRACE_SINGLESTEP"))
+        assertTrue(tracerSource.contains("stage"))
+        // 3) 内核完成缓存的 openat2(ENOSYS) 时 x0 会被写坏，第二段单步前必须
+        //    恢复原始 dirfd（orig_x0）。
+        assertTrue(tracerSource.contains("orig_x0"))
+        // 4) seccomp 过滤器只拦 openat2，其余放行（零常态开销）。
+        assertTrue(tracerSource.contains("__NR_openat2"))
+        assertTrue(tracerSource.contains("SECCOMP_RET_TRACE"))
+    }
+
+    @Test
     fun `syscall forwarding preserves caller registers in arm64 assembly`() {
         val cSource = source("native/kite-glibc-host/kite-glibc-compat.c").readText()
         val assembly = source("native/kite-glibc-host/kite-glibc-syscall-arm64.S").readText()
