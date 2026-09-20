@@ -90,13 +90,14 @@ static int install_openat2_trace_filter(void) {
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_AARCH64, 1, 0),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
-        /* 只拦 openat2（降级）与 mkdirat（/tmp 锁目录翻译）：openat/faccessat 等
-         * 高频号全量 stop 的 ptrace 往返会让 node 启动慢到分钟级，绝不拦。 */
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_openat2, 2, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_mkdirat, 2, 0),
+        /* 只拦 openat2（降级+/tmp 翻译）：Android 应用域的 zygote seccomp
+         * 过滤器与我们的多层 filter 取最严动作，mkdirat/statx 等老号会
+         * 被压成 ERRNO/KILL 导致 SIGSYS；这些号的 /tmp 重写改由 glibc 兼容
+         * 层的版本化符号拦截（动态层，不受 seccomp 多层语义影响）完成。
+         * openat2 是新号，zygote 对其默认放行，ret_trace 可正常接管。 */
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_openat2, 1, 0),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRACE | (SECCOMP_RET_DATA & (unsigned int) __NR_openat2)),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRACE | (SECCOMP_RET_DATA & (unsigned int) __NR_mkdirat)),
     };
     struct sock_fprog prog = {
         .len = (unsigned short) (sizeof(code) / sizeof(code[0])),
@@ -348,6 +349,14 @@ static struct {
     int active;
 } injects[INJECT_MAX];
 
+/* 该 tid 是否有活跃注入（两段单步中）。 */
+static int inject_pending(pid_t tid) {
+    for (int i = 0; i < INJECT_MAX; i++) {
+        if (injects[i].active && injects[i].tid == tid) return 1;
+    }
+    return 0;
+}
+
 static void inject_register(pid_t tid, unsigned long long resume_pc,
                              unsigned long long orig_lr,
                              unsigned long long orig_x0, unsigned long long gadget) {
@@ -391,6 +400,12 @@ static int inject_advance(pid_t tid, int *action) {
     return 0;
 }
 
+static char g_guest_tmp[2048];
+static size_t g_guest_tmp_len;
+static int peek_path(pid_t tid, unsigned long long addr, char *out, size_t cap);
+static int poke_bytes(pid_t tid, unsigned long long addr,
+                      const char *data, size_t length);
+
 static int rewrite_openat2(pid_t tid, struct regs_arm64 *regs,
                            unsigned long long *orig_lr, unsigned long long *orig_x0_out,
                            unsigned long long *gadget_out) {
@@ -413,6 +428,24 @@ static int rewrite_openat2(pid_t tid, struct regs_arm64 *regs,
     regs->regs[8] = __NR_openat;
     regs->regs[2] = (unsigned long long) flags;
     regs->regs[3] = (unsigned long long) mode;
+    /* 降级后的 openat 用旧路径会在宿主车道 ENOENT（/tmp 不存在）；pathname
+     * 以 /tmp 开头时同步翻译到 scratch（openat2 的 pathname 在 x1）。 */
+    if (g_guest_tmp_len != 0) {
+        char path[1024];
+        int length = peek_path(tid, regs->regs[1], path, sizeof(path));
+        if (length >= 4 && path[1] == 't' && path[2] == 'm' && path[3] == 'p' &&
+            (path[4] == 0 || path[4] == '/')) {
+            char mapped[3072];
+            int written = snprintf(mapped, sizeof(mapped), "%s%s",
+                                   g_guest_tmp, path + 4);
+            if (written > 0 && (size_t) written < sizeof(mapped)) {
+                unsigned long long scratch = (regs->sp - 8192) & ~7ULL;
+                if (poke_bytes(tid, scratch, mapped, (size_t) written + 1) == 0) {
+                    regs->regs[1] = scratch;
+                }
+            }
+        }
+    }
     regs->regs[30] = regs->pc; /* seccomp stop 时 pc 已是 svc+4（返回点）。 */
     regs->pc = gadget;
     return set_regs(tid, regs);
@@ -425,8 +458,6 @@ static int rewrite_openat2(pid_t tid, struct regs_arm64 *regs,
  * 内核先完成缓存的旧调用（对 /tmp 通常 ENOENT，无副作用），再执行注入的
  * 新调用，其返回值即最终结果。新路径写入 tracee 栈下方的 scratch 区。
  */
-static char g_guest_tmp[2048];
-static size_t g_guest_tmp_len;
 static int g_debug;
 
 static int peek_path(pid_t tid, unsigned long long addr, char *out, size_t cap) {
@@ -509,7 +540,35 @@ static int rewrite_tmp_path_syscall(pid_t tid, struct regs_arm64 *regs,
 #define TRACEE_OPT (PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | \
                     PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXEC | \
                     PTRACE_O_TRACESECCOMP | PTRACE_O_TRACEEXIT | \
-                    PTRACE_O_EXITKILL)
+                    PTRACE_O_TRACESYSGOOD | PTRACE_O_EXITKILL)
+
+/* PTRACE_SYSCALL 模式下 per-tid 的入口/出口停交替状态。 */
+struct entry_state {
+    pid_t tid;
+    int in_syscall;
+    long last_nr;
+    long ring[6];
+    int ring_pos;
+};
+#define ENTRY_STATE_MAX 512
+static struct entry_state g_entry_states[ENTRY_STATE_MAX];
+
+static struct entry_state *entry_state_find(pid_t tid) {
+    for (int i = 0; i < ENTRY_STATE_MAX; i++) {
+        if (g_entry_states[i].tid == tid) return &g_entry_states[i];
+        if (g_entry_states[i].tid == 0) {
+            g_entry_states[i].tid = tid;
+            g_entry_states[i].in_syscall = 0;
+            g_entry_states[i].last_nr = -1;
+            for (int k = 0; k < 6; k++) g_entry_states[i].ring[k] = -1;
+            g_entry_states[i].ring_pos = 0;
+            return &g_entry_states[i];
+        }
+    }
+    return NULL;
+}
+
+static void install_sigsys_diag(void);
 
 static int run_traced(char *exec_path, char **exec_argv) {
     char lib_path[3800];
@@ -545,10 +604,12 @@ static int run_traced(char *exec_path, char **exec_argv) {
     tlog("[ktrace] r_debug_off=%llx gadget=%llx (%s)\n",
          g_r_debug_off, g_gadget_off, lib_path);
 
+    int diag_prefilter = getenv("KITE_SYSCALL_TRACER_DIAG_ALL") != NULL;
     pid_t child = fork();
     if (child < 0) { perror("fork"); return 125; }
     if (child == 0) {
-        if (install_openat2_trace_filter() != 0) {
+        install_sigsys_diag();
+        if (!diag_prefilter && install_openat2_trace_filter() != 0) {
             perror("KITE_GLIBC_HOST_TRACE_SECCOMP");
             _exit(127);
         }
@@ -571,7 +632,9 @@ static int run_traced(char *exec_path, char **exec_argv) {
         struct regs_arm64 r0;
         if (get_regs(child, &r0) == 0) exec_cache(child, r0.sp);
     }
-    ptrace(PTRACE_CONT, child, 0, 0);
+    int diagnose_all = getenv("KITE_SYSCALL_TRACER_DIAG_ALL") != NULL;
+    if (diagnose_all) trace_debug = 1;
+    ptrace(diagnose_all ? PTRACE_SYSCALL : PTRACE_CONT, child, 0, 0);
 
     int exit_code = 0;
     int alive = 1;
@@ -582,6 +645,21 @@ static int run_traced(char *exec_path, char **exec_argv) {
             break;
         }
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
+            struct entry_state *kes = entry_state_find(tid);
+            if (WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV) {
+                struct regs_arm64 rd;
+                if (get_regs(tid, &rd) == 0) {
+                    tlog("[ktrace] segv tid=%d pc=%llx lr=%llx sp=%llx x0=%llx x1=%llx\n",
+                         tid, rd.pc, rd.regs[30], rd.sp, rd.regs[0], rd.regs[1]);
+                }
+            }
+            tlog("[ktrace] tid=%d %s code=%d nr=%ld ring=%ld,%ld,%ld,%ld,%ld,%ld\n", tid,
+                 WIFEXITED(status) ? "exit" : "killed",
+                 WIFEXITED(status) ? WEXITSTATUS(status) : WTERMSIG(status),
+                 kes != NULL ? kes->last_nr : -2,
+                 kes != NULL ? kes->ring[0] : -2, kes != NULL ? kes->ring[1] : -2,
+                 kes != NULL ? kes->ring[2] : -2, kes != NULL ? kes->ring[3] : -2,
+                 kes != NULL ? kes->ring[4] : -2, kes != NULL ? kes->ring[5] : -2);
             if (tid == child) {
                 alive = 0;
                 exit_code = WIFEXITED(status) ? WEXITSTATUS(status)
@@ -592,13 +670,118 @@ static int run_traced(char *exec_path, char **exec_argv) {
         if (!WIFSTOPPED(status)) continue;
         unsigned event = (unsigned) status >> 16;
         int sig = WSTOPSIG(status);
+        if (diagnose_all && event != 0 && sig == SIGTRAP) {
+            tlog("[ktrace] event-stop tid=%d event=%u\n", tid, event);
+        }
+        if (diagnose_all && sig == (SIGTRAP | 0x80)) {
+            /* PTRACE_SYSCALL 停。Android 应用域的 zygote seccomp 过滤器对
+             * 白名单外系统调用直接 KILL(SIGSYS)，且多层 filter 取最严动作，
+             * 我们的 SECCOMP_RET_TRACE 无法生效；而 ptrace 的 syscall 入口
+             * 停发生在 seccomp 评估之前，是应用域内唯一可靠的内核前拦截点。
+             * 入口停时检查 x8：openat2 现场降级为 openat（参数搬移+/tmp 路径
+             * 翻译，与 seccomp 模式同一套 rewrite_openat2），其余号零成本放行
+             * （PTRACE_PEEKUSER 只读一个字，开销 ~几十微秒/停）。 */
+            /* arm64 无 PEEKUSER 寄存器语义，读 x8 必须 GETREGSET。入口/
+             * 出口停用 per-tid 交替跟踪；attach/clone 首停（SIGSTOP/event）
+             * 已在对应分支把 in_syscall 重置为 0，首个 syscall 停即入口。 */
+            struct entry_state *es = entry_state_find(tid);
+            int is_entry = 0;
+            if (es != NULL) is_entry = !es->in_syscall, es->in_syscall = !es->in_syscall;
+            long peek = -1;
+            if (is_entry) {
+                struct regs_arm64 rd;
+                if (get_regs(tid, &rd) == 0) {
+                    peek = (long) rd.regs[8];
+                    int rewrite_kind = 0; /* 0=无 1=openat2 降级 2=无害替换 */
+                    int o2_disabled = getenv("KITE_SYSCALL_TRACER_NO_O2") != NULL;
+                    /* 保险丝：真入口停的 pc 必指向 svc #0 指令。交替状态可能
+                     * 被信号/event 打断错位（出口停被当入口），此时 x8 是残
+                     * 留值、pc 不在 svc 上，改写会造成执行流错位崩溃。 */
+                    int pc_is_svc = 0;
+                    {
+                        errno = 0;
+                        long long ins = ptrace(PTRACE_PEEKDATA, tid,
+                                               (void *) (uintptr_t) rd.pc, 0);
+                        if (errno == 0 && (ins & 0xFFFFFFFFLL) == 0xD4000001LL)
+                            pc_is_svc = 1;
+                        else if (peek == 437 || peek == 278 || peek == 99 || peek == 293)
+                            tlog("[ktrace] skip-bogus-entry tid=%d nr=%ld pc=%llx\n",
+                                 tid, peek, rd.pc);
+                    }
+                    if (!pc_is_svc) peek = -100; /* 屏蔽危险号改写判定 */
+                    if (peek == (long) __NR_openat2 && !o2_disabled) {
+                        unsigned long long orig_lr = 0, orig_x0 = 0, gadget = 0;
+                        int rw = rewrite_openat2(tid, &rd, &orig_lr, &orig_x0, &gadget);
+                        if (rw == 0) rewrite_kind = 1;
+                    } else if (peek == 278 /* getrandom */) {
+                        /* App 域 seccomp 对 getrandom 直接 KILL；root 对照证
+                         * 实「SINGLESTEP 跳过」路径会留下隐性状态错乱（后续
+                         * clock 调用链拿垃圾参数崩）。改走 gadget 注入（与
+                         * openat2 同一状态机）：x8=sched_yield(124，白名单,
+                         * 返回 0)。V8/glibc 看到 0 字节写入，自行走重试或
+                         * fallback，不产生「假满」的垃圾缓冲。 */
+                        unsigned long long libc_base = find_libc_base(tid);
+                        if (libc_base != 0 && g_gadget_off != 0) {
+                            unsigned long long gadget = libc_base + g_gadget_off;
+                            unsigned long long orig_lr = rd.regs[30];
+                            rd.regs[8] = 124; /* sched_yield -> 0 */
+                            rd.regs[30] = rd.pc + 4;
+                            rd.pc = gadget;
+                            if (set_regs(tid, &rd) == 0) {
+                                /* 登记注入状态机：stage1 恢复 x0=0（返回值），
+                                 * stage2 恢复 pc/lr，避免单步停后裸跑 gadget
+                                 * 所在 wrapper 的尾部（ldp 弹栈垃圾）。 */
+                                inject_register(tid, rd.regs[30], orig_lr, 0, gadget);
+                                rewrite_kind = 2;
+                            }
+                        }
+                    }
+                    if (rewrite_kind != 0) {
+                        /* 4.19 内核在 syscall-entry 停恢复时执行缓存的
+                         * 原调用（pc/x8 改动不取消）；必须单步注入 gadget
+                         * 跳出本次停顿，与 seccomp 模式同一状态机。
+                         * 单步链（stage1/stage2）不产生 syscall 出口停，
+                         * 把交替状态重置回 0，保证下一个 syscall 停仍被
+                         * 判定为入口。 */
+                        if (es != NULL) es->in_syscall = 0;
+                        if (rewrite_kind == 3) {
+                            /* SINGLESTEP 只为丢弃缓存的 syscall：执行 pc 处
+                             * （原 svc+4）一条指令后停（裸 TRAP），主循环吞掉
+                             * 后继续。 */
+                        }
+                        ptrace(PTRACE_SINGLESTEP, tid, 0, 0);
+                        continue;
+                    }
+                }
+            }
+            if (es != NULL) {
+                es->last_nr = peek;
+                es->ring[es->ring_pos % 6] = peek;
+                es->ring_pos++;
+                if (peek != -1) tlog("[ktrace] sys tid=%d nr=%ld\n", tid, peek);
+            }
+            ptrace(PTRACE_SYSCALL, tid, 0, 0);
+            continue;
+        }
         if (sig == SIGTRAP && event == 0) {
             /* 兜底：裸 TRAP（含 TRACEME exec 停）到达时确保 options 在位。 */
             ptrace(PTRACE_SETOPTIONS, tid, 0, TRACEE_OPT);
         }
-        if (sig == SIGTRAP && event == PTRACE_EVENT_SECCOMP) {
+        if (sig == SIGTRAP && event == PTRACE_EVENT_SECCOMP && inject_pending(tid)) {
+            /* 注入的 gadget 调用撞到了自家 filter（如 mkdirat→mkdirat 同号）：
+             * 这个 stop 属于进行中的注入状态机，绝不能当新事件重写——按原
+             * 状态机推进（stage1 恢复参数并放行缓存调用，stage2 恢复现场）。 */
+            int action = -1;
+            if (inject_advance(tid, &action)) {
+                if (action == 1) ptrace(PTRACE_SINGLESTEP, tid, 0, 0);
+                else ptrace(diagnose_all ? PTRACE_SYSCALL : PTRACE_CONT, tid, 0, 0);
+            } else {
+                ptrace(diagnose_all ? PTRACE_SYSCALL : PTRACE_CONT, tid, 0, 0);
+            }
+        } else if (sig == SIGTRAP && event == PTRACE_EVENT_SECCOMP) {
             unsigned long long nr = 0;
             ptrace(PTRACE_GETEVENTMSG, tid, 0, &nr);
+            tlog("[ktrace] seccomp stop tid=%d nr=%llu\n", tid, nr);
             struct regs_arm64 regs;
             unsigned long long orig_lr = 0, orig_x0 = 0, gadget_addr = 0;
             if (get_regs(tid, &regs) == 0 &&
@@ -608,13 +791,19 @@ static int run_traced(char *exec_path, char **exec_argv) {
                 inject_register(tid, regs.regs[30], orig_lr, orig_x0, gadget_addr);
                 ptrace(PTRACE_SINGLESTEP, tid, 0, 0);
             } else {
-                ptrace(PTRACE_CONT, tid, 0, 0);
+                ptrace(diagnose_all ? PTRACE_SYSCALL : PTRACE_CONT, tid, 0, 0);
             }
         } else if (sig == SIGTRAP && event == PTRACE_EVENT_EXEC) {
             ptrace(PTRACE_SETOPTIONS, tid, 0, TRACEE_OPT);
             struct regs_arm64 r0;
             if (get_regs(tid, &r0) == 0) exec_cache(tid, r0.sp);
-            ptrace(PTRACE_CONT, tid, 0, 0);
+            if (diagnose_all) {
+                char ep[64], buf[4096];
+                snprintf(ep, sizeof(ep), "/proc/%d/exe", tid);
+                ssize_t n = readlink(ep, buf, sizeof(buf) - 1);
+                if (n > 0) { buf[n] = 0; tlog("[ktrace] exec tid=%d exe=%s\n", tid, buf); }
+            }
+            ptrace(diagnose_all ? PTRACE_SYSCALL : PTRACE_CONT, tid, 0, 0);
         } else if (sig == SIGTRAP && (event == PTRACE_EVENT_FORK ||
                                       event == PTRACE_EVENT_VFORK ||
                                       event == PTRACE_EVENT_CLONE)) {
@@ -640,20 +829,136 @@ static int run_traced(char *exec_path, char **exec_argv) {
                     }
                 }
             }
-            ptrace(PTRACE_CONT, tid, 0, 0);
+            ptrace(diagnose_all ? PTRACE_SYSCALL : PTRACE_CONT, tid, 0, 0);
         } else if (sig == SIGTRAP && event == 0) {
             int action = -1;
             if (inject_advance(tid, &action)) {
                 if (action == 1) ptrace(PTRACE_SINGLESTEP, tid, 0, 0);
-                else ptrace(PTRACE_CONT, tid, 0, 0);
+                else ptrace(diagnose_all ? PTRACE_SYSCALL : PTRACE_CONT, tid, 0, 0);
             } else {
-                ptrace(PTRACE_CONT, tid, 0, 0);
+                ptrace(diagnose_all ? PTRACE_SYSCALL : PTRACE_CONT, tid, 0, 0);
             }
         } else if (sig == SIGTRAP || sig == SIGSTOP || sig == SIGTSTP ||
                    sig == SIGTTIN || sig == SIGTTOU) {
-            ptrace(PTRACE_CONT, tid, 0, 0);
+            if (diagnose_all && sig == SIGSTOP) {
+                struct entry_state *rs = entry_state_find(tid);
+                if (rs != NULL) rs->in_syscall = 0;
+            }
+            ptrace(diagnose_all ? PTRACE_SYSCALL : PTRACE_CONT, tid, 0, 0);
         } else {
-            ptrace(PTRACE_CONT, tid, 0, (void *) (intptr_t) sig);
+            /* 信号投递停可能打断 syscall-entry 停（kernel 先报信号，恢复
+             * 后 ERESTARTSYS 回到 svc 重试，产生第二次入口停）；交替状态
+             * 必须重置，否则后续入/出判定永久反转，漏拦危险号。 */
+            struct entry_state *ss = entry_state_find(tid);
+            if (ss != NULL) ss->in_syscall = 0;
+            if (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL || sig == SIGSYS) {
+                struct regs_arm64 rd;
+                if (get_regs(tid, &rd) == 0) {
+                    unsigned long long lb = find_libc_base(tid);
+                    /* glibc __clock_gettime 帧结构：stp x29,x30,[sp,#-16]!
+                     * → [sp]=saved x29, [sp+8]=caller 返回地址。 */
+                    errno = 0;
+                    long long cret = ptrace(PTRACE_PEEKDATA, tid,
+                                            (void *) (uintptr_t) (rd.sp + 8), 0);
+                    /* 垃圾参数的来源页：打 x1 与 x21 的 maps 归属。 */
+                    if (rd.regs[1] > 0x1000) {
+                        char lc[600];
+                        snprintf(lc, sizeof(lc), "/proc/%d/maps", tid);
+                        FILE *lf = fopen(lc, "r");
+                        if (lf != NULL) {
+                            char ln[512];
+                            while (fgets(ln, sizeof(ln), lf) != NULL) {
+                                unsigned long long ls, le;
+                                if (sscanf(ln, "%llx-%llx", &ls, &le) == 2 &&
+                                    rd.regs[1] >= ls && rd.regs[1] < le) {
+                                    tlog("[ktrace] x1-map %llx %s", rd.regs[1], ln);
+                                    break;
+                                }
+                            }
+                            fclose(lf);
+                        }
+                    }
+                    if (lb != 0) {
+                        /* glibc __clock_gettime 的 vDSO 指针链：
+                         * [libc+1af000+3728] -> A; [A+528] -> vDSO fn。 */
+                        errno = 0;
+                        long long a = ptrace(PTRACE_PEEKDATA, tid,
+                                             (void *) (uintptr_t) (lb + 0x1af000ULL + 3728ULL), 0);
+                        if (errno == 0 && a > 0x1000) {
+                            errno = 0;
+                            long long fn = ptrace(PTRACE_PEEKDATA, tid,
+                                                  (void *) (uintptr_t) ((unsigned long long) a + 528ULL), 0);
+                            tlog("[ktrace] vdsochain A=%llx fn=%llx\n", a, errno == 0 ? fn : -1LL);
+                        }
+                    }
+                    tlog("[ktrace] fault-sig tid=%d sig=%d pc=%llx lr-off=%llx caller=%llx x0=%llx x1=%llx x2=%llx x19=%llx x20=%llx x21=%llx x28=%llx libc=%llx\n",
+                         tid, sig, rd.pc,
+                         lb != 0 ? rd.regs[30] - lb : 0,
+                         (errno == 0 && cret > 0) ? (unsigned long long) cret : 0,
+                         tid, sig, rd.pc,
+                         lb != 0 ? rd.regs[30] - lb : 0, rd.regs[0], rd.regs[1], rd.regs[2],
+                         rd.regs[19], rd.regs[20], rd.regs[21], rd.regs[28], lb);
+                    char mp[64];
+                    snprintf(mp, sizeof(mp), "/proc/%d/maps", tid);
+                    FILE *mf = fopen(mp, "r");
+                    if (mf != NULL) {
+                        char line[512];
+                        while (fgets(line, sizeof(line), mf) != NULL) {
+                            unsigned long long s, e;
+                            if (sscanf(line, "%llx-%llx", &s, &e) == 2 &&
+                                ((rd.pc >= s && rd.pc < e) ||
+                                 (rd.regs[30] >= s && rd.regs[30] < e))) {
+                                tlog("[ktrace] fault-map %s", line);
+                            }
+                            if (strstr(line, "[vdso]") != NULL) {
+                                /* dump 整个 vDSO 供本地反汇编定位崩点指令 */
+                                unsigned long long vs = s;
+                                FILE *vf = fopen("/data/user/0/com.kite.app/files/runtime/logs/vdso-dump.bin", "wb");
+                                if (vf != NULL) {
+                                    for (unsigned long long a = 0; a + 8 <= e - s; a += 8) {
+                                        errno = 0;
+                                        long long w = ptrace(PTRACE_PEEKDATA, tid,
+                                                             (void *) (uintptr_t) (vs + a), 0);
+                                        if (errno != 0) break;
+                                        unsigned long long v = (unsigned long long) w;
+                                        fwrite(&v, 8, 1, vf);
+                                    }
+                                    fclose(vf);
+                                }
+                                tlog("[ktrace] vdso %llx-%llx pc-off=%llx\n", s, e, rd.pc - s);
+                                /* 回溯：读栈顶 24 个字，非零且像代码地址的行打 maps 归属 */
+                                for (int qi = 0; qi < 24; qi++) {
+                                    unsigned long long sv;
+                                    errno = 0;
+                                    long long wv = ptrace(PTRACE_PEEKDATA, tid,
+                                                          (void *) (uintptr_t) (rd.sp + 8ULL * qi), 0);
+                                    if (errno != 0) break;
+                                    sv = (unsigned long long) wv;
+                                    if (sv > 0x1000 && (sv >> 40) != 0) {
+                                        char lc[600];
+                                        snprintf(lc, sizeof(lc), "/proc/%d/maps", tid);
+                                        FILE *lf = fopen(lc, "r");
+                                        if (lf != NULL) {
+                                            char ln[512];
+                                            while (fgets(ln, sizeof(ln), lf) != NULL) {
+                                                unsigned long long ls, le;
+                                                if (sscanf(ln, "%llx-%llx", &ls, &le) == 2 &&
+                                                    sv >= ls && sv < le) {
+                                                    tlog("[ktrace] bt sp+%d=%llx %s", qi * 8, sv, ln);
+                                                    break;
+                                                }
+                                            }
+                                            fclose(lf);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        fclose(mf);
+                    }
+                }
+            }
+            ptrace(diagnose_all ? PTRACE_SYSCALL : PTRACE_CONT, tid, 0, (void *) (intptr_t) sig);
         }
     }
     return exit_code;
@@ -662,6 +967,30 @@ static int run_traced(char *exec_path, char **exec_argv) {
 
 /* ============================= 主流程 ============================= */
 
+/* SIGSYS 诊断：seccomp 黑名单击杀时打印被拦的 syscall 号，
+ * 便于区分 App 域继承的 zygote 过滤器与我们自己的过滤器。 */
+static void kite_sigsys_handler(int sig, siginfo_t *info, void *ctx) {
+    (void) sig; (void) ctx;
+    char buf[96];
+    int n = snprintf(buf, sizeof(buf),
+                     "[ktrace] SIGSYS nr=%d code=%d errno=%d\n",
+                     info->si_syscall, info->si_code,
+                     info->si_errno);
+    if (n > 0) {
+        ssize_t w = write(2, buf, (size_t) n);
+        (void) w;
+    }
+    _exit(231);
+}
+
+static void install_sigsys_diag(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = kite_sigsys_handler;
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+    sigaction(SIGSYS, &sa, NULL);
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "usage: %s <exec-path> [args...]\n", argv[0]);
@@ -669,6 +998,7 @@ int main(int argc, char **argv) {
     }
     required_env("KITE_GLIBC_HOST_LOADER");
     required_env("KITE_GLIBC_HOST_LIBRARY_PATH");
+    install_sigsys_diag();
     trace_debug = getenv("KITE_SYSCALL_TRACER_DEBUG") != NULL;
 
     char **child_argv = calloc((size_t) argc, sizeof(char *));

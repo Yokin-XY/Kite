@@ -21,6 +21,7 @@ apt-get update -qq >/dev/null 2>&1
 apt-get install -y -qq gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu >/dev/null 2>&1
 aarch64-linux-gnu-gcc -O2 -fPIC -shared -Wall -Wextra -Werror ``
   -Wl,-z,relro,-z,now,-z,noexecstack ``
+  -Wl,--version-script=native/kite-glibc-host/kite-glibc-compat.map ``
   -o /tmp/libkite-glibc-compat.so native/kite-glibc-host/kite-glibc-compat.c native/kite-glibc-host/kite-glibc-syscall-arm64.S -ldl
 aarch64-linux-gnu-strip /tmp/libkite-glibc-compat.so
 cp /tmp/libkite-glibc-compat.so assets/glibc-runtime/libkite-glibc-compat.so

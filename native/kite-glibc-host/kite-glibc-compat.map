@@ -1,0 +1,40 @@
+/*
+ * libkite-node-glibc-compat.so 符号版本脚本。
+ *
+ * 背景：node 二进制对 glibc 的路径型文件符号（open/openat/mkdir 等）使用
+ * 版本符号引用（openat@GLIBC_2.17），动态链接器按版本精确匹配后直接绑定
+ * libc.so.6，绕过本兼容层的无版本同名符号（LD_DEBUG=bindings 实证 mkdir
+ * 直绑 libc）。把拦截符号同样标记 GLIBC_2.17 版本后，preload 顺序使本库
+ * 优先命中，路径重写（KITE_GLIBC_HOST_GUEST_TMP）对 node 内置 sqlite、
+ * ESM 绕过层等所有调用方生效，无需 ptrace 参与。
+ *
+ * 未列出的符号全部本地化（local: *），保持导出面最小。
+ */
+GLIBC_2.17 {
+  global:
+    open;
+    open64;
+    openat;
+    openat64;
+    openat2;
+    creat;
+    mkdir;
+    mkdirat;
+    unlink;
+    unlinkat;
+    rmdir;
+    rename;
+    renameat;
+    renameat2;
+    stat;
+    lstat;
+    fstatat;
+    access;
+    faccessat;
+    truncate;
+    syscall;
+    pthread_mutexattr_setrobust;
+
+  local:
+    *;
+};
