@@ -44,3 +44,9 @@ tail -f /data/local/tmp/kite-unfreeze.log  # 观察（root）
 ColorOS 的"安全护航"会拦 `adb install`：弹系统确认框（显示包名/版本/大小/敏感权限），
 需点"继续安装"。root 不会绕过（系统 UI 层行为）。自动化装机流程里 install 后
 要检查弹窗并代点"继续安装"（uiautomator 定位"继续安装"按钮）。
+
+## 附带结论：rootfs symlink 权限污染
+
+root 进程创建/触碰过的 symlink 对 App uid 不可读（fscrypt 黑盒行为），
+污染后 proot 车道 execve 全灭（宿主车道不受影响）。判定与镜像恢复配方见
+[rootfs-symlink-recovery.md](rootfs-symlink-recovery.md)。
