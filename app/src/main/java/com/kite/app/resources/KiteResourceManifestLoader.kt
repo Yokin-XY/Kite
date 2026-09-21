@@ -115,6 +115,17 @@ data class KiteResourceAgentAccountCommand(
  * 资源只声明结构化命令、私有环境文件和轻量就绪探测；进程、健康和恢复事实仍统一归
  * BackgroundRuntimeRegistry / BackgroundRuntimeHost 所有。
  */
+data class KiteResourceBinaryPatchSpec(
+    /** 容器路径（如 /workspace/.kf/software/...）；由调用方映射到宿主路径。 */
+    val path: String,
+    /** 十六进制字节模式，?? 为单字节通配。 */
+    val pattern: String,
+    /** 与 pattern 等长的替换字节；?? 位保持原字节。 */
+    val replacement: String,
+    /** 期望命中次数；0 表示仅校验幂等形态。 */
+    val expectedCount: Int,
+)
+
 data class KiteResourceAgentRuntimeDependency(
     val id: String,
     val title: String,
@@ -133,6 +144,8 @@ data class KiteResourceAgentRuntimeDependency(
     val healthCheckStartupDelayMs: Long = 0L,
     val restartPolicy: String = "on_failure",
     val retentionClass: String = "resident",
+    /** 依赖启动前应用的声明式二进制补丁（App 域雷改造，幂等）。 */
+    val binaryPatches: List<KiteResourceBinaryPatchSpec> = emptyList(),
 )
 
 data class KiteResourceShellAction(
@@ -925,6 +938,8 @@ class KiteResourceManifestLoader private constructor(
                 (!activationFile.startsWith('/') || activationFile.any(Char::isISOControl))
             ) return null
             val port = dependency.optInt("bindPort", 0).takeIf { it in 1..65_535 }
+            val binaryPatches = parseBinaryPatches(dependency.optJSONArray("binaryPatches"))
+                ?: return null
             parsed +=
                 KiteResourceAgentRuntimeDependency(
                     id = id,
@@ -948,7 +963,35 @@ class KiteResourceManifestLoader private constructor(
                         .ifBlank { "on_failure" },
                     retentionClass = dependency.optString("retentionClass").trim()
                         .ifBlank { "resident" },
+                    binaryPatches = binaryPatches,
                 )
+        }
+        return parsed
+    }
+
+    /** 补丁声明校验：绝对路径、hex 等长、计数非负；任一非法判整卡不可用。 */
+    private fun parseBinaryPatches(patches: JSONArray?): List<KiteResourceBinaryPatchSpec>? {
+        if (patches == null) return emptyList()
+        val parsed = mutableListOf<KiteResourceBinaryPatchSpec>()
+        for (index in 0 until patches.length()) {
+            val patch = patches.optJSONObject(index) ?: continue
+            val path = patch.optString("path").trim()
+            val pattern = patch.optString("pattern").trim().replace(" ", "")
+            val replacement = patch.optString("replacement").trim().replace(" ", "")
+            val expectedCount = patch.optInt("expectedCount", -1)
+            val hexShape = Regex("[0-9a-fA-F?]+")
+            if (
+                !path.startsWith("/") || path.any(Char::isISOControl) ||
+                pattern.length % 4 != 0 || replacement.length != pattern.length ||
+                !hexShape.matches(pattern) || !hexShape.matches(replacement) ||
+                expectedCount < 0
+            ) return null
+            parsed += KiteResourceBinaryPatchSpec(
+                path = path,
+                pattern = pattern,
+                replacement = replacement,
+                expectedCount = expectedCount,
+            )
         }
         return parsed
     }

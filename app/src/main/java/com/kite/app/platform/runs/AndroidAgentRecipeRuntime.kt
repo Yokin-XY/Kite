@@ -195,6 +195,20 @@ internal class AndroidManagedAgentRuntimeDependencyPreparer(context: Context) :
         }
     }
 
+    /** 依赖启动前应用声明式二进制补丁（App 域雷改造，幂等；缺失文件跳过，计数不符失败）。 */
+    private fun applyBinaryPatches(specs: List<com.kite.app.resources.KiteResourceBinaryPatchSpec>) {
+        if (specs.isEmpty()) return
+        for (spec in specs) {
+            val hostFile = ContainerVisibleFileResolver.resolve(appContext, spec.path) ?: continue
+            when (val result = com.kite.app.resources.KiteBinaryPatchApplier.apply(hostFile, spec)) {
+                is com.kite.app.resources.KiteBinaryPatchApplier.Result.Applied -> Unit
+                is com.kite.app.resources.KiteBinaryPatchApplier.Result.Missing -> Unit
+                is com.kite.app.resources.KiteBinaryPatchApplier.Result.Mismatch ->
+                    error("binary_patch_${result.reason}")
+            }
+        }
+    }
+
     override suspend fun prepare(dependencies: List<KiteResourceAgentRuntimeDependency>) {
         if (dependencies.isEmpty()) return
         val space = KFWorkspaceManager.getCurrentSpace(appContext)
@@ -206,6 +220,7 @@ internal class AndroidManagedAgentRuntimeDependencyPreparer(context: Context) :
                 return@forEach
             }
             ensureEnvironmentFilesPresent(dependency.environmentFiles)
+            applyBinaryPatches(dependency.binaryPatches)
             val definition = BackgroundRuntimeRecord(
                 id = runtimeId,
                 spaceId = space.id,

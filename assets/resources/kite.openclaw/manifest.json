@@ -138,6 +138,20 @@
             "retentionClass": "resident",
             "runtimeGuarantees": [
               "openat2_degrade"
+            ],
+            "binaryPatches": [
+              {
+                "path": "/workspace/.kf/software/kite.openclaw/npm-global/lib/node_modules/openclaw/node_modules/@openclaw/fs-safe-linux-arm64-gnu/fs-safe-native.node",
+                "pattern": "03038052????????????????e80300f9a8368052010000d4",
+                "replacement": "83348052????????????????e20308aa080780d2010000d4",
+                "expectedCount": 1
+              },
+              {
+                "path": "/workspace/.kf/software/kite.openclaw/npm-global/lib/node_modules/openclaw/node_modules/@openclaw/fs-safe-linux-arm64-gnu/fs-safe-native.node",
+                "pattern": "03038052????????a8831ef8a8368052010000d4",
+                "replacement": "83348052????????e20308aa080780d2010000d4",
+                "expectedCount": 1
+              }
             ]
           }
         ],
