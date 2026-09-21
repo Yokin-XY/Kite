@@ -119,7 +119,16 @@
             "loggedOutPatterns": [
               "\"loggedIn\":false"
             ],
-            "timeoutMs": 15000
+            "timeoutMs": 15000,
+            "credentialEnvDenylist": [
+              "ANTHROPIC_AUTH_TOKEN",
+              "ANTHROPIC_API_KEY",
+              "ANTHROPIC_BASE_URL",
+              "ANTHROPIC_CUSTOM_HEADERS",
+              "ANTHROPIC_MODEL",
+              "ANTHROPIC_DEFAULT_*_MODEL"
+            ],
+            "cleanHome": true
           },
           "login": {
             "argv": [
@@ -127,7 +136,16 @@
               "auth",
               "login"
             ],
-            "timeoutMs": 300000
+            "timeoutMs": 300000,
+            "credentialEnvDenylist": [
+              "ANTHROPIC_AUTH_TOKEN",
+              "ANTHROPIC_API_KEY",
+              "ANTHROPIC_BASE_URL",
+              "ANTHROPIC_CUSTOM_HEADERS",
+              "ANTHROPIC_MODEL",
+              "ANTHROPIC_DEFAULT_*_MODEL"
+            ],
+            "cleanHome": true
           },
           "logout": {
             "argv": [
@@ -135,7 +153,16 @@
               "auth",
               "logout"
             ],
-            "timeoutMs": 30000
+            "timeoutMs": 30000,
+            "credentialEnvDenylist": [
+              "ANTHROPIC_AUTH_TOKEN",
+              "ANTHROPIC_API_KEY",
+              "ANTHROPIC_BASE_URL",
+              "ANTHROPIC_CUSTOM_HEADERS",
+              "ANTHROPIC_MODEL",
+              "ANTHROPIC_DEFAULT_*_MODEL"
+            ],
+            "cleanHome": true
           }
         }
       ],

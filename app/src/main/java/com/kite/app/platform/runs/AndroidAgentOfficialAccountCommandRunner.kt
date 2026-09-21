@@ -18,6 +18,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /** 复用 Agent 的 Host Node / PRoot 启动规划运行官方账号动作。 */
 internal class AndroidAgentOfficialAccountCommandRunner(
@@ -27,16 +28,39 @@ internal class AndroidAgentOfficialAccountCommandRunner(
         AndroidManagedAgentProcessLaunchPlanner(context.applicationContext),
     private val openExternal: (String) -> Boolean,
 ) : AgentOfficialAccountCommandRunner {
+    private val appContext = context.applicationContext
+
     override suspend fun run(command: AgentOfficialAccountCommand): AgentOfficialAccountCommandResult {
+        // 干净 HOME：auth status 也会读 settings.json 内的第三方凭据 env 段，
+        // 换空 HOME 才能反映真实的官方登录身份（设备实验：空 HOME → loggedIn:false）。
+        val cleanHomeEnvironment = if (command.cleanHome) {
+            val home = File(appContext.cacheDir, "official-account-home")
+            home.mkdirs()
+            mapOf("HOME" to home.absolutePath)
+        } else {
+            emptyMap()
+        }
         val plannedLaunch = launchPlanner.plan(
             argv = command.argv,
             workingDirectory = DEFAULT_WORKDIR,
-            environment = emptyMap(),
+            environment = cleanHomeEnvironment,
             runtimeGuarantees = emptySet(),
             runtimeGuaranteeEvidence = emptyMap(),
             hardLinkMode = command.hardLinkMode,
             requirements = emptySet(),
-        )
+        ).let { planned ->
+            // 官方账号动作必须在无第三方凭据的环境下运行：第三方 token/base_url 会
+            // 伪装成登录态（claude 把 ANTHROPIC_AUTH_TOKEN 当作已登录官方）。
+            if (command.credentialEnvDenylist.isEmpty()) {
+                planned
+            } else {
+                planned.copy(
+                    process = planned.process.copy(
+                        environmentDenylist = command.credentialEnvDenylist.toSet(),
+                    )
+                )
+            }
+        }
         val process = processFactory.start(plannedLaunch.process)
         val output = StringBuilder()
         val outputLock = Mutex()

@@ -83,6 +83,18 @@ data class AgentOfficialAccountCommand(
     val successPatterns: List<String> = emptyList(),
     val timeoutMs: Long = 30_000L,
     val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
+    /**
+     * 官方账号动作需剔除的凭据环境变量：第三方供应商注入的 token/base_url 会
+     * 伪装成登录态（如 claude 把 ANTHROPIC_AUTH_TOKEN 当作已登录官方），
+     * 状态检查与官方登录/退出必须在无第三方凭据的环境下运行才反映真实身份。
+     */
+    val credentialEnvDenylist: List<String> = emptyList(),
+    /**
+     * 在独立的空 HOME 下运行（CLI 的 auth status 也会读取 settings.json 内的
+     * 第三方凭据 env 段；干净 HOME 确保官方身份判定不被会话配置污染）。
+     * 适合“凭据写入配置文件”的 Agent（claude/codex 等）。
+     */
+    val cleanHome: Boolean = false,
 )
 
 enum class AgentInstallationStatus {

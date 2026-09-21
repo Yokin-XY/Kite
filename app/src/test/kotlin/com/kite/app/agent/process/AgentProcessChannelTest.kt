@@ -255,3 +255,32 @@ class AgentProcessChannelTest {
         )
     }
 }
+
+    @Test
+    fun `filterDeniedEnvironment matches exact names and glob patterns`() {
+        val source = mapOf(
+            "ANTHROPIC_AUTH_TOKEN" to "sk-third-party",
+            "ANTHROPIC_API_KEY" to "key",
+            "ANTHROPIC_BASE_URL" to "https://third.party",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL" to "model-a",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL" to "model-b",
+            "ANTHROPIC_MODEL" to "keep",
+            "PATH" to "/bin",
+        )
+        val denylist = setOf(
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_DEFAULT_*_MODEL",
+        )
+        val denied = filterDeniedEnvironment(source, denylist).toSet()
+        assertTrue("ANTHROPIC_AUTH_TOKEN" in denied)
+        assertTrue("ANTHROPIC_BASE_URL" in denied)
+        assertTrue("ANTHROPIC_DEFAULT_SONNET_MODEL" in denied)
+        assertTrue("ANTHROPIC_DEFAULT_HAIKU_MODEL" in denied)
+        assertFalse("ANTHROPIC_MODEL" in denied)
+        assertFalse("PATH" in denied)
+        // 空 denylist 零行为。
+        assertTrue(filterDeniedEnvironment(source, emptySet()).isEmpty())
+    }
+

@@ -45,6 +45,8 @@ data class AgentProcessLaunch(
     val command: List<String>,
     val environment: Map<String, String> = emptyMap(),
     val workingDirectory: String? = null,
+    /** 启动前从进程环境剔除的变量名（官方账号动作防第三方凭据伪装登录态）。 */
+    val environmentDenylist: Set<String> = emptySet(),
 )
 
 fun interface AgentProcessFactory {
@@ -73,9 +75,29 @@ class JavaAgentProcessFactory : AgentProcessFactory {
                 ?.let(::File)
                 ?.also { directory -> require(directory.isDirectory) { "agent_workdir_invalid:$directory" } }
                 ?.let(::directory)
+            filterDeniedEnvironment(environment().toMap(), launch.environmentDenylist)
+                .forEach { environment().remove(it) }
             environment().putAll(launch.environment)
         }
     }
+}
+
+/** 启动前应从进程环境剔除的变量名；支持单星号前后缀 glob（ANTHROPIC_DEFAULT_*_MODEL）。 */
+internal fun filterDeniedEnvironment(
+    source: Map<String, String>,
+    denylist: Set<String>,
+): List<String> {
+    if (denylist.isEmpty()) return emptyList()
+    return source.keys.filter { name -> denylist.any { pattern -> matchesDenyPattern(name, pattern) } }
+}
+
+internal fun matchesDenyPattern(name: String, pattern: String): Boolean {
+    if (!pattern.contains('*')) return name == pattern
+    val parts = pattern.split('*')
+    val prefix = parts.first()
+    val suffix = parts.last()
+    return name.length >= prefix.length + suffix.length &&
+        name.startsWith(prefix) && name.endsWith(suffix)
 }
 
 internal class JavaAgentProcessChannel(

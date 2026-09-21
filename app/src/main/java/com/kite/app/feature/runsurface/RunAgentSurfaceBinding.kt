@@ -7201,7 +7201,15 @@ internal class RunAgentSurfaceBinding(
                         hasFreeProviders = freeProviders.isNotEmpty(),
                     ))
                     runtimeAuthentication(selected).takeIf { authentication ->
-                        authentication.methods.isNotEmpty() || authentication.logout
+                        // 运行时认证区（官方 OAuth 登录方法与退出按钮）只对官方供应商
+                        // 会话有意义：第三方/自定义供应商注入的凭据会被 CLI 误报为
+                        // 官方登录态，导致“退出当前官方账号”在第三方会话上误现。
+                        val currentProviderId = selected.registration.launch.providerId
+                        val currentProviderIsOfficial = providers.any {
+                            it.id == currentProviderId && it.source == AgentModelSource.OfficialLogin
+                        }
+                        currentProviderIsOfficial &&
+                            (authentication.methods.isNotEmpty() || authentication.logout)
                     }?.let { authentication ->
                         addView(
                             buildRuntimeAuthenticationSection(authentication.methods, authentication.logout),
@@ -7593,7 +7601,7 @@ internal class RunAgentSurfaceBinding(
                     addView(TextView(context).apply {
                         text = buildString {
                             if (projection.source == AgentModelSource.Free) append("免费 · ")
-                            if (projection.source == AgentModelSource.OfficialLogin) append("官方登录 · ")
+                            if (projection.source == AgentModelSource.OfficialLogin) append("官方账号 · ")
                             if (projection.source == AgentModelSource.UserConfigured) append("用户自定义 · ")
                             if (isDefault) append("当前默认 · ")
                             if (officialState != null) {

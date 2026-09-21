@@ -107,6 +107,8 @@ data class KiteResourceAgentAccountCommand(
     val successPatterns: List<String> = emptyList(),
     val timeoutMs: Long = 30_000L,
     val hardLinkMode: RuntimeHardLinkMode = RuntimeHardLinkMode.EMULATED,
+    val credentialEnvDenylist: List<String> = emptyList(),
+    val cleanHome: Boolean = false,
 )
 
 /**
@@ -913,6 +915,8 @@ class KiteResourceManifestLoader private constructor(
             successPatterns = command.optJSONArray("successPatterns").toStringList(),
             timeoutMs = command.optLong("timeoutMs", 30_000L).coerceIn(1_000L, 300_000L),
             hardLinkMode = hardLinkMode,
+            credentialEnvDenylist = command.optJSONArray("credentialEnvDenylist").toStringList(),
+            cleanHome = command.optBoolean("cleanHome", false),
         )
     }
 

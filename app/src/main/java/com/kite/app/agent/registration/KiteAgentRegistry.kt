@@ -82,6 +82,8 @@ internal object AgentResourceRegistrationMapper {
             successPatterns = successPatterns,
             timeoutMs = timeoutMs,
             hardLinkMode = hardLinkMode,
+            credentialEnvDenylist = credentialEnvDenylist,
+            cleanHome = cleanHome,
         )
 
     private const val MODE_MANAGED = "managed"
