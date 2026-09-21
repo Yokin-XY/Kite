@@ -303,9 +303,10 @@ function isNodeCommand(file) {
   return file === 'node';
 }
 
-// 预构建原生工具（rg/fd/jq 等）位于 control 目录下的 toolchains/native-tools/。
-// 它们是 Android 内核可直接执行的 ELF：动态链接的走修补 glibc loader 车道，
-// 静态链接的直接 exec。识别基于目录与 ELF 头，不按工具名白名单。
+// 预构建原生工具（rg/fd/jq 等）位于 control 目录下的 toolchains/native-tools/；
+// 车道通用化后判定放宽为整个 rootfs：它们同为 Android 内核可直接执行的 ELF，
+// 动态链接的走修补 glibc loader 车道，静态链接的直接 exec。识别基于目录与
+// ELF 头，不按工具名白名单（AGENTS.md 运行车道策略：禁止按程序特判）。
 function nativeToolDirectory() {
   return hostControl ? path.join(hostControl, 'toolchains', 'native-tools') : '';
 }
@@ -335,8 +336,9 @@ function elfProgramInterpreter(fd) {
 }
 
 function resolveNativeToolInvocation(file, options) {
-  const directory = nativeToolDirectory();
-  if (!directory || !loader || !libraryPath || !compatLibrary) return null;
+  // 车道通用化：rootfs 内任意 ELF 均可走兼容层车道（原来仅 native-tools 目录）。
+  // loader/libraryPath/compatLibrary 缺任一时退回 proot 兜底（routeFile 后续分支）。
+  if (!hostRootfs || !loader || !libraryPath || !compatLibrary) return null;
   let candidate = commandCandidate(file, options);
   if (!candidate) return null;
   candidate = normalizedPath(candidate);
@@ -347,18 +349,27 @@ function resolveNativeToolInvocation(file, options) {
     return null;
   }
   if (stat.isSymbolicLink()) {
+    // .kf/bin 的 symlink 场指向容器绝对路径（/workspace/...），宿主侧天然断链；
+    // 遍历逐层 readlink，容器绝对路径先映射到宿主再继续（最多 8 层防环）。
     try {
-      const resolved = normalizedPath(fs.realpathSync(candidate));
-      const resolvedStat = fs.lstatSync(resolved);
-      if (!resolvedStat.isFile()) return null;
-      candidate = resolved;
+      for (let depth = 0; depth < 8; depth += 1) {
+        let target = fs.readlinkSync(candidate);
+        if (path.isAbsolute(target)) target = mapContainerPathToHost(target);
+        candidate = normalizedPath(path.resolve(path.dirname(candidate), target));
+        const resolvedStat = fs.lstatSync(candidate);
+        if (resolvedStat.isFile()) break;
+        if (!resolvedStat.isSymbolicLink()) return null;
+      }
     } catch {
       return null;
     }
   } else if (!stat.isFile()) {
     return null;
   }
-  if (!isInside(candidate, directory)) return null;
+  // 车道通用化：车道管理的全部运行时根（rootfs + shared software + native-tools）
+  // 内的 ELF 均可走兼容层车道（原来仅 native-tools 目录）。
+  // loader/libraryPath/compatLibrary 缺任一时退回 proot 兑底（routeFile 后续分支）。
+  if (!withinRuntimeRoots(candidate)) return null;
   let fd;
   let interpreter = '';
   try {

@@ -151,15 +151,16 @@ internal object HostNodeRuntimeProvider :
         if (certificateFile.isFile) {
             environment["SSL_CERT_FILE"] = certificateFile.absolutePath
         }
+        // GUEST_TMP 是宿主车道通用能力（AGENTS.md 运行车道策略），不再是 openclaw
+        // 特权：Node fs 钩子层对一切 node 程序生效；C 兼容层三件套供动态 glibc
+        // ELF 的 loader 路由使用。双层指向同一宿主 tmp 目录，任何一层缺失都会
+        // 让硬编码 /tmp 的程序退回不存在的 /tmp 导致 ENOENT。
+        environment["KITE_GLIBC_HOST_LOADER"] = layout.loader.absolutePath
+        environment["KITE_GLIBC_HOST_LIBRARY_PATH"] = layout.libraryPath
+        environment["KITE_GLIBC_HOST_GUEST_TMP"] = tmpDirectory.absolutePath
+        environment["KITE_NODE_HOST_GUEST_TMP"] = tmpDirectory.absolutePath
         if (minefieldLane) {
-            // 兼容层定位信息：loader 用于 C 兼容层解析，library path 用于符号拦截。
-            // GUEST_TMP 激活双层 /tmp 重写：C 兼容层符号拦截（KITE_GLIBC_HOST_GUEST_TMP）
-            // 与 Node 预载钩子（KITE_NODE_HOST_GUEST_TMP），两者指向同一宿主 tmp 目录，
-            // 任何一层缺失都会让硬编码 /tmp 的程序退回不存在的 /tmp 导致 ENOENT。
-            environment["KITE_GLIBC_HOST_LOADER"] = layout.loader.absolutePath
-            environment["KITE_GLIBC_HOST_LIBRARY_PATH"] = layout.libraryPath
-            environment["KITE_GLIBC_HOST_GUEST_TMP"] = tmpDirectory.absolutePath
-            environment["KITE_NODE_HOST_GUEST_TMP"] = tmpDirectory.absolutePath
+            // 预留：雷区专用注入（当前为空；等价性测试覆盖后移除该条件）。
         }
         return ContainerLaunchConfig(
             container = container,
