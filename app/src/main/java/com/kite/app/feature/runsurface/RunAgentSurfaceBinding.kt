@@ -6304,6 +6304,7 @@ internal class RunAgentSurfaceBinding(
             status.text = result.warning ?: when (result.source) {
                 AgentProviderPresetSource.ModelsDev -> "已从 models.dev 获取最新供应商目录"
                 AgentProviderPresetSource.ModelsDevCache -> "正在使用上次成功获取的供应商目录"
+                AgentProviderPresetSource.ModelsDevBundled -> "正在使用内置快照目录（离线可用）"
                 AgentProviderPresetSource.Bundled -> "正在使用随应用供应商目录"
             }
             render(search.text?.toString().orEmpty())
@@ -6563,6 +6564,7 @@ internal class RunAgentSurfaceBinding(
     private fun providerPresetSourceLabel(source: AgentProviderPresetSource): String = when (source) {
         AgentProviderPresetSource.ModelsDev -> "models.dev 最新目录"
         AgentProviderPresetSource.ModelsDevCache -> "上次成功获取的 models.dev 目录"
+        AgentProviderPresetSource.ModelsDevBundled -> "随应用内置的 models.dev 快照"
         AgentProviderPresetSource.Bundled -> "随应用目录"
     }
 
@@ -9038,6 +9040,7 @@ internal class RunAgentSurfaceBinding(
             val sourceMessage = result.warning ?: when (result.source) {
                 AgentProviderPresetSource.ModelsDev -> "已获取最新目录"
                 AgentProviderPresetSource.ModelsDevCache -> "已读取上次成功目录"
+                AgentProviderPresetSource.ModelsDevBundled -> "已读取内置快照目录"
                 AgentProviderPresetSource.Bundled -> "已读取随应用目录"
             }
             fun applyPreset(preset: AgentProviderPreset) {

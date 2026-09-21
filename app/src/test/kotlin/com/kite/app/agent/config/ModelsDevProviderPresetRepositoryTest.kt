@@ -133,6 +133,22 @@ class ModelsDevProviderPresetRepositoryTest {
     }
 
     @Test
+    fun `offline first run falls back to bundled models dev snapshot`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.filesDir.resolve("agent-provider-catalog").deleteRecursively()
+        val repository = ModelsDevProviderPresetRepository(context) { throw IOException("offline") }
+        val result = repository.refresh("hermes")
+        // 无网且无缓存：内置快照层接管（assets 随 APK，123 家精选），不退到空目录。
+        assertEquals(AgentProviderPresetSource.ModelsDevBundled, result.source)
+        assertTrue(result.presets.isNotEmpty())
+        assertTrue(result.presets.any { it.models.isNotEmpty() })
+        // 快照里的模型带公开参数（models.dev 归一字段）。
+        val withParams = result.presets.flatMap { it.models }
+            .firstOrNull { it.contextWindowTokens != null && it.supportsReasoning != null }
+        assertNotNull(withParams)
+    }
+
+    @Test
     fun `network failure reuses last successful models dev snapshot`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.filesDir.resolve("agent-provider-catalog").deleteRecursively()

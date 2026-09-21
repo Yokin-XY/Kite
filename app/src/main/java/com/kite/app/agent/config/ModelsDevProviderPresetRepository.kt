@@ -61,6 +61,14 @@ internal class ModelsDevProviderPresetRepository(
     private val etagFile = File(cacheDirectory, CACHE_ETAG_FILE)
     private val memory = ConcurrentHashMap<String, List<AgentProviderPreset>>()
     private val refreshMutex = Mutex()
+    private val appContext = context.applicationContext
+    private val bundledSnapshot: String? by lazy {
+        runCatching {
+            appContext.assets.open(BUNDLED_SNAPSHOT_ASSET).use { input ->
+                input.bufferedReader(Charsets.UTF_8).readText()
+            }
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
 
     override fun cachedPresets(adapterId: String): List<AgentProviderPreset> =
         memory[adapterId] ?: AgentProviderPresetCatalog.presetsFor(adapterId)
@@ -135,6 +143,35 @@ internal class ModelsDevProviderPresetRepository(
                             refreshed = false,
                             warning = "models.dev 暂时不可用，已使用上次成功目录",
                         )
+                    }
+                }
+
+                // 无网环境：内置 models.dev 精选快照（123 家/2 千余模型随 APK），
+                // 形状与 /api.json 相同，直接复用解析链；仍失败才退回 CC Switch 预设。
+                val snapshotPayload = bundledSnapshot
+                if (snapshotPayload != null) {
+                    val snapshot = runCatching {
+                        ModelsDevProviderPresetParser.resolve(snapshotPayload, adapterId)
+                    }.getOrNull()
+                    if (snapshot != null && snapshot.modelCatalogs.isNotEmpty()) {
+                        val merged = mergePresets(
+                            dynamic = snapshot.compatiblePresets.map {
+                                it.copy(source = AgentProviderPresetSource.ModelsDevBundled)
+                            },
+                            bundled = bundled,
+                            modelCatalogs = snapshot.modelCatalogs.map {
+                                it.copy(source = AgentProviderPresetSource.ModelsDevBundled)
+                            },
+                        )
+                        if (merged.isNotEmpty()) {
+                            memory[adapterId] = merged
+                            return@withLock AgentProviderPresetRefreshResult(
+                                presets = merged,
+                                source = AgentProviderPresetSource.ModelsDevBundled,
+                                refreshed = false,
+                                warning = "models.dev 暂时不可达，已使用内置快照目录",
+                            )
+                        }
                     }
                 }
 
@@ -226,6 +263,7 @@ internal class ModelsDevProviderPresetRepository(
     )
 
     private companion object {
+        const val BUNDLED_SNAPSHOT_ASSET = "agent-provider-catalog/models-dev-snapshot.json"
         const val CACHE_DIRECTORY = "agent-provider-catalog"
         const val CACHE_PAYLOAD_FILE = "models-dev.json"
         const val CACHE_ETAG_FILE = "models-dev.etag"

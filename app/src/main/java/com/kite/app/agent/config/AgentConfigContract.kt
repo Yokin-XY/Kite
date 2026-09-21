@@ -354,6 +354,8 @@ enum class AgentProviderMarket {
 enum class AgentProviderPresetSource {
     ModelsDev,
     ModelsDevCache,
+    /** 随 APK 内置的 models.dev 精选快照（国内无网环境的主目录）。 */
+    ModelsDevBundled,
     Bundled,
 }
 
