@@ -140,6 +140,7 @@ import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
 import com.kite.app.agent.sdk.configuration.AgentConfigurationIntent
 import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
 import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
+import com.kite.app.agent.sdk.configuration.AgentRemoteModelFetchResult
 import com.kite.app.agent.sdk.configuration.recordProtocolOfficialModels
 import com.kite.app.agent.sdk.configuration.toConfigurationProjection
 import com.kite.app.agent.sdk.configuration.AgentSessionControlApi
@@ -6826,6 +6827,117 @@ internal class RunAgentSurfaceBinding(
         return credentialBinding
     }
 
+    /** 获取模型：拉远端 /models 列表供勾选合并；已有模型标记不可重复添加。 */
+    private fun showRemoteModelPicker(
+        baseUrl: String,
+        credential: String?,
+        existingModels: Set<String>,
+        onPicked: (List<AgentProviderModelSummary>) -> Unit,
+    ) {
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(agentPageBackground)
+        }
+        val statusLine = TextView(context).apply {
+            text = "正在获取模型列表…"
+            textSize = 13.5f
+            setTextColor(tokens.textSecondary)
+            setPadding(ui.dp(18), ui.dp(16), ui.dp(18), ui.dp(6))
+        }
+        val listHost = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(16), ui.dp(6), ui.dp(16), ui.dp(16))
+        }
+        var resultIds: List<String>? = null
+        val confirm = TextView(context).apply {
+            text = "添加所选"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.textPrimary)
+            alpha = 0.4f
+            isClickable = false
+            isFocusable = true
+        }
+        container.addView(buildAgentSubpageHeader(
+            title = "获取模型",
+            backDescription = "返回供应商配置",
+            onBack = ::closeProviderEditorOverlay,
+            trailingView = confirm
+        ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
+        container.addView(statusLine)
+        container.addView(ScrollView(context).apply {
+            isFillViewport = true
+            addView(listHost, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        val page = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(container, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+        pushProviderEditorOverlay(page, AgentNavigationScreen.ProviderModelEditor)
+
+        lifecycleOwner.lifecycleScope.launch {
+            when (val result = agentProviderCatalogApi.fetchRemoteModels(baseUrl, credential)) {
+                is AgentRemoteModelFetchResult.Failed -> {
+                    statusLine.text = result.reason
+                    statusLine.setTextColor(tokens.danger)
+                }
+                is AgentRemoteModelFetchResult.Ready -> {
+                    resultIds = result.modelIds
+                    if (result.modelIds.isEmpty()) {
+                        statusLine.text = "远端没有返回任何模型"
+                        return@launch
+                    }
+                    statusLine.text = "勾选需要添加的模型；已添加 ${result.modelIds.count { it in existingModels }} 个。"
+                    val checked = mutableMapOf<String, Boolean>()
+                    listHost.post {
+                        result.modelIds.forEach { modelId ->
+                            val already = modelId in existingModels
+                            checked[modelId] = false
+                            val row = LinearLayout(context).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                gravity = Gravity.CENTER_VERTICAL
+                                minimumHeight = ui.dp(52)
+                                setPadding(ui.dp(6), ui.dp(4), ui.dp(6), ui.dp(4))
+                                alpha = if (already) 0.45f else 1f
+                            }
+                            val checkbox = android.widget.CheckBox(context).apply {
+                                isChecked = false
+                                isEnabled = !already
+                                setOnCheckedChangeListener { _, isChecked ->
+                                    checked[modelId] = isChecked
+                                    val anySelected = checked.values.any { it }
+                                    confirm.alpha = if (anySelected) 1f else 0.4f
+                                    confirm.isClickable = anySelected
+                                }
+                            }
+                            row.addView(checkbox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                            row.addView(TextView(context).apply {
+                                text = modelId + if (already) "（已添加）" else ""
+                                textSize = 14.5f
+                                maxLines = 1
+                                ellipsize = TextUtils.TruncateAt.MIDDLE
+                                setTextColor(tokens.textPrimary)
+                                setPadding(ui.dp(8), 0, 0, 0)
+                            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                            listHost.addView(row, LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                            ))
+                        }
+                    }
+                    confirm.setOnClickListener {
+                        val picked = checked.filterValues { it }.keys
+                        onPicked(picked.map { AgentProviderModelSummary(it, it) })
+                        closeProviderEditorOverlay()
+                    }
+                }
+            }
+        }
+    }
+
     private fun showProviderModelEditor(
         model: AgentProviderModelSummary?,
         onSave: (AgentProviderModelSummary) -> Unit,
@@ -8630,6 +8742,21 @@ internal class RunAgentSurfaceBinding(
                     updatePreview()
                 },
                 onDelete = null
+            )
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(48)).apply {
+            setMargins(0, 0, 0, ui.dp(10))
+        })
+        content.addView(actionOutlineButton("⇩  获取模型") {
+            showRemoteModelPicker(
+                baseUrl = urlInput.text?.toString()?.trim().orEmpty(),
+                credential = keyInput.text?.toString()?.trim()?.takeIf(String::isNotBlank),
+                existingModels = modelDrafts.map(AgentProviderModelSummary::id).toSet(),
+                onPicked = { picked ->
+                    val existing = modelDrafts.map(AgentProviderModelSummary::id).toSet()
+                    modelDrafts += picked.filterNot { it.id in existing }
+                    renderModels()
+                    updatePreview()
+                },
             )
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(48)).apply {
             setMargins(0, 0, 0, ui.dp(22))

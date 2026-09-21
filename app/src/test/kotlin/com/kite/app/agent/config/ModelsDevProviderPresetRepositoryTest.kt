@@ -82,6 +82,57 @@ class ModelsDevProviderPresetRepositoryTest {
     }
 
     @Test
+    fun `models dev public parameters prefill model capabilities`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.filesDir.resolve("agent-provider-catalog").deleteRecursively()
+        // 给 coding plan 的 glm-5.3-flash 注入 models.dev 真实 schema 字段。
+        val payload = MODELS_DEV_PAYLOAD.replace(
+            """zhipuai-coding-plan\": {
+                "id": "zhipuai-coding-plan",
+                "name": "Zhipu Coding Plan",
+                "api": "https://open.bigmodel.cn/api/coding/paas/v4",
+                "npm": "@ai-sdk/openai-compatible",
+                "doc": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+                "models": {
+                  "glm-5.3-flash": {
+                    "name": "GLM-5.3 Flash",
+                    "release_date": "2026-08-20",
+                    "modalities": {"output": ["text"]}
+                  },""",
+            """zhipuai-coding-plan\": {
+                "id": "zhipuai-coding-plan",
+                "name": "Zhipu Coding Plan",
+                "api": "https://open.bigmodel.cn/api/coding/paas/v4",
+                "npm": "@ai-sdk/openai-compatible",
+                "doc": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+                "models": {
+                  "glm-5.3-flash": {
+                    "name": "GLM-5.3 Flash",
+                    "release_date": "2026-08-20",
+                    "reasoning": true,
+                    "limit": {"context": 131072, "output": 16384},
+                    "modalities": {"input": ["text", "image"], "output": ["text"]}
+                  },""",
+        )
+        assertTrue(payload != MODELS_DEV_PAYLOAD)
+        val repository = ModelsDevProviderPresetRepository(context) {
+            ModelsDevFetchResult.Updated(payload, "capability-etag")
+        }
+        val result = repository.refresh("hermes")
+        val china = result.presets.single { it.id == "zhipuai-coding-plan" }
+        val flash = china.models.single { it.id == "glm-5.3-flash" }
+        assertEquals(131072L, flash.contextWindowTokens)
+        assertEquals(16384L, flash.maxOutputTokens)
+        assertEquals(true, flash.supportsReasoning)
+        assertEquals(true, flash.supportsImages)
+        // 未声明参数的模型保持未知（null），不臆造。
+        val plain = china.models.single { it.id == "embedding-3" }
+        assertEquals(null, plain.contextWindowTokens)
+        assertEquals(null, plain.supportsReasoning)
+        assertEquals(null, plain.supportsImages)
+    }
+
+    @Test
     fun `network failure reuses last successful models dev snapshot`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.filesDir.resolve("agent-provider-catalog").deleteRecursively()

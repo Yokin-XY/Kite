@@ -49,6 +49,11 @@ sealed interface AgentProviderPreparationResult {
 }
 
 /** UI 与运行时共同使用的固定 Kite Provider 目录端口。 */
+sealed interface AgentRemoteModelFetchResult {
+    data class Ready(val modelIds: List<String>) : AgentRemoteModelFetchResult
+    data class Failed(val reason: String) : AgentRemoteModelFetchResult
+}
+
 interface AgentProviderCatalogApi {
     fun snapshot(target: AgentConfigurationTarget): AgentProviderCatalogSnapshot
 
@@ -71,6 +76,12 @@ interface AgentProviderCatalogApi {
     fun removeUserProvider(target: AgentConfigurationTarget, providerId: String): Boolean
 
     fun selectModel(target: AgentConfigurationTarget, providerId: String, modelId: String): Boolean
+
+    /** 用供应商地址与凭据拉取远端模型列表（OpenAI 兼容 /models）；失败返回原因。 */
+    suspend fun fetchRemoteModels(
+        baseUrl: String,
+        credential: String?,
+    ): AgentRemoteModelFetchResult
 
     /** 官方登录成功事件调用；普通刷新路径不得调用。 */
     fun saveOfficialVersion(
@@ -362,6 +373,60 @@ class StoreBackedAgentProviderCatalogApi(
 
     override fun selectModel(target: AgentConfigurationTarget, providerId: String, modelId: String): Boolean =
         store.select(target.agentId, providerId, modelId)
+
+    override suspend fun fetchRemoteModels(
+        baseUrl: String,
+        credential: String?,
+    ): AgentRemoteModelFetchResult {
+        val trimmedBase = baseUrl.trim().trimEnd('/')
+        if (!trimmedBase.startsWith("http://") && !trimmedBase.startsWith("https://")) {
+            return AgentRemoteModelFetchResult.Failed("请求地址无效")
+        }
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val connection = java.net.URL("$trimmedBase/models").openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 10_000
+                connection.readTimeout = 20_000
+                connection.setRequestProperty("Accept", "application/json")
+                connection.setRequestProperty("User-Agent", "Kite-Model-Fetch/1")
+                credential?.takeIf(String::isNotBlank)?.let { key ->
+                    connection.setRequestProperty("Authorization", "Bearer $key")
+                }
+                try {
+                    val code = connection.responseCode
+                    if (code !in 200..299) return@runCatching AgentRemoteModelFetchResult.Failed("远端返回 HTTP $code")
+                    val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                        buildString {
+                            val buffer = CharArray(8 * 1024)
+                            while (true) {
+                                val count = reader.read(buffer)
+                                if (count < 0) break
+                                append(buffer, 0, count)
+                                if (length > 1_000_000) error("response_too_large")
+                            }
+                        }
+                    }
+                    val ids = org.json.JSONObject(body)
+                        .optJSONArray("data")
+                        ?.let { array ->
+                            (0 until array.length()).mapNotNull { index ->
+                                array.optJSONObject(index)?.optString("id")?.trim()
+                                    ?.takeIf(String::isNotBlank)
+                            }
+                        }
+                        .orEmpty()
+                        .distinct()
+                        .sorted()
+                    AgentRemoteModelFetchResult.Ready(ids)
+                } finally {
+                    connection.disconnect()
+                }
+            }.getOrElse { error ->
+                AgentRemoteModelFetchResult.Failed("无法获取模型列表：${error.message ?: "网络错误"}")
+            }
+        }
+    }
 
     override fun saveOfficialVersion(
         target: AgentConfigurationTarget,

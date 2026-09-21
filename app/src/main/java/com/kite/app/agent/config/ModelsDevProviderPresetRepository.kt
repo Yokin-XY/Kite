@@ -385,10 +385,30 @@ internal object ModelsDevProviderPresetParser {
         val displayName = value?.optString("name", id)?.trim().orEmpty().ifBlank { id }
         val searchable = "$id $displayName".lowercase()
         if (NON_CHAT_MODEL_MARKERS.any(searchable::contains)) return null
+        // models.dev 公开参数预填充（目录元数据，不参与请求）。
+        val limit = value?.optJSONObject("limit")
+        val inputModalities = value?.optJSONObject("modalities")?.optJSONArray("input")
         return ParsedModel(
-            summary = AgentProviderModelSummary(id, displayName),
+            summary = AgentProviderModelSummary(
+                id = id,
+                displayName = displayName,
+                contextWindowTokens = limit?.optLong("context")?.takeIf { it > 0 },
+                maxOutputTokens = limit?.optLong("output")?.takeIf { it > 0 },
+                supportsReasoning = reasoningSupported(value),
+                supportsImages = inputModalities?.let { inputs ->
+                    (0 until inputs.length()).any { inputs.optString(it).lowercase() == "image" }
+                },
+            ),
             releaseDate = value?.optString("release_date")?.trim().orEmpty(),
         )
+    }
+
+    private fun reasoningSupported(value: JSONObject?): Boolean? {
+        value ?: return null
+        val explicit = value.opt("reasoning")
+        if (explicit is Boolean) return explicit
+        val output = value.optJSONObject("modalities")?.optJSONArray("output") ?: return null
+        return (0 until output.length()).any { output.optString(it).lowercase() == "reasoning" }
     }
 
     private fun protocolFamily(providerId: String, npm: String): ProtocolFamily? = when {
