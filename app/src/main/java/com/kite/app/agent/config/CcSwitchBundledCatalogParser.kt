@@ -15,7 +15,10 @@ internal object CcSwitchBundledCatalogParser {
     data class BundledModel(
         val id: String,
         val displayName: String,
-        val capability: JSONObject?,
+        val contextWindowTokens: Long? = null,
+        val maxOutputTokens: Long? = null,
+        val supportsReasoning: Boolean? = null,
+        val supportsImages: Boolean? = null,
     )
 
     data class BundledPreset(
@@ -74,10 +77,22 @@ internal object CcSwitchBundledCatalogParser {
                 val model = modelsArray.optJSONObject(index) ?: continue
                 val modelId = model.optString("id").trim()
                 if (modelId.isEmpty()) continue
+                val capability = model.optJSONObject("capability")
                 models += BundledModel(
                     id = modelId,
                     displayName = model.optString("displayName").trim().ifEmpty { modelId },
-                    capability = model.optJSONObject("capability"),
+                    contextWindowTokens = capability?.optLong("contextWindow")?.takeIf { it > 0 },
+                    maxOutputTokens = capability?.optLong("maxTokens")?.takeIf { it > 0 },
+                    supportsReasoning = capability?.run {
+                        when {
+                            has("reasoning") && !isNull("reasoning") -> optBoolean("reasoning")
+                            optJSONArray("reasoningLevels")?.length() ?: 0 > 0 -> true
+                            has("thinkingLevelMap") && !isNull("thinkingLevelMap") -> true
+                            else -> null
+                        }
+                    },
+                    supportsImages = capability?.optJSONArray("input")
+                        ?.let { inputs -> (0 until inputs.length()).any { inputs.optString(it) == "image" } },
                 )
             }
         }
@@ -104,7 +119,16 @@ internal fun CcSwitchBundledCatalogParser.BundledPreset.toAgentProviderPreset():
     providerId = id,
     displayName = displayName,
     baseUrl = baseUrl,
-    models = models.map { model -> AgentProviderModelSummary(model.id, model.displayName) },
+    models = models.map { model ->
+        AgentProviderModelSummary(
+            model.id,
+            model.displayName,
+            contextWindowTokens = model.contextWindowTokens,
+            maxOutputTokens = model.maxOutputTokens,
+            supportsReasoning = model.supportsReasoning,
+            supportsImages = model.supportsImages,
+        )
+    },
     vendorId = id,
     vendorDisplayName = vendorDisplayName,
     category = category,

@@ -36,6 +36,7 @@ import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationStore
 import com.kite.app.agent.store.AgentPersistedTurnTiming
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
@@ -1550,7 +1551,7 @@ object AgentRuntimeRegistry {
         val previousConnection = connection
         val previousSessionId = session.sessionId
         val wasDraft = session.isDraft
-        val restored = if (wasDraft || forceNewSession) {
+        var restored = if (wasDraft || forceNewSession) {
             preparingWarmDraft = true
             try {
                 nextConnection.newSession(AgentNewSessionRequest(session.cwd, additionalDirectories))
@@ -1559,6 +1560,27 @@ object AgentRuntimeRegistry {
             }
         } else {
             previousSessionId?.let { sessionId ->
+                restoreExistingSession(
+                    connection = nextConnection,
+                    instanceId = session.instanceId,
+                    providerId = session.providerId,
+                    sessionId = sessionId,
+                    cwd = session.cwd,
+                    additionalDirectories = additionalDirectories,
+                    turnTimings = loadSessionTurnTimings(sessionId),
+                )
+            }
+        }
+        if (
+            restored is AgentOperationResult.Failure &&
+            restored.message.orEmpty().contains("active writer", ignoreCase = true)
+        ) {
+            // 跨供应商重连时旧连接尚未断开，旧进程持有 thread 写锁
+            //（thread-writer-locks/<id>.lock 的 flock）；断旧连接后旧进程退出需要
+            // 时间，短暂等待让磁盘锁释放后再重试一次。
+            previousConnection.disconnect()
+            delay(500)
+            restored = previousSessionId?.let { sessionId ->
                 restoreExistingSession(
                     connection = nextConnection,
                     instanceId = session.instanceId,

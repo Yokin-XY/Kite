@@ -78,9 +78,17 @@ data class CodexOfficialModelCatalog(
     val models: List<CodexOfficialModelSummary>,
 )
 
+data class CodexSessionCatalogModel(
+    val id: String,
+    val displayName: String,
+)
+
 data class CodexSessionConfigurationOverride(
     val providerId: String,
     val modelId: String,
+    /** Kite 目录中该供应商的模型清单（Codex 无法自知第三方供应商的模型，
+     * 该事实由目录提供，合并进会话模型选项供同供应商热切换）。 */
+    val catalogModels: List<CodexSessionCatalogModel> = emptyList(),
 )
 
 fun interface CodexOfficialModelCatalogSink {
@@ -340,13 +348,30 @@ private class CodexAppServerConnection(
     ): AgentOperationResult<AgentSessionSnapshot> =
         operation("恢复会话") {
             val override = sessionConfigurationOverride()
-            val response = rpc.request(
-                "thread/resume",
-                JSONObject()
-                    .put("threadId", request.sessionId)
-                    .put("cwd", request.cwd)
-                    .applyOverride(override),
-            )
+            val response = try {
+                rpc.request(
+                    "thread/resume",
+                    JSONObject()
+                        .put("threadId", request.sessionId)
+                        .put("cwd", request.cwd)
+                        .applyOverride(override),
+                )
+            } catch (conflict: IllegalStateException) {
+                // 会话重建/模型切换后，同一 thread 在 App Server 内可能仍持有旧
+                // writer（磁盘锁 thread-writer-locks/<id>.lock + 进程内绑定），
+                // 直接 resume 会被拒且进程不重启永不释放。先退订释放旧绑定再重试。
+                if (!conflict.message.orEmpty().contains("active writer", ignoreCase = true)) throw conflict
+                runCatching {
+                    rpc.request("thread/unsubscribe", JSONObject().put("threadId", request.sessionId))
+                }
+                rpc.request(
+                    "thread/resume",
+                    JSONObject()
+                        .put("threadId", request.sessionId)
+                        .put("cwd", request.cwd)
+                        .applyOverride(override),
+                )
+            }
             registerSession(response, request.cwd, replayHistory, override)
         }
 
@@ -955,7 +980,7 @@ private class CodexAppServerConnection(
 
     private fun availableModels(session: CodexSession): List<CodexModel> {
         if (session.modelSource() == AgentModelSource.OfficialLogin) return models.values.toList()
-        return listOf(models[session.modelId] ?: CodexModel(
+        val current = models[session.modelId] ?: CodexModel(
             id = session.modelId,
             displayName = session.modelId,
             description = null,
@@ -964,8 +989,36 @@ private class CodexAppServerConnection(
                 codexReasoningSemantics(value)?.let { listOf(CodexEffort(value, null, it)) }
             }.orEmpty(),
             isDefault = true,
-        ))
+        )
+        if (current.id == session.modelId) {
+            // 会话正在用的模型未必在 App Server 目录中（override 注入），
+            // 用目录事实补全显示名。
+            val catalogCurrent = sessionConfigurationOverride()?.catalogModels
+                ?.firstOrNull { it.id == current.id && it.displayName.isNotBlank() }
+            return listOf(
+                if (catalogCurrent != null) current.copy(displayName = catalogCurrent.displayName) else current
+            ) + catalogExtras(session)
+        }
+        return listOf(current) + catalogExtras(session)
     }
+
+    /** Kite 目录同供应商模型（去重当前会话模型），Codex 不校验第三方模型名，
+     * thread/settings/update 可直接热切换。 */
+    private fun catalogExtras(session: CodexSession): List<CodexModel> =
+        sessionConfigurationOverride()
+            ?.catalogModels
+            .orEmpty()
+            .filterNot { it.id == session.modelId }
+            .map { catalog ->
+                CodexModel(
+                    id = catalog.id,
+                    displayName = catalog.displayName,
+                    description = null,
+                    defaultEffort = null,
+                    efforts = emptyList(),
+                    isDefault = false,
+                )
+            }
 
     private fun completeTurn(sessionId: String, turn: JSONObject?) {
         val status = turn?.optString("status").orEmpty()

@@ -10,6 +10,7 @@ import com.kite.app.agent.codex.CodexAppServerAgentProvider
 import com.kite.app.agent.codex.CodexAppServerProcessLauncher
 import com.kite.app.agent.codex.CodexAppServerProviderDescriptor
 import com.kite.app.agent.codex.CodexOfficialModelCatalogSink
+import com.kite.app.agent.codex.CodexSessionCatalogModel
 import com.kite.app.agent.codex.CodexSessionConfigurationOverride
 import com.kite.app.agent.zcode.ZCodeAppServerAgentProvider
 import com.kite.app.agent.zcode.ZCodeAppServerProcessLauncher
@@ -636,7 +637,15 @@ internal class AndroidAgentRecipeRuntime(
                             val selectedProvider = catalog.selectedProviderId
                             val selectedModel = catalog.selectedModelId
                             if (selectedProvider == null || selectedModel == null) null else {
-                                CodexSessionConfigurationOverride(selectedProvider, selectedModel)
+                                val provider = catalog.providers
+                                    .firstOrNull { it.id == selectedProvider }
+                                CodexSessionConfigurationOverride(
+                                    selectedProvider,
+                                    selectedModel,
+                                    catalogModels = provider?.models.orEmpty().map { model ->
+                                        CodexSessionCatalogModel(model.id, model.displayName)
+                                    },
+                                )
                             }
                         }
                     },

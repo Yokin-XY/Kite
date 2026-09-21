@@ -194,6 +194,17 @@ fun AgentProviderCatalogSnapshot.toConfigurationProjection(
 )
 
 /** Adapter 差异只在这一 SDK 实现内出现，UI 和运行时只看统一结果。 */
+
+private fun com.kite.app.agent.config.AgentProviderModelSummary.toCatalogModel() =
+    com.kite.app.agent.store.AgentCatalogModel(
+        id = id,
+        displayName = displayName,
+        contextWindowTokens = contextWindowTokens,
+        maxOutputTokens = maxOutputTokens,
+        supportsReasoning = supportsReasoning,
+        supportsImages = supportsImages,
+    )
+
 class StoreBackedAgentProviderCatalogApi(
     private val store: AgentProviderCatalogStore,
     private val adapters: AgentConfigAdapterRegistry,
@@ -280,7 +291,7 @@ class StoreBackedAgentProviderCatalogApi(
                         )
                     }
                     val next = if (adopted == null) base else base.copy(
-                        models = adopted.models.map { model -> AgentCatalogModel(model.id, model.displayName) },
+                        models = adopted.models.map { model -> model.toCatalogModel() },
                         catalogSync = adopted.metadata,
                     )
                     val importedCredential = imported.import.credentials[provider.id]
@@ -331,7 +342,7 @@ class StoreBackedAgentProviderCatalogApi(
                 id = provider.id,
                 displayName = provider.displayName ?: provider.id,
                 baseUrl = provider.baseUrl,
-                models = provider.models.map { AgentCatalogModel(it.id, it.displayName) },
+                models = provider.models.map { it.toCatalogModel() },
                 source = AgentModelSource.UserConfigured,
                 policy = AgentProviderCatalogPolicy.UserManaged,
                 catalogSync = catalogSync,
@@ -444,10 +455,12 @@ class StoreBackedAgentProviderCatalogApi(
             return applyProviderSelection(target, adapter, before, change, preparedKey, fingerprint)
         }
         val existing = before.providers.firstOrNull { it.id == selected.id }
+        // 供应商就绪判定只看连接事实（baseUrl + 凭据状态）。模型清单属于目录事实：
+        // Codex 等工具的供应商段本不含模型清单（模型是顶层单字段），比较清单必然
+        // 失配并把同供应商切模型升级成重写配置+重连（CC Switch 分工：供应商级变化
+        // 才重写配置，模型切换走 Agent 内部通道）。模型清单变化不触发重连。
         val samePublicConfiguration = existing?.let { native ->
             native.baseUrl == selected.baseUrl &&
-                native.models.associate { it.id to it.displayName } ==
-                selected.models.associate { it.id to it.displayName } &&
                 native.credentialPresence == if (credential == null) {
                     AgentCredentialPresence.Missing
                 } else {
@@ -457,10 +470,11 @@ class StoreBackedAgentProviderCatalogApi(
         val pendingNativeWrite = selected.id in store.snapshot(target.agentId).pendingNativeProviderIds
         android.util.Log.d("KiteProviderFlow", "prepare: pendingNativeWrite=$pendingNativeWrite sameConfig=$samePublicConfiguration existing=${existing?.id}")
         if (!pendingNativeWrite && samePublicConfiguration) {
-            val activeModelMatches = before.activeProviderId == selected.id &&
-                (before.defaultModel == selection.modelId ||
-                    before.defaultModel == "${selected.id}/${selection.modelId}")
-            if (activeModelMatches) {
+            if (before.activeProviderId == selected.id) {
+                // 同供应商仅切模型：交给会话级热切换（Codex thread/settings/update、
+                // ACP set_model 等），不重写 live 配置、不重连——CC Switch 的分界线：
+                // 供应商级变化才需要重启进程，模型变化是 Agent 原生运行时能力。
+                // 会话未连接时该选择仍会随 thread/start|resume 的 override 生效。
                 preparedFingerprints[preparedKey] = fingerprint
                 return AgentProviderPreparationResult.Ready()
             }
@@ -581,7 +595,7 @@ class StoreBackedAgentProviderCatalogApi(
         id = id,
         displayName = displayName,
         baseUrl = baseUrl,
-        models = models.map { AgentCatalogModel(it.id, it.displayName) },
+        models = models.map { it.toCatalogModel() },
         source = source,
         policy = policy,
         ownerId = ownerId,

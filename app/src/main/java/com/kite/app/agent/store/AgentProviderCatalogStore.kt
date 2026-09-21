@@ -24,6 +24,12 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+private fun org.json.JSONObject.optLongOrNull(key: String): Long? =
+    if (has(key) && !isNull(key)) optLong(key, Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE } else null
+
+private fun org.json.JSONObject.optBooleanOrNull(key: String): Boolean? =
+    if (has(key) && !isNull(key)) optBoolean(key) else null
+
 /** Kite 统一 Provider 目录的更新归属。 */
 enum class AgentProviderCatalogPolicy {
     UserManaged,
@@ -34,6 +40,14 @@ enum class AgentProviderCatalogPolicy {
 data class AgentCatalogModel(
     val id: String,
     val displayName: String = id,
+    /** 上下文窗口（token）；null 表示未知。 */
+    val contextWindowTokens: Long? = null,
+    /** 最大输出（token）；null 表示未知。 */
+    val maxOutputTokens: Long? = null,
+    /** 支持扩展思考；null 表示未知。 */
+    val supportsReasoning: Boolean? = null,
+    /** 支持图片输入；null 表示未知。 */
+    val supportsImages: Boolean? = null,
 )
 
 /**
@@ -511,7 +525,16 @@ class AgentProviderCatalogStore private constructor(
                 val model = array.optJSONObject(index) ?: continue
                 val modelId = model.optString(KEY_ID).trim().take(MAX_MODEL_ID)
                 val displayName = model.optString(KEY_NAME).trim().take(MAX_DISPLAY_NAME)
-                if (modelId.isNotBlank()) add(AgentCatalogModel(modelId, displayName.ifBlank { modelId }))
+                if (modelId.isNotBlank()) add(
+                    AgentCatalogModel(
+                        id = modelId,
+                        displayName = displayName.ifBlank { modelId },
+                        contextWindowTokens = model.optLongOrNull(KEY_CONTEXT_WINDOW_TOKENS),
+                        maxOutputTokens = model.optLongOrNull(KEY_MAX_OUTPUT_TOKENS),
+                        supportsReasoning = model.optBooleanOrNull(KEY_SUPPORTS_REASONING),
+                        supportsImages = model.optBooleanOrNull(KEY_SUPPORTS_IMAGES),
+                    )
+                )
             }
         }.distinctBy(AgentCatalogModel::id)
         if (models.isEmpty()) return null
@@ -543,7 +566,16 @@ class AgentProviderCatalogStore private constructor(
         sourceVersion?.let { put(KEY_SOURCE_VERSION, it) }
         catalogSync?.let { put(KEY_CATALOG_SYNC, it.toJson()) }
         put(KEY_MODELS, JSONArray().apply {
-            models.forEach { model -> put(JSONObject().put(KEY_ID, model.id).put(KEY_NAME, model.displayName)) }
+            models.forEach { model ->
+                put(JSONObject().apply {
+                    put(KEY_ID, model.id)
+                    put(KEY_NAME, model.displayName)
+                    model.contextWindowTokens?.let { put(KEY_CONTEXT_WINDOW_TOKENS, it) }
+                    model.maxOutputTokens?.let { put(KEY_MAX_OUTPUT_TOKENS, it) }
+                    model.supportsReasoning?.let { put(KEY_SUPPORTS_REASONING, it) }
+                    model.supportsImages?.let { put(KEY_SUPPORTS_IMAGES, it) }
+                })
+            }
         })
     }
 
@@ -633,7 +665,9 @@ class AgentProviderCatalogStore private constructor(
         val normalizedModels = models.mapNotNull { model ->
             val modelId = model.id.trim().take(MAX_MODEL_ID)
             val name = model.displayName.trim().take(MAX_DISPLAY_NAME)
-            modelId.takeIf(String::isNotBlank)?.let { AgentCatalogModel(it, name.ifBlank { it }) }
+            modelId.takeIf(String::isNotBlank)?.let {
+                model.copy(id = it, displayName = name.ifBlank { it })
+            }
         }.distinctBy(AgentCatalogModel::id)
         if (providerId.isBlank() || providerName.isBlank() || normalizedModels.isEmpty()) return null
         return copy(
@@ -761,6 +795,10 @@ class AgentProviderCatalogStore private constructor(
         const val KEY_BASE_URL = "baseUrl"
         const val KEY_API_FORMAT = "apiFormat"
         const val KEY_MODELS = "models"
+        const val KEY_CONTEXT_WINDOW_TOKENS = "contextWindowTokens"
+        const val KEY_MAX_OUTPUT_TOKENS = "maxOutputTokens"
+        const val KEY_SUPPORTS_REASONING = "supportsReasoning"
+        const val KEY_SUPPORTS_IMAGES = "supportsImages"
         const val KEY_SOURCE = "source"
         const val KEY_POLICY = "policy"
         const val KEY_OWNER_ID = "ownerId"

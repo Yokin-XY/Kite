@@ -109,7 +109,14 @@ object AgentProviderCatalogSyncPolicy {
         mapNotNull { model ->
             val id = model.id.trim()
             id.takeIf(String::isNotBlank)?.let {
-                AgentProviderModelSummary(it, model.displayName.trim().ifBlank { it })
+                AgentProviderModelSummary(
+                    it,
+                    model.displayName.trim().ifBlank { it },
+                    contextWindowTokens = model.contextWindowTokens,
+                    maxOutputTokens = model.maxOutputTokens,
+                    supportsReasoning = model.supportsReasoning,
+                    supportsImages = model.supportsImages,
+                )
             }
         }.distinctBy(AgentProviderModelSummary::id)
 

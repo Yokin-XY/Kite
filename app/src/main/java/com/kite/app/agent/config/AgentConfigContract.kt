@@ -288,7 +288,15 @@ sealed interface AgentSkillDocumentWriteResult {
 /** 可安全进入页面状态的供应商模型资料。 */
 data class AgentProviderModelSummary(
     val id: String,
-    val displayName: String = id
+    val displayName: String = id,
+    /** 上下文窗口（token）；null 表示未知。 */
+    val contextWindowTokens: Long? = null,
+    /** 最大输出（token）；null 表示未知。 */
+    val maxOutputTokens: Long? = null,
+    /** 支持扩展思考；null 表示未知。 */
+    val supportsReasoning: Boolean? = null,
+    /** 支持图片输入；null 表示未知。 */
+    val supportsImages: Boolean? = null,
 )
 
 /**

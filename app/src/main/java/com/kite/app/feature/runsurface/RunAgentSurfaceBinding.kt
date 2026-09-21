@@ -6652,6 +6652,19 @@ internal class RunAgentSurfaceBinding(
         setOnClickListener { onClick() }
     }
 
+    private fun modelCapabilitySummary(model: AgentProviderModelSummary): String? = buildList {
+        model.contextWindowTokens?.let { add("上下文 ${formatTokenCount(it)}") }
+        model.maxOutputTokens?.let { add("最大输出 ${formatTokenCount(it)}") }
+        if (model.supportsReasoning == true) add("扩展思考")
+        if (model.supportsImages == true) add("图片")
+    }.takeIf(List<String>::isNotEmpty)?.joinToString(" · ")
+
+    private fun formatTokenCount(tokens: Long): String = when {
+        tokens >= 1_000_000 && tokens % 1_000_000 == 0L -> "${tokens / 1_000_000}M"
+        tokens >= 1_000 -> "${tokens / 1_000}K"
+        else -> tokens.toString()
+    }
+
     private fun providerEditorField(
         host: LinearLayout,
         label: String,
@@ -6684,6 +6697,33 @@ internal class RunAgentSurfaceBinding(
             setMargins(0, 0, 0, ui.dp(14))
         })
         return field
+    }
+
+    /** 三态开关行：初始 null（未知）显示未选中；返回读取当前状态的 lambda。 */
+    private fun providerEditorToggleRow(
+        host: LinearLayout,
+        label: String,
+        initial: Boolean?
+    ): () -> Boolean? {
+        val toggle = android.widget.Switch(context).apply {
+            isChecked = initial == true
+            textSize = 15f
+            setTextColor(tokens.textPrimary)
+        }
+        host.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setGravity(Gravity.CENTER_VERTICAL)
+            addView(TextView(context).apply {
+                text = label
+                textSize = 15f
+                setTextColor(tokens.textPrimary)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(toggle)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, 0, 0, ui.dp(14))
+        })
+        return { if (toggle.isChecked) true else null }
     }
 
     private fun providerCredentialField(
@@ -6826,6 +6866,22 @@ internal class RunAgentSurfaceBinding(
             setTextColor(tokens.textSecondary)
             setPadding(ui.dp(2), 0, ui.dp(2), ui.dp(18))
         })
+        val contextField = providerEditorField(
+            content,
+            label = "上下文长度（token）",
+            hintText = "留空表示未知",
+            value = model?.contextWindowTokens?.toString().orEmpty(),
+            inputType = InputType.TYPE_CLASS_NUMBER
+        )
+        val maxOutputField = providerEditorField(
+            content,
+            label = "最大输出（token）",
+            hintText = "留空表示未知",
+            value = model?.maxOutputTokens?.toString().orEmpty(),
+            inputType = InputType.TYPE_CLASS_NUMBER
+        )
+        val reasoningSwitch = providerEditorToggleRow(content, "支持扩展思考", model?.supportsReasoning)
+        val imagesSwitch = providerEditorToggleRow(content, "支持图片输入", model?.supportsImages)
         if (onDelete != null) {
             content.addView(actionDangerButton("删除模型") {
                 onDelete()
@@ -6851,7 +6907,18 @@ internal class RunAgentSurfaceBinding(
                     status.visibility = View.VISIBLE
                     return@setOnClickListener
                 }
-                onSave(AgentProviderModelSummary(id, displayName))
+                onSave(
+                    AgentProviderModelSummary(
+                        id = id,
+                        displayName = displayName,
+                        contextWindowTokens = contextField.text?.toString()?.trim()
+                            ?.toLongOrNull()?.takeIf { it > 0 },
+                        maxOutputTokens = maxOutputField.text?.toString()?.trim()
+                            ?.toLongOrNull()?.takeIf { it > 0 },
+                        supportsReasoning = reasoningSwitch(),
+                        supportsImages = imagesSwitch(),
+                    )
+                )
                 closeProviderEditorOverlay()
             }
         }

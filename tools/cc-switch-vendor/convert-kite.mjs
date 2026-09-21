@@ -84,7 +84,8 @@ const capabilityOf = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
   const cap = {};
   if (typeof raw.reasoning === 'boolean') cap.reasoning = raw.reasoning;
-  if (Array.isArray(raw.input)) cap.input = raw.input.filter((x) => typeof x === 'string');
+  const inputs = Array.isArray(raw.input) ? raw.input : (Array.isArray(raw.inputModalities) ? raw.inputModalities : null);
+  if (inputs) cap.input = inputs.filter((x) => typeof x === 'string');
   if (Number.isFinite(raw.contextWindow)) cap.contextWindow = raw.contextWindow;
   if (Number.isFinite(raw.maxTokens)) cap.maxTokens = raw.maxTokens;
   if (raw.reasoningLevels && Array.isArray(raw.reasoningLevels)) {

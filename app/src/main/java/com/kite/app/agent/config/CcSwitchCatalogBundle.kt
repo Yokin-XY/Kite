@@ -916,6 +916,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek/deepseek-v4-flash-0731",
       "displayName": "Deepseek V4 Flash 0731",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576
       }
      }
@@ -1037,6 +1040,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-ai/DeepSeek-V4-Flash",
       "displayName": "DeepSeek V4 Flash",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "high",
@@ -1085,6 +1091,9 @@ internal object CcSwitchCatalogBundle {
       "id": "zai-org/glm-5.2",
       "displayName": "GLM 5.2",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "high"
@@ -1145,6 +1154,9 @@ internal object CcSwitchCatalogBundle {
       "id": "glm-5.3",
       "displayName": "GLM-5.3",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "low",
@@ -1157,6 +1169,9 @@ internal object CcSwitchCatalogBundle {
       "id": "glm-5-turbo",
       "displayName": "GLM-5-Turbo",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 204800,
        "reasoningLevels": [
         "max"
@@ -1180,6 +1195,9 @@ internal object CcSwitchCatalogBundle {
       "id": "glm-5.3",
       "displayName": "GLM-5.3",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "low",
@@ -1229,6 +1247,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-pro",
       "displayName": "DeepSeek V4 Pro",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -1241,6 +1262,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-flash",
       "displayName": "DeepSeek V4 Flash",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -1253,6 +1277,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-flash-0731",
       "displayName": "DeepSeek V4 Flash 0731",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576
       }
      },
@@ -1384,6 +1411,9 @@ internal object CcSwitchCatalogBundle {
       "id": "qwen3.7-max",
       "displayName": "Qwen3.7 Max",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1000000
       }
      }
@@ -1418,6 +1448,9 @@ internal object CcSwitchCatalogBundle {
       "id": "qwen3-coder-plus",
       "displayName": "Qwen3 Coder Plus",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 131072
       }
      }
@@ -1462,6 +1495,9 @@ internal object CcSwitchCatalogBundle {
       "id": "qwen3.7-max",
       "displayName": "Qwen3.7 Max",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1000000
       }
      }
@@ -1482,6 +1518,9 @@ internal object CcSwitchCatalogBundle {
       "id": "hy3",
       "displayName": "Hy3",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 256000,
        "reasoningLevels": [
         "low",
@@ -1493,6 +1532,9 @@ internal object CcSwitchCatalogBundle {
       "id": "hy3-preview",
       "displayName": "Hy3 Preview",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 256000,
        "reasoningLevels": [
         "low",
@@ -1593,6 +1635,9 @@ internal object CcSwitchCatalogBundle {
       "id": "hy3",
       "displayName": "Hy3",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 256000,
        "reasoningLevels": [
         "none",
@@ -1604,6 +1649,9 @@ internal object CcSwitchCatalogBundle {
       "id": "hy3-preview",
       "displayName": "Hy3 Preview",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 256000,
        "reasoningLevels": [
         "none",
@@ -1825,6 +1873,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-flash",
       "displayName": "DeepSeek V4 Flash",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -1836,6 +1887,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-pro",
       "displayName": "DeepSeek V4 Pro",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -1847,6 +1901,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-flash-0731",
       "displayName": "DeepSeek V4 Flash 0731 GA",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -1858,6 +1915,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-pro-0813",
       "displayName": "DeepSeek V4 Pro 0813 GA",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -1869,6 +1929,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-flash-202605",
       "displayName": "DeepSeek V4 Flash Official",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -1880,6 +1943,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-pro-202606",
       "displayName": "DeepSeek V4 Pro Official",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -1969,6 +2035,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-flash",
       "displayName": "DeepSeek V4 Flash",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -1980,6 +2049,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-pro",
       "displayName": "DeepSeek V4 Pro",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -1991,6 +2063,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-flash-0731",
       "displayName": "DeepSeek V4 Flash 0731 GA",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -2002,6 +2077,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-pro-0813",
       "displayName": "DeepSeek V4 Pro 0813 GA",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -2013,6 +2091,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-flash-202605",
       "displayName": "DeepSeek V4 Flash Official",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -2024,6 +2105,9 @@ internal object CcSwitchCatalogBundle {
       "id": "deepseek-v4-pro-202606",
       "displayName": "DeepSeek V4 Pro Official",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -2224,6 +2308,10 @@ internal object CcSwitchCatalogBundle {
       "id": "MiniMax-M3",
       "displayName": "MiniMax-M3",
       "capability": {
+       "input": [
+        "text",
+        "image"
+       ],
        "contextWindow": 1000000,
        "reasoningLevels": [
         "none",
@@ -2248,6 +2336,10 @@ internal object CcSwitchCatalogBundle {
       "id": "MiniMax-M3",
       "displayName": "MiniMax-M3",
       "capability": {
+       "input": [
+        "text",
+        "image"
+       ],
        "contextWindow": 1000000,
        "reasoningLevels": [
         "none",
@@ -2292,6 +2384,9 @@ internal object CcSwitchCatalogBundle {
       "id": "mimo-v2.5-pro",
       "displayName": "MiMo V2.5 Pro",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -2303,6 +2398,10 @@ internal object CcSwitchCatalogBundle {
       "id": "mimo-v2.5",
       "displayName": "MiMo V2.5",
       "capability": {
+       "input": [
+        "text",
+        "image"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -2327,6 +2426,9 @@ internal object CcSwitchCatalogBundle {
       "id": "mimo-v2.5-pro",
       "displayName": "MiMo V2.5 Pro",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -2338,6 +2440,10 @@ internal object CcSwitchCatalogBundle {
       "id": "mimo-v2.5",
       "displayName": "MiMo V2.5",
       "capability": {
+       "input": [
+        "text",
+        "image"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "none",
@@ -2362,6 +2468,9 @@ internal object CcSwitchCatalogBundle {
       "id": "zai-org/glm-5.3",
       "displayName": "GLM-5.3",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "high"
@@ -2385,6 +2494,10 @@ internal object CcSwitchCatalogBundle {
       "id": "grok-4.5",
       "displayName": "Grok 4.5",
       "capability": {
+       "input": [
+        "text",
+        "image"
+       ],
        "contextWindow": 500000,
        "reasoningLevels": [
         "low",
@@ -2411,6 +2524,10 @@ internal object CcSwitchCatalogBundle {
       "id": "grok-4.5",
       "displayName": "Grok 4.5",
       "capability": {
+       "input": [
+        "text",
+        "image"
+       ],
        "contextWindow": 500000,
        "reasoningLevels": [
         "low",
@@ -2437,6 +2554,10 @@ internal object CcSwitchCatalogBundle {
       "id": "moonshotai/kimi-k3",
       "displayName": "Kimi K3",
       "capability": {
+       "input": [
+        "text",
+        "image"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "low",
@@ -2462,6 +2583,9 @@ internal object CcSwitchCatalogBundle {
       "id": "glm-5.3",
       "displayName": "GLM 5.3",
       "capability": {
+       "input": [
+        "text"
+       ],
        "contextWindow": 1000000,
        "reasoningLevels": [
         "low",
@@ -2474,6 +2598,10 @@ internal object CcSwitchCatalogBundle {
       "id": "glm-5.3-flash",
       "displayName": "GLM 5.3 Flash",
       "capability": {
+       "input": [
+        "text",
+        "image"
+       ],
        "contextWindow": 1000000,
        "reasoningLevels": [
         "low",
@@ -2486,6 +2614,10 @@ internal object CcSwitchCatalogBundle {
       "id": "kimi-k3",
       "displayName": "Kimi K3",
       "capability": {
+       "input": [
+        "text",
+        "image"
+       ],
        "contextWindow": 1048576,
        "reasoningLevels": [
         "max"
@@ -2539,6 +2671,10 @@ internal object CcSwitchCatalogBundle {
       "id": "claude-fable-5",
       "displayName": "Claude Fable 5",
       "capability": {
+       "input": [
+        "text",
+        "image"
+       ],
        "contextWindow": 1000000
       }
      }

@@ -66,6 +66,37 @@ class AgentProviderCatalogStoreTest {
         )
     }
 
+
+    @Test
+    fun `模型能力参数随供应商持久化并在读取时保留`() {
+        val saved = store.saveUserProvider(
+            "codex",
+            provider("zhipu", "智谱", "https://api.example.com/v1", "glm-5.3").copy(
+                models = listOf(
+                    AgentCatalogModel(
+                        id = "glm-5.3",
+                        displayName = "GLM 5.3",
+                        contextWindowTokens = 1048576,
+                        maxOutputTokens = 65536,
+                        supportsReasoning = true,
+                        supportsImages = true,
+                    ),
+                    AgentCatalogModel(id = "glm-5.3-flash", displayName = "GLM 5.3 Flash"),
+                )
+            ),
+        )
+        assertEquals("zhipu", saved?.id)
+        val models = store.snapshot("codex").providers.single().models
+        val full = models.first { it.id == "glm-5.3" }
+        assertEquals(1048576L, full.contextWindowTokens)
+        assertEquals(65536L, full.maxOutputTokens)
+        assertEquals(true, full.supportsReasoning)
+        assertEquals(true, full.supportsImages)
+        val minimal = models.first { it.id == "glm-5.3-flash" }
+        assertNull(minimal.contextWindowTokens)
+        assertNull(minimal.supportsImages)
+    }
+
     @Test
     fun `供应商目录绑定和用户排除记录会随Provider持久化`() {
         val sync = AgentProviderCatalogSyncMetadata(
