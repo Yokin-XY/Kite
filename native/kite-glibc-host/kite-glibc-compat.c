@@ -126,6 +126,7 @@ typedef int (*kite_dirfd_path_flags_fn)(int, const char *, int);
 typedef int (*kite_renameat2_fn)(int, const char *, int, const char *, unsigned int);
 typedef int (*kite_renameat_fn)(int, const char *, int, const char *);
 typedef int (*kite_faccessat_fn)(int, const char *, int, int);
+typedef int (*kite_linkat_fn)(int, const char *, int, const char *, int);
 
 int open(const char *path, int flags, ...) {
     char buffer[KITE_PATH_BUFFER];
@@ -198,6 +199,9 @@ int openat64(int directory, const char *path, int flags, ...) {
 }
 
 static long kite_fallback_openat(long dirfd, const char *path, long flags, long mode);
+static int kite_linkat_copy_fallback(
+    int old_directory, const char *old_path,
+    int new_directory, const char *new_path);
 
 struct kite_open_how {
     unsigned long long flags;
@@ -300,6 +304,102 @@ int renameat2(int old_directory, const char *old_path, int new_directory, const 
         old_directory, kite_map_path(old_path, old_buffer),
         new_directory, kite_map_path(new_path, new_buffer),
         flags);
+}
+
+/*
+ * Android SELinux（untrusted_app 域）拒绝 App 进程对 app_data_file 创建硬链接
+ * （linkat 返回 EACCES，且多为 dontaudit 静默拒绝）。OpenClaw 等软件用“临时文件
+ * + 硬链接”做原子发布（staging 目录写完 link 到正式名），在通用 Linux 合法，
+ * 在 App 域全链路被拒。降级语义：源文件保留，目标位置得到同样内容的独立副本，
+ * 用 copy+rename 完成（renameat 在 App 域允许，改名即原子可见）。
+ * inode 不再共享，但 staging 目录随后被发布方删除，无共享需求。
+ */
+static int kite_linkat_copy_fallback(
+    int old_directory, const char *old_path,
+    int new_directory, const char *new_path
+) {
+    if (kite_real_syscall == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+#define KITE_LINK_TRACE(step, err) \
+    dprintf(2, "[kite-link-fallback] %s errno=%d path=%s\n", step, (int) (err), new_path)
+    int source_fd = (int) kite_real_syscall(
+        SYS_openat, old_directory, (long) old_path, O_RDONLY | O_CLOEXEC, 0L);
+    if (source_fd < 0) { KITE_LINK_TRACE("open-src", errno); return -1; }
+    struct stat status;
+    if (kite_real_syscall(SYS_fstat, source_fd, (long) &status, 0L, 0L, 0L) != 0) {
+        int saved_errno = errno;
+        KITE_LINK_TRACE("fstat-src", saved_errno);
+        kite_real_syscall(SYS_close, source_fd, 0L, 0L, 0L, 0L);
+        errno = saved_errno;
+        return -1;
+    }
+    char temporary[64];
+    snprintf(temporary, sizeof temporary, ".kite-link-%ld-%d",
+             (long) getpid(), (int) (status.st_ino & 0x7fffffff));
+    int target_fd = (int) kite_real_syscall(
+        SYS_openat, new_directory, (long) temporary,
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, (long) (status.st_mode & 0777));
+    if (target_fd < 0) {
+        int saved_errno = errno;
+        KITE_LINK_TRACE("open-tmp", saved_errno);
+        kite_real_syscall(SYS_close, source_fd, 0L, 0L, 0L, 0L);
+        errno = saved_errno;
+        return -1;
+    }
+    char buffer[65536];
+    int failed = 0;
+    for (;;) {
+        long read_bytes = kite_real_syscall(SYS_read, source_fd, (long) buffer, sizeof buffer, 0L, 0L);
+        if (read_bytes == 0) break;
+        if (read_bytes < 0) { failed = 1; break; }
+        long offset = 0;
+        while (offset < read_bytes) {
+            long written = kite_real_syscall(SYS_write, target_fd, (long) (buffer + offset), read_bytes - offset, 0L, 0L);
+            if (written <= 0) { failed = 1; break; }
+            offset += written;
+        }
+        if (failed) break;
+    }
+    kite_real_syscall(SYS_close, source_fd, 0L, 0L, 0L, 0L);
+    if (kite_real_syscall(SYS_close, target_fd, 0L, 0L, 0L, 0L) != 0) failed = 1;
+    if (failed) {
+        int saved_errno = errno != 0 ? errno : EIO;
+        KITE_LINK_TRACE("copy", saved_errno);
+        kite_real_syscall(SYS_unlinkat, new_directory, (long) temporary, 0L, 0L, 0L);
+        errno = saved_errno;
+        return -1;
+    }
+    long renamed = kite_real_syscall(
+        SYS_renameat, new_directory, (long) temporary, new_directory, (long) new_path, 0L);
+    if (renamed != 0) {
+        int saved_errno = errno;
+        KITE_LINK_TRACE("rename", saved_errno);
+        kite_real_syscall(SYS_unlinkat, new_directory, (long) temporary, 0L, 0L, 0L);
+        errno = saved_errno;
+        return -1;
+    }
+    return 0;
+#undef KITE_LINK_TRACE
+}
+
+int linkat(int old_directory, const char *old_path, int new_directory, const char *new_path, int flags) {
+    char old_buffer[KITE_PATH_BUFFER];
+    char new_buffer[KITE_PATH_BUFFER];
+    KITE_RESOLVE("linkat", kite_linkat_fn, kite_real_linkat)
+    int result = kite_real_linkat(
+        old_directory, kite_map_path(old_path, old_buffer),
+        new_directory, kite_map_path(new_path, new_buffer),
+        flags);
+    if (result == 0 || errno != EACCES) return result;
+    return kite_linkat_copy_fallback(
+        old_directory, kite_map_path(old_path, old_buffer),
+        new_directory, kite_map_path(new_path, new_buffer));
+}
+
+int link(const char *old_path, const char *new_path) {
+    return linkat(AT_FDCWD, old_path, AT_FDCWD, new_path, 0);
 }
 
 int stat(const char *path, struct stat *status) {
@@ -438,6 +538,12 @@ long kite_syscall_path(long number, long a1, long a2, long a3, long a4, long a5)
         memcpy(&how, (const void *) args[2], sizeof(how));
         errno = 0;
         result = kite_fallback_openat(args[0], (const char *) args[1], (long) how.flags, (long) how.mode);
+    }
+    if (result == -1 && errno == EACCES && number == SYS_linkat) {
+        /* App 域 SELinux 拒绝硬链接：与符号拦截层同样降级为 copy+rename。 */
+        errno = 0;
+        result = kite_linkat_copy_fallback(
+            (int) args[0], (const char *) args[1], (int) args[2], (const char *) args[3]);
     }
     return result;
 }
