@@ -206,6 +206,16 @@ object AgentConversationStore {
         val replay = replayConversations.remove(key) ?: return mutableConversations[key]?.freeze()
         val current = mutableConversations[key]
         replay.finishHistoryReplay()
+        if (current != null && current !== replay && !replayCoversCurrent(current, replay)) {
+            // 铁律：回放是“替换整个投影”的唯一入口，替换前必须覆盖当前投影里的全部历史消息。
+            // Agent 重放不完整时拒绝替换、保留原投影并返回 null，调用方（load 重试/切会话）可重拉。
+            safeDebugLog(
+                "KiteConvStore",
+                "history replay rejected: coverage regression currentItems=${current.timeline.size} replayItems=${replay.timeline.size}",
+            )
+            abortHistoryReplayInternal(current)
+            return null
+        }
         if (current != null && current !== replay) {
             replay.mergeLocalTurnsFrom(current)
         }
@@ -215,6 +225,33 @@ object AgentConversationStore {
         mutableConversations[key] = replay
         publishNow(key)
         return replay.freeze()
+    }
+
+    /**
+     * 覆盖性对账：当前投影中来自历史（非本地乐观）的消息，必须都能在新回放中找到同指纹副本。
+     * 允许回放比当前更多（Agent 补齐了早前截断的历史），不允许变少。
+     */
+    private fun replayCoversCurrent(current: MutableConversation, replay: MutableConversation): Boolean {
+        val durableCurrent = current.timeline.filterIsInstance<MutableMessage>()
+            .filterNot(MutableMessage::originatedLocally)
+        if (durableCurrent.isEmpty()) return true
+        val remaining = HashMap<MessageFingerprint, Int>()
+        replay.timeline.filterIsInstance<MutableMessage>().forEach { message ->
+            remaining.merge(message.fingerprint(), 1, Int::plus)
+        }
+        return durableCurrent.all { message ->
+            val count = remaining[message.fingerprint()] ?: return@all false
+            if (count <= 0) return@all false
+            remaining[message.fingerprint()] = count - 1
+            true
+        }
+    }
+
+    private fun abortHistoryReplayInternal(current: MutableConversation) {
+        current.historyStatus = current.historyStatusBeforeReplay ?: AgentConversationHistoryStatus.Live
+        current.historyStatusBeforeReplay = null
+        current.revision++
+        publishNow(current.key)
     }
 
     @Synchronized
@@ -635,14 +672,18 @@ object AgentConversationStore {
 
         private fun prepareTurnForMessage(event: AgentSessionEvent.MessageChunk) {
             if (event.role == AgentMessageRole.User) {
-                val sameUserMessage = timeline
-                    .filterIsInstance<MutableMessage>()
-                    .lastOrNull { it.role == AgentMessageRole.User && it.turnOrdinal == turnOrdinal }
-                    ?.let { previous ->
-                        (event.messageId != null && previous.messageId == event.messageId) ||
-                            (event.messageId == null && previous.messageId == null && turnActive)
-                    }
-                    ?: false
+                // “同一条 user 消息的分片”只可能出现在紧邻上一条：live 发送或回放的连续 chunk。
+                // 不能按“本轮任意位置出现过 user”判定——历史回放里 user1,agent1,user2 的场景会把
+                // user2 误判为 user1 的续片，全部挤进同一轮（表现为连发 N 条+最后一条回复）。
+                val lastMessage = timeline.lastOrNull() as? MutableMessage
+                val sameUserMessage = lastMessage != null &&
+                    lastMessage.role == AgentMessageRole.User &&
+                    lastMessage.turnOrdinal == turnOrdinal &&
+                    turnActive &&
+                    (
+                        (event.messageId != null && lastMessage.messageId == event.messageId) ||
+                            (event.messageId == null && lastMessage.messageId == null)
+                        )
                 if (!sameUserMessage) {
                     if (!turnActive || currentTurnHasUser) beginTurn()
                     currentTurnHasUser = true

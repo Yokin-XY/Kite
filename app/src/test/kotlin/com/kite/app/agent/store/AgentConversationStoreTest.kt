@@ -254,6 +254,11 @@ class AgentConversationStoreTest {
         AgentConversationStore.beginHistoryReplay("run-1", key)
         val beforeReplayEvents = AgentConversationStore.publicationCountForTest()
 
+        // 回放是权威历史：必须覆盖当前投影里的既有消息（"原内容"），否则会被覆盖性对账拒绝。
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(AgentMessageRole.Assistant, AgentContent.Text("原内容"), "old")
+        )
         repeat(120) { index ->
             AgentConversationStore.applyEvent(
                 key,
@@ -270,14 +275,14 @@ class AgentConversationStoreTest {
             .content.single() as AgentContent.Text).text)
 
         val restored = AgentConversationStore.completeHistoryReplay(key)!!
-        assertEquals(120, restored.history.totalItems)
+        assertEquals(121, restored.history.totalItems)
         assertEquals(80, restored.history.visibleItems)
         assertTrue(restored.history.hasEarlierItems)
         assertEquals("历史 40", ((restored.timeline.first() as AgentConversationItem.Message)
             .content.single() as AgentContent.Text).text)
 
         val expanded = AgentConversationStore.revealEarlier(key)!!
-        assertEquals(120, expanded.timeline.size)
+        assertEquals(121, expanded.timeline.size)
         assertFalse(expanded.history.hasEarlierItems)
     }
 

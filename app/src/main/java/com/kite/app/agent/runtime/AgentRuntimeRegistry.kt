@@ -1,6 +1,7 @@
 package com.kite.app.agent.runtime
 
 import com.kite.app.agent.contract.AgentClientCapabilities
+import com.kite.app.foundation.logging.Logger
 import com.kite.app.agent.contract.AgentClientEndpoint
 import com.kite.app.agent.contract.AgentClientInfo
 import com.kite.app.agent.contract.AgentCommand
@@ -1821,21 +1822,36 @@ object AgentRuntimeRegistry {
         // 再由 ConversationStore 与仍未进入原生历史的本地回合对账，不能把一份内存投影视为完整历史。
         if (connection.capabilities.sessions.load) {
             AgentConversationStore.beginHistoryReplay(instanceId, key)
-            return when (val loaded = connection.loadSession(request)) {
-                is AgentOperationResult.Success -> {
-                    AgentConversationStore.completeHistoryReplay(key)
-                    AgentConversationStore.restoreTurnTimings(key, turnTimings)
-                    loaded
+            val loaded = connection.loadSession(request)
+            if (loaded is AgentOperationResult.Success &&
+                AgentConversationStore.completeHistoryReplay(key) == null
+            ) {
+                // 覆盖性对账拒绝替换（Agent 回放不完整）：保留原投影并静默重拉一次。
+                AgentConversationStore.abortHistoryReplay(key)
+                Logger.i("AgentRuntimeRegistry", "history replay coverage regression, retrying once: session=$sessionId")
+                AgentConversationStore.beginHistoryReplay(instanceId, key)
+                val retried = connection.loadSession(request)
+                when {
+                    retried is AgentOperationResult.Success &&
+                        AgentConversationStore.completeHistoryReplay(key) == null -> {
+                        AgentConversationStore.abortHistoryReplay(key)
+                        Logger.i(
+                            "AgentRuntimeRegistry",
+                            "history replay retry still incomplete, keeping current projection: session=$sessionId",
+                        )
+                    }
+                    retried is AgentOperationResult.Success ->
+                        AgentConversationStore.restoreTurnTimings(key, turnTimings)
+                    else -> AgentConversationStore.abortHistoryReplay(key)
                 }
-                is AgentOperationResult.Failure -> {
-                    AgentConversationStore.abortHistoryReplay(key)
-                    loaded
-                }
-                is AgentOperationResult.Unsupported -> {
-                    AgentConversationStore.abortHistoryReplay(key)
-                    loaded
-                }
+                return loaded
             }
+            if (loaded is AgentOperationResult.Success) {
+                AgentConversationStore.restoreTurnTimings(key, turnTimings)
+                return loaded
+            }
+            AgentConversationStore.abortHistoryReplay(key)
+            return loaded
         }
         if (connection.capabilities.sessions.resume) {
             AgentConversationStore.bind(instanceId, key, AgentSessionPhase.Preparing)
