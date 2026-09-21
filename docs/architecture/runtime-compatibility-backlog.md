@@ -61,7 +61,7 @@ App 域（untrusted_app + zygote seccomp filter）原生直跑 Ubuntu/glibc 程�
 | 编号 | 边界 | 已确认事实 | 当前路线 | 处置 |
 | --- | --- | --- | --- | --- |
 | GUEST-SYSCALL-01 | set_robust_list(99) / getrandom(278) / rseq(293) 被厂商门禁 KILL | 2026-09-20/21 App 域实证；root/shell 域无此雷；glibc 三者均有降级路径 | **已落地（25232bf2）**：preparer 运行时补丁随 APK（99 既有机制扩展，278/293 新增，patchAlgo=v2 强制重发布）；三轮冷启动 t+3~5s 过 | 纲领第七节雷库首批 |
-| GUEST-SYSCALL-02 | openat2(437) 被 KILL（fs-safe 等 Rust 内联直发） | rustix/fs-safe **无** ENOSYS 降级（实测 -38 被当 fd 用） | **已落地（OnePlus 8T 手动部署）**：调用点现场翻译为 openat（scripts/patch-fs-safe-openat2.py）；固化进资源安装链待做——openclaw 重装会还原 | 同上 |
+| GUEST-SYSCALL-02 | openat2(437) 被 KILL（fs-safe 等 Rust 内联直发） | rustix/fs-safe **无** ENOSYS 降级（实测 -38 被当 fd 用） | **已落地并固化（ce408b4e）**：调用点现场翻译为 openat，manifest 声明式 binaryPatches 机制随会话启动自动应用（幂等、计数校验、失败关闭）；openclaw 重装免疫 | 同上 |
 | GUEST-SYSCALL-03 | ptrace 运行时兜底不可靠 | PTRACE_SYSCALL 入口/出口交替判定在多线程+信号环境下单轮错位 142 次（openclaw）；跨机型时序不可预测 | tracer 转职雷探测器（诊断），不参与生产链路 | [纲领第五节](ubuntu-simulation-doctrine.md)优先级纪律 |
 | GUEST-PY-00 | rootfs python3.12 宿主直跑 | 2026-09-20 全链路实证通过 | HostPython 车道（2f82ed63） | 通用层落地后重估 FAST-PY-01/02 边界 |
 
