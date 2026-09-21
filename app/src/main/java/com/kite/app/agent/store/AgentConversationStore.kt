@@ -1040,6 +1040,12 @@ object AgentConversationStore {
             timeline += item
             retainedTextChars += item.retainedTextChars
             retainedInlineBytes += item.retainedInlineBytes
+            // live 追加时可见窗口必须跟随增长：freeze 只暴露尾部 N 条，若 N 不变，
+            // 新消息会把最老的可见消息挤出窗口——表现为“新消息一到，旧消息被抹除”。
+            // （历史回放的影子投影 recordsLiveTiming=false，窗口由 completeHistoryReplay 统一设置。）
+            if (recordsLiveTiming) {
+                visibleTimelineItems = minOf(timeline.size, visibleTimelineItems + 1)
+            }
             trimTimeline()
         }
 

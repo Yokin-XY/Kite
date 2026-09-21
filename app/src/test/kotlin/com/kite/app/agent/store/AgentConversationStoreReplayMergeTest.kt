@@ -155,4 +155,31 @@ class AgentConversationStoreReplayMergeTest {
         assertNotNull("更完整的回放应正常替换", completed)
         assertEquals(4, AgentConversationStore.snapshot(key)!!.timeline.size)
     }
+
+    @Test
+    fun `live 追加消息时可见窗口跟随增长不挤掉历史`() {
+        // 现场：短会话（3 条历史）重放完成后 visibleTimelineItems=3；
+        // live 流式回复每加一条，freeze 的尾部窗口若不跟随，最老的可见消息
+        // 就被挤出窗口——表现为"新消息一到，旧消息被抹除"。
+        AgentConversationStore.bind("instance-1", key, AgentSessionPhase.Ready)
+        AgentConversationStore.beginHistoryReplay("instance-2", key)
+        AgentConversationStore.applyEvent(key, user("hi", null))
+        AgentConversationStore.applyEvent(key, assistant("hello", null))
+        AgentConversationStore.completeHistoryReplay(key)
+        assertEquals(2, AgentConversationStore.snapshot(key)!!.timeline.size)
+
+        // 用户发新消息 + Agent 流式回复
+        AgentConversationStore.applyEvent(key, user("test", "local-1"))
+        AgentConversationStore.applyEvent(key, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting))
+        AgentConversationStore.applyEvent(key, assistant("answer", "msg-2"))
+        AgentConversationStore.applyEvent(key, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready))
+
+        val snapshot = AgentConversationStore.snapshot(key)!!
+        assertEquals(
+            "live 追加不得把重放历史挤出可见窗口",
+            listOf("hi", "hello", "test", "answer"),
+            snapshot.timeline.map { (it as AgentConversationItem.Message).content.mapNotNull { c -> (c as? AgentContent.Text)?.text }.joinToString("") },
+        )
+        assertEquals(2, snapshot.turns.size)
+    }
 }
