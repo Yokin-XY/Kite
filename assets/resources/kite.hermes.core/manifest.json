@@ -150,8 +150,8 @@
           "pythonAbi": "cpython-312-aarch64-linux-gnu"
         },
         "environment": {
-          "HOME": "/workspace/.kf/software/kite.hermes.core/hermes-agent/user-home",
-          "HERMES_HOME": "/workspace/.kf/software/kite.hermes.core/hermes-agent/home",
+          "HOME": "/workspace/.kf/software/kite.hermes.core/user-home",
+          "HERMES_HOME": "/workspace/.kf/software/kite.hermes.core/home",
           "HERMES_DISABLE_LAZY_INSTALLS": "1",
           "PYTHONPATH": "/workspace/.kf/software/kite.hermes.core/hermes-agent:/workspace/.kf/software/kite.hermes.core/hermes-agent/venv/lib/python3.12/site-packages"
         }
