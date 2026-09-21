@@ -19,6 +19,38 @@ import org.junit.Test
 
 class AgentModelLibraryPolicyTest {
     @Test
+    fun `行计数用目录事实而选择器保留协议全集`() {
+        // 目录（用户保存的那本账）只有 2 个模型；协议选项公布 4 个。
+        val snapshot = AgentLiveConfigSnapshot(
+            agentId = "codex",
+            adapterId = "codex",
+            revision = "test",
+            displayLocation = "test",
+            providers = listOf(
+                AgentProviderSummary(
+                    id = "zhipu",
+                    displayName = "智谱 GLM",
+                    baseUrl = "https://api.example.com/v1",
+                    models = listOf(
+                        AgentProviderModelSummary("zhipu/glm-5.2"),
+                        AgentProviderModelSummary("zhipu/glm-5.0"),
+                    ),
+                    credentialPresence = com.kite.app.agent.config.AgentCredentialPresence.Present,
+                    source = AgentModelSource.UserConfigured,
+                ),
+            ),
+        )
+        val projection = AgentModelLibraryPolicy.projectProviders(
+            snapshot = snapshot,
+            modelOption = modelOption(),
+            library = AgentModelLibrarySnapshot(),
+        ).first { it.id == "zhipu" }
+        // 选择器全集来自协议选项（4 个）；行摘要计数必须是目录事实（2 个）。
+        assertEquals(4, projection.models.size)
+        assertEquals(2, projection.displayModelCount)
+    }
+
+    @Test
     fun `隐藏供应商不会从会话选择中移除当前模型供应商`() {
         val option = modelOption(current = "zhipu/glm-5.2")
         val library = AgentModelLibrarySnapshot(

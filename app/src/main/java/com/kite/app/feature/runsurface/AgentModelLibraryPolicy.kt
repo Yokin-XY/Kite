@@ -14,7 +14,10 @@ import com.kite.app.agent.registration.AgentOfficialAccountSpec
 internal data class AgentModelProviderProjection(
     val id: String,
     val name: String,
+    /** 会话选择器可选全集（协议选项优先，含目录同供应商合并）；不是库存计数。 */
     val models: List<AgentConfigChoice>,
+    /** 供应商目录里的真实模型数（用户保存的那本账），行摘要与编辑入口以此为准。 */
+    val displayModelCount: Int,
     val source: AgentModelSource,
     val editableProvider: AgentProviderSummary? = null,
     val officialAccount: AgentOfficialAccountSpec? = null,
@@ -58,6 +61,7 @@ internal object AgentModelLibraryPolicy {
             val selectedModel = selectedModelValue(snapshot, provider.id, models)
             AgentModelProviderProjection(
                 id = provider.id,
+                displayModelCount = displayProvider.models.size,
                 name = provider.displayName,
                 models = models,
                 source = provider.source,
@@ -97,6 +101,7 @@ internal object AgentModelLibraryPolicy {
                 id = providerId,
                 name = account.displayName,
                 models = displayChoices,
+                displayModelCount = displayChoices.size,
                 source = AgentModelSource.OfficialLogin,
                 officialAccount = account,
                 selectedModelValue = selectedModel,
@@ -119,6 +124,7 @@ internal object AgentModelLibraryPolicy {
                     name = choices.firstOrNull()?.groupName?.takeIf(String::isNotBlank)
                         ?: "官方模型",
                     models = displayChoices,
+                    displayModelCount = displayChoices.size,
                     source = AgentModelSource.OfficialLogin,
                     selectedModelValue = selectedModelValue(snapshot, providerId, displayChoices),
                     libraryGroupId = AgentModelLibraryStore.OFFICIAL_GROUP_ID,
@@ -139,6 +145,7 @@ internal object AgentModelLibraryPolicy {
                     name = choices.firstOrNull()?.groupName?.takeIf(String::isNotBlank)
                         ?: "免费模型",
                     models = displayChoices,
+                    displayModelCount = displayChoices.size,
                     source = AgentModelSource.Free,
                     selectedModelValue = selectedModel,
                     visibleInConversation = library.isProviderVisible(providerId)

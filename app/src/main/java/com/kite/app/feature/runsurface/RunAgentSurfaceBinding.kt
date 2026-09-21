@@ -7601,7 +7601,7 @@ internal class RunAgentSurfaceBinding(
                                 if (projection.models.isNotEmpty()) append(" · ")
                             }
                             if (projection.models.isNotEmpty() || officialState == null) {
-                                append("${projection.models.size} 个模型")
+                                append("${projection.displayModelCount} 个模型")
                             }
                             if (!projection.visibleInConversation && !isDefault) append(" · 未加入会话选择")
                         }

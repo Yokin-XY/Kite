@@ -193,7 +193,16 @@ fun AgentProviderCatalogSnapshot.toConfigurationProjection(
             id = provider.id,
             displayName = provider.displayName,
             baseUrl = provider.baseUrl,
-            models = provider.models.map { model -> AgentProviderModelSummary(model.id, model.displayName) },
+            models = provider.models.map { model ->
+                AgentProviderModelSummary(
+                    model.id,
+                    model.displayName,
+                    contextWindowTokens = model.contextWindowTokens,
+                    maxOutputTokens = model.maxOutputTokens,
+                    supportsReasoning = model.supportsReasoning,
+                    supportsImages = model.supportsImages,
+                )
+            },
             credentialPresence = when {
                 provider.policy != AgentProviderCatalogPolicy.UserManaged -> AgentCredentialPresence.NotApplicable
                 provider.credentialPresent -> AgentCredentialPresence.Present
