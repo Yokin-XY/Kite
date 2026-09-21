@@ -314,6 +314,13 @@ int renameat2(int old_directory, const char *old_path, int new_directory, const 
  * 用 copy+rename 完成（renameat 在 App 域允许，改名即原子可见）。
  * inode 不再共享，但 staging 目录随后被发布方删除，无共享需求。
  */
+/*
+ * 降级为 copy+rename。临时文件必须建在目标文件的同目录（dirname(new_path)）：
+ * 1) 同目录 rename 才是原子发布，跨目录 rename 会丢失原子性；
+ * 2) 宿主车道的进程 cwd 可能是只读的 "/"（Kite spawn 不保证 cwd），
+ *    在 cwd 建临时文件会得到 EROFS。staging 源文件与目标目录同目录，
+ *    因此 dirname(new_path) 一定可写。
+ */
 static int kite_linkat_copy_fallback(
     int old_directory, const char *old_path,
     int new_directory, const char *new_path
@@ -335,11 +342,29 @@ static int kite_linkat_copy_fallback(
         errno = saved_errno;
         return -1;
     }
-    char temporary[64];
-    snprintf(temporary, sizeof temporary, ".kite-link-%ld-%d",
-             (long) getpid(), (int) (status.st_ino & 0x7fffffff));
+    /* 临时文件名 = 目标同目录 + .kite-link-<pid>-<inode>。
+     * new_path 经 kite_map_path 后可能是重写路径；这里以重写后的值为准。 */
+    char temporary[KITE_PATH_BUFFER];
+    const char *last_slash = new_path != NULL ? strrchr(new_path, '/') : NULL;
+    int prefix_length;
+    if (last_slash == NULL) {
+        /* 无目录部分：退回 AT_FDCWD 相对名（与旧行为一致，链路不会走到）。 */
+        prefix_length = 0;
+        temporary[0] = '\0';
+    } else {
+        prefix_length = (int) (last_slash - new_path) + 1;
+        if (prefix_length >= (int) sizeof temporary - 40) {
+            errno = ENAMETOOLONG;
+            KITE_LINK_TRACE("tmp-path", ENAMETOOLONG);
+            kite_real_syscall(SYS_close, source_fd, 0L, 0L, 0L, 0L);
+            return -1;
+        }
+        memcpy(temporary, new_path, (size_t) prefix_length);
+    }
+    snprintf(temporary + prefix_length, sizeof temporary - (size_t) prefix_length,
+             ".kite-link-%ld-%d", (long) getpid(), (int) (status.st_ino & 0x7fffffff));
     int target_fd = (int) kite_real_syscall(
-        SYS_openat, new_directory, (long) temporary,
+        SYS_openat, AT_FDCWD, (long) temporary,
         O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, (long) (status.st_mode & 0777));
     if (target_fd < 0) {
         int saved_errno = errno;
@@ -372,7 +397,7 @@ static int kite_linkat_copy_fallback(
         return -1;
     }
     long renamed = kite_real_syscall(
-        SYS_renameat, new_directory, (long) temporary, new_directory, (long) new_path, 0L);
+        SYS_renameat, AT_FDCWD, (long) temporary, new_directory, (long) new_path, 0L);
     if (renamed != 0) {
         int saved_errno = errno;
         KITE_LINK_TRACE("rename", saved_errno);
@@ -392,7 +417,10 @@ int linkat(int old_directory, const char *old_path, int new_directory, const cha
         old_directory, kite_map_path(old_path, old_buffer),
         new_directory, kite_map_path(new_path, new_buffer),
         flags);
-    if (result == 0 || errno != EACCES) return result;
+    /* App 域拒绝硬链接的错误码因拒绝者而异：SELinux 返回 EACCES；
+     * zygote seccomp 过滤器（AOSP 对部分 syscall 用 SECCOMP_RET_ERRNO|EROFS）
+     * 返回 EROFS。两者都降级为 copy+rename。 */
+    if (result == 0 || (errno != EACCES && errno != EROFS)) return result;
     return kite_linkat_copy_fallback(
         old_directory, kite_map_path(old_path, old_buffer),
         new_directory, kite_map_path(new_path, new_buffer));
@@ -539,7 +567,7 @@ long kite_syscall_path(long number, long a1, long a2, long a3, long a4, long a5)
         errno = 0;
         result = kite_fallback_openat(args[0], (const char *) args[1], (long) how.flags, (long) how.mode);
     }
-    if (result == -1 && errno == EACCES && number == SYS_linkat) {
+    if (result == -1 && (errno == EACCES || errno == EROFS) && number == SYS_linkat) {
         /* App 域 SELinux 拒绝硬链接：与符号拦截层同样降级为 copy+rename。 */
         errno = 0;
         result = kite_linkat_copy_fallback(
