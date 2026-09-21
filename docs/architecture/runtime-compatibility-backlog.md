@@ -66,3 +66,15 @@ App 域（untrusted_app + zygote seccomp filter）原生直跑 Ubuntu/glibc 程�
 | GUEST-PY-00 | rootfs python3.12 宿主直跑 | 2026-09-20 全链路实证通过 | HostPython 车道（2f82ed63） | 通用层落地后重估 FAST-PY-01/02 边界 |
 
 证据回指：[Ubuntu 模拟态纲领](ubuntu-simulation-doctrine.md)、[通用车道方案](../plans/ubuntu-fast-lane-plan.md)、openclaw App 域攻坚记录（2026-09-20/21）。
+
+## Hermes HERMES_HOME 路径迁移的旧数据分裂（2026-09-22）
+
+`51728f40` 将 manifest 的 `HERMES_HOME` 从 `hermes-agent/home` 统一到 `kite.hermes.core/home`（与
+wrapper/适配器写 config.yaml 的路径一致）。已装旧版本且用 Hermes 聊过的设备原地升级后，旧
+state.db（会话库）留在旧路径，新路径 state.db 为空——会话列表仍显示旧会话，点开后
+hermes `session/load` 报 not found，页面表现为"没加载成功"。
+
+- 设备侧修复配方：以 App 身份把旧 home 的 `state.db`、`auth.json`、`config.yaml` 等用户数据
+  复制到新 home（root `dd` 复制后 `chown u0_a285:u0_a285`；`run-as cp -R` 在 root shell 下会段错误）。
+- 长期方案（待办）：资源 manifest 声明式数据迁移合同（launch 前一次性 from→to 迁移），由
+  AndroidAgentRecipeRuntime 统一执行；在此之前不做 per-Agent Kotlin 特判。
