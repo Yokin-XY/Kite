@@ -76,12 +76,17 @@ rootfs 内任意动态 glibc ELF 判定（现有 PT_INTERP 读取逻辑已具备
 
 ### 过程中发现的三个同族缺口（宿主车道 Ubuntu 语义缺口清单 +3）
 
-1. **rootfs 内 symlink 对 App uid 不可读**（真文件可读、chown 无效、SELinux 标签
-   相同；机理在 Android 文件系统层，未深挖）。容器车道靠 ld.so.cache 条目
-   （realpath 直指真文件）绕开；宿主车道 LP 搜索撞 symlink 即 EACCES。
-   - 临时缓解：host/glibc 内放置 soname 硬链（真文件）。
-   - 待办：rootfs 构建流水线消灭 lib 目录 symlink（改真文件/硬链），或车道
-     准备期生成 symlink-free 库目录。
+1. **rootfs 内 symlink 的"创建者决定可读性"**（最终根因）：App uid 打开
+   "非本 uid 进程创建"的 symlink 被拒（open/lstat/readlink/unlink 全拒，
+   chown 无效、SELinux 标签相同）；同目录 App uid 自建的 symlink 可读。
+   容器内 root 会话（apt install 触发 ldconfig 重建 soname symlink）即造出
+   不可读 symlink，宿主车道 LP 搜索撞上即 EACCES；容器车道靠 ld.so.cache
+   （realpath 直指真文件）绕开故无感。
+   - 修复：`HostNodeRuntimePreparer.repairRootfsSonameSymlinks`——车道准备期
+     以 App uid 按 ldconfig 语义（NAME.so.V → 同前缀最高版本真文件）重建
+     缺失 soname 链接；坏 inode 由 root 删除后本机制负责重建。
+   - 规则（记入运维常识）：**容器内 root 会话装包后，宿主车道需重跑车道准备**
+     （或直接避免在 root 会话里动 lib 目录）。
 2. **HOME 路径**：宿主车道程序读 $HOME/.claude/settings.json 时 HOME 为容器
    路径（/root），宿主上不存在。验证时以 HOME=rootfs/root 通过；**车道级
    HOME 映射未落地**（buildConfig 注入宿主映射 HOME，属下一步）。
@@ -92,10 +97,19 @@ rootfs 内任意动态 glibc ELF 判定（现有 PT_INTERP 读取逻辑已具备
 
 ### 事故与教训（本次自查）
 
-- 容器内 apt install 会 ldconfig 重建 rootfs/etc/ld.so.cache，把宿主车道
-  cache 解析打坏（容器路径条目）——容器内装包后需验证宿主车道库解析。
+- 容器内 apt install 会 ldconfig 重建 rootfs/etc/ld.so.cache（容器路径条目，
+  宿主车道解析打坏）+ **重建 lib soname symlink（root 建的，App uid 不可读）**
+  ——容器内装包后需重跑车道准备并验证宿主车道库解析。
 - su 下 chown -R rootfs 会破坏 /run/sshd 属主（sshd 拒启）——rootfs 属主
   修改要排除 /run。
+- 容器内进程写 /dev 直通宿主：apt 装包曾把宿主 /dev/null 替换成普通文件，
+  修复需 mknod + **restorecon**（漏 restorecon 标签错会令全部 App 反复
+  "failed to attach" 循环死）——修复设备文件务必 restorecon。
+
+### 最终验收（App 内，2026-09-22 02:06）
+
+宿主车道（fast agent -> host_node）Claude Code 会话页发送 "hi" →
+glm-5.3-flash 9 秒真实回复，状态"准备就绪"，无 Internal error。
 
 ## 验收
 

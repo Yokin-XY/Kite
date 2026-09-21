@@ -1,9 +1,11 @@
 package com.kite.app.foundation.runtime
 
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.nio.charset.StandardCharsets
 
 class HostNodeRuntimePreparerTest {
@@ -209,3 +211,23 @@ class HostNodeRuntimePreparerTest {
         const val CODE_OFFSET = 128
     }
 }
+
+    fun `rebuilds missing soname symlinks to highest version`() {
+        val rootfs = createTempDirectory()
+        val libDir = File(rootfs, "usr/lib/aarch64-linux-gnu").apply { mkdirs() }
+        File(libDir, "libstdc++.so.6.0.32").writeText("old")
+        File(libDir, "libstdc++.so.6.0.33").writeText("new")
+        File(libDir, "libz.so.1.3").writeText("z")
+        File(libDir, "plain.txt").writeText("x")
+
+        HostNodeRuntimePreparer.repairRootfsSonameSymlinks(rootfs)
+
+        val stdc = File(libDir, "libstdc++.so.6")
+        assertTrue(stdc.exists())
+        assertEquals("new", stdc.readText())
+        assertEquals("z", File(libDir, "libz.so.1").readText())
+        // 非库命名不参与；已有文件不覆盖；无版本 .so 不生成。
+        assertTrue(File(libDir, "plain.txt").isFile)
+        assertFalse(File(libDir, "libz.so").exists())
+    }
+

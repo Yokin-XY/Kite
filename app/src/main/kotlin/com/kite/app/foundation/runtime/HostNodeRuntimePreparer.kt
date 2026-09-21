@@ -139,6 +139,7 @@ internal object HostNodeRuntimePreparer {
                 }
             }
             RuntimeDnsFilePublisher.publish(resolvConf, dnsServers)
+            repairRootfsSonameSymlinks(rootfs)
         }
         if (published.isFailure) {
             return HostNodeRuntimePreparation.Fallback("host_assets_publish_failed")
@@ -419,6 +420,75 @@ internal object HostNodeRuntimePreparer {
     private fun File.readTextOrNull(): String? = runCatching {
         takeIf(File::isFile)?.readText()
     }.getOrNull()
+
+    /**
+     * rootfs lib 目录 soname symlink 的 App uid 重建（AGENTS.md 运行车道策略）。
+     *
+     * Android 上 App uid 打开"非本 uid 进程创建"的 symlink 会被拒（真文件可读，
+     * lstat/readlink/unlink 也一并被拒，chown 无关；同目录 App uid 自建的 symlink
+     * 可读——差异在创建进程的加密上下文）。容器内 root 会话（apt/ldconfig）或
+     * 宿主 root 工具重建过 rootfs symlink 后，宿主车道 LP 搜索撞上即 EACCES。
+     * 该形态下 App uid 无法修复 inode，只能由 root 删除；本函数负责以 App uid
+     * 按 ldconfig 语义重建缺失的 soname 链接（NAME.so.V → 同前缀最高版本真文件），
+     * 使宿主车道依赖解析不依赖历史 symlink。幂等：soname 已存在即跳过。
+     */
+    internal fun repairRootfsSonameSymlinks(rootfs: File) {
+        val libDirectories = listOf(
+            File(rootfs, "usr/lib/aarch64-linux-gnu"),
+            File(rootfs, "lib/aarch64-linux-gnu"),
+        )
+        for (directory in libDirectories) {
+            val entries = directory.listFiles() ?: continue
+            val realFiles = entries.filter { it.isFile && it.name.contains(".so") }
+            // name -> 最高版本真文件（版本号数值比较）。
+            val best = HashMap<String, File>()
+            for (candidate in realFiles) {
+                val soname = sonameOf(candidate.name) ?: continue
+                val current = best[soname]
+                if (current == null || isHigherVersion(candidate.name, current.name)) {
+                    best[soname] = candidate
+                }
+            }
+            for ((soname, target) in best) {
+                val link = File(directory, soname)
+                if (link.exists()) continue
+                runCatching {
+                    java.nio.file.Files.createSymbolicLink(
+                        link.toPath(),
+                        java.nio.file.Paths.get(target.name),
+                    )
+                }
+            }
+        }
+    }
+
+    /** NAME.so.V1[.V2[.V3]] → NAME.so.V1；非版本形态返回 null。 */
+    private fun sonameOf(fileName: String): String? {
+        val soIndex = fileName.indexOf(".so.")
+        if (soIndex <= 0) return null
+        val rest = fileName.substring(soIndex + 4).split('.')
+        if (rest.isEmpty() || rest[0].isEmpty()) return null
+        return fileName.substring(0, soIndex + 3 + 1 + rest[0].length)
+    }
+
+    private fun isHigherVersion(candidate: String, current: String): Boolean {
+        val candidateParts = versionParts(candidate)
+        val currentParts = versionParts(current)
+        val size = maxOf(candidateParts.size, currentParts.size)
+        for (index in 0 until size) {
+            val left = candidateParts.getOrElse(index) { 0 }
+            val right = currentParts.getOrElse(index) { 0 }
+            if (left != right) return left > right
+        }
+        return false
+    }
+
+    private fun versionParts(fileName: String): List<Int> {
+        val soIndex = fileName.indexOf(".so.")
+        if (soIndex < 0) return emptyList()
+        return fileName.substring(soIndex + 4).split('.')
+            .mapNotNull { it.toIntOrNull() }
+    }
 
     private fun writeBytesAtomic(target: File, bytes: ByteArray) {
         if (target.isFile && runCatching { target.readBytes().contentEquals(bytes) }.getOrDefault(false)) return
