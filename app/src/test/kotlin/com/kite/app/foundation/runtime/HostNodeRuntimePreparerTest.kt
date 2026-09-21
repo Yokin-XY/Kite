@@ -137,11 +137,18 @@ class HostNodeRuntimePreparerTest {
     }
 
     @Test
-    fun `does not patch getrandom marker without nearby svc`() {
-        // 立即数搬运场景：mov x8,#278 后是 stp 而非 svc，不应被补丁命中。
+    fun `does not patch getrandom marker with svc outside scan window`() {
+        // 立即数搬运场景：mov x8,#278 后是 stp 且窗口内无 svc，不应被补丁命中。
         val source = executableElf(
             instructions = intArrayOf(
                 0xd28022c8.toInt(),
+                0xa90353f3.toInt(),
+                0xa90353f3.toInt(),
+                0xa90353f3.toInt(),
+                0xa90353f3.toInt(),
+                0xa90353f3.toInt(),
+                0xa90353f3.toInt(),
+                0xa90353f3.toInt(),
                 0xa90353f3.toInt(),
                 0xd4000001.toInt(),
             ),
@@ -149,7 +156,7 @@ class HostNodeRuntimePreparerTest {
 
         HostNodeRuntimePreparer.patchGetrandomSyscalls(source, expectedReplacements = 0)
 
-        assertArrayEquals(instruction(0xd4000001.toInt()), source.copyOfRange(CODE_OFFSET + 8, CODE_OFFSET + 12))
+        assertArrayEquals(instruction(0xd4000001.toInt()), source.copyOfRange(CODE_OFFSET + 36, CODE_OFFSET + 40))
     }
 
     @Test(expected = IllegalStateException::class)
@@ -205,15 +212,13 @@ class HostNodeRuntimePreparerTest {
         repeat(8) { index -> target[offset + index] = (value ushr (index * 8)).toByte() }
     }
 
-    private companion object {
-        const val PROGRAM_HEADER_OFFSET = 64
-        const val PROGRAM_HEADER_SIZE = 56
-        const val CODE_OFFSET = 128
-    }
-}
-
+    @Test
     fun `rebuilds missing soname symlinks to highest version`() {
-        val rootfs = createTempDirectory()
+        org.junit.Assume.assumeTrue(
+            "Windows 开发机无法创建符号链接，真机/车道准备才是权威验证场景",
+            !System.getProperty("os.name").lowercase().contains("windows"),
+        )
+        val rootfs = java.nio.file.Files.createTempDirectory("kite-rootfs").toFile()
         val libDir = File(rootfs, "usr/lib/aarch64-linux-gnu").apply { mkdirs() }
         File(libDir, "libstdc++.so.6.0.32").writeText("old")
         File(libDir, "libstdc++.so.6.0.33").writeText("new")
@@ -230,4 +235,11 @@ class HostNodeRuntimePreparerTest {
         assertTrue(File(libDir, "plain.txt").isFile)
         assertFalse(File(libDir, "libz.so").exists())
     }
+
+    private companion object {
+        const val PROGRAM_HEADER_OFFSET = 64
+        const val PROGRAM_HEADER_SIZE = 56
+        const val CODE_OFFSET = 128
+    }
+}
 

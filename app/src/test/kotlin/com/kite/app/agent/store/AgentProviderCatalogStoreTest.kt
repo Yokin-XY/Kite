@@ -84,6 +84,7 @@ class AgentProviderCatalogStoreTest {
                     AgentCatalogModel(id = "glm-5.3-flash", displayName = "GLM 5.3 Flash"),
                 )
             ),
+            AgentCatalogCredentialChange.Keep,
         )
         assertEquals("zhipu", saved?.id)
         val models = store.snapshot("codex").providers.single().models

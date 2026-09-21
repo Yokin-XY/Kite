@@ -79,7 +79,7 @@ class HostNodeTerminalLaunchTest {
         assertEquals(node.absolutePath, environment["KITE_NODE_HOST_BINARY"])
         assertEquals(File(workspace, ".kf").absolutePath, environment["KITE_NODE_HOST_CONTROL"])
         assertEquals("glibc.pthread.rseq=0", environment["GLIBC_TUNABLES"])
-        assertEquals("--require=${preload.absolutePath}", environment["NODE_OPTIONS"])
+        assertEquals("--no-warnings --require=${preload.absolutePath}", environment["NODE_OPTIONS"])
         assertEquals(compat.absolutePath, environment["KITE_NODE_HOST_COMPAT_LIBRARY"])
         assertFalse(environment.containsKey("NODE_COMPILE_CACHE"))
         assertFalse(config.args.any { it.contains("proot", ignoreCase = true) })
@@ -135,7 +135,7 @@ class HostNodeTerminalLaunchTest {
         }
 
         assertEquals("1", environment["OPENCLAW_DISABLE_BONJOUR"])
-        assertEquals("--require=${preload.absolutePath}", environment["NODE_OPTIONS"])
+        assertEquals("--no-warnings --require=${preload.absolutePath}", environment["NODE_OPTIONS"])
         assertFalse(environment.containsKey("INVALID-NAME"))
     }
 
@@ -205,19 +205,18 @@ class HostNodeTerminalLaunchTest {
             layout = layout,
             invocation = HostNodeInvocation(entry, listOf("gateway", "run")),
             workingDirectory = workdir,
-            syscallTracer = true,
         )
         val environment = config.env.associate { value ->
             value.substringBefore('=') to value.substringAfter('=', "")
         }
 
-        // 监护进程包住整条链：argv = [tracer, launcher, node args...]。
-        assertEquals(tracer.absolutePath, config.executablePath)
+        // 车道不套监护进程（tracer 仅诊断用）：argv = [launcher, node 入口, args...]。
+        assertEquals(launcher.absolutePath, config.executablePath)
         assertArrayEquals(
-            arrayOf(tracer.absolutePath, launcher.absolutePath, entry.absolutePath, "gateway", "run"),
+            arrayOf(launcher.absolutePath, entry.absolutePath, "gateway", "run"),
             config.args,
         )
-        // tracer 的定位信息（loader/_r_debug 偏移 + libc 扫 svc）随链注入。
+        // 兼容层定位信息（loader/libc 路径）随链注入。
         assertEquals(patchedLoader.absolutePath, environment["KITE_GLIBC_HOST_LOADER"])
         assertEquals(layout.libraryPath, environment["KITE_GLIBC_HOST_LIBRARY_PATH"])
     }
