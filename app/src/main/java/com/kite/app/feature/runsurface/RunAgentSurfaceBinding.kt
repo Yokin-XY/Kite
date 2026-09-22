@@ -9303,7 +9303,7 @@ internal class RunAgentSurfaceBinding(
         installationStatus == AgentInstallationStatus.NotInstalled -> "未安装"
         configurationStatus == AgentConfigurationStatus.Required -> "需要配置"
         launchStatus == AgentLaunchStatus.Unsupported -> "暂不可连接"
-        runtimeStatus == AgentRuntimeStatus.Running -> "运行中"
+        runtimeStatus == AgentRuntimeStatus.Running -> "准备中"
         else -> "可用"
     }
 

@@ -387,9 +387,16 @@ internal class RunOrchestrator(
                     null
                 }
                 is RecipeExecutionEvent.AwaitingUser -> {
-                    commit(recipe, state.instanceId, event.mutation)
+                    val updated = commit(recipe, state.instanceId, event.mutation)
                     event.effect?.let(effectSink::emit)
-                    null
+                    /* 组合驱动语义：配方还有后续步骤时，“等待用户”只表示本步就绪，
+                     * 推进下一回合；链尾步骤才真正停下等用户。 */
+                    if (event.stepIndex + 1 < recipe.steps.size) {
+                        executionFlights.remove(state.instanceId)
+                        Dispatch(updated.instanceId, event.generation, event.stepIndex + 1)
+                    } else {
+                        null
+                    }
                 }
                 is RecipeExecutionEvent.Failed -> {
                     executionFlights.remove(state.instanceId)
