@@ -90,6 +90,79 @@ class AgentConversationStoreTest {
     }
 
     @Test
+    fun `live 回放的不带 id 用户消息并入本地 echo 不产生重复`() {
+        AgentConversationStore.bind("run-1", key)
+        // 发送路径的本地乐观 echo（messageId=local-*）
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                role = AgentMessageRole.User,
+                content = AgentContent.Text("你好，你好"),
+                messageId = "local-1"
+            )
+        )
+        // Agent 在同一轮回放同一内容但不带 messageId（如 pi 的 UserMessageChunk）
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                role = AgentMessageRole.User,
+                content = AgentContent.Text("你好，你好"),
+                messageId = null
+            )
+        )
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                role = AgentMessageRole.Assistant,
+                content = AgentContent.Text("你好呀"),
+                messageId = "message-1"
+            )
+        )
+        AgentConversationStore.flushForTest()
+
+        val state = AgentConversationStore.snapshot(key)!!
+        val userMessages = state.timeline.filterIsInstance<AgentConversationItem.Message>()
+            .filter { it.role == AgentMessageRole.User }
+        assertEquals(1, userMessages.size)
+        assertEquals("你好，你好", (userMessages.single().content.single() as AgentContent.Text).text)
+    }
+
+    @Test
+    fun `历史回放的连续无 id 用户消息仍是独立两条`() {
+        AgentConversationStore.bind("run-1", key)
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                role = AgentMessageRole.User,
+                content = AgentContent.Text("第一问"),
+                messageId = null
+            )
+        )
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                role = AgentMessageRole.Assistant,
+                content = AgentContent.Text("第一答"),
+                messageId = null
+            )
+        )
+        AgentConversationStore.applyEvent(
+            key,
+            AgentSessionEvent.MessageChunk(
+                role = AgentMessageRole.User,
+                content = AgentContent.Text("第二问"),
+                messageId = null
+            )
+        )
+        AgentConversationStore.flushForTest()
+
+        val state = AgentConversationStore.snapshot(key)!!
+        val userMessages = state.timeline.filterIsInstance<AgentConversationItem.Message>()
+            .filter { it.role == AgentMessageRole.User }
+        assertEquals(2, userMessages.size)
+    }
+
+    @Test
     fun `权限等待和恢复只修改会话 Store`() {
         AgentConversationStore.bind("run-1", key, AgentSessionPhase.Ready)
         val request = AgentPermissionRequest(

@@ -634,6 +634,18 @@ object AgentConversationStore {
         }
 
         private fun appendMessage(event: AgentSessionEvent.MessageChunk) {
+            /* live 双写合并：本地发送先乐观插入 local-* 消息，Agent 回放同一内容时
+             * 常不带 messageId（如 pi 的 UserMessageChunk）；本轮活跃且紧邻的正是本地 echo
+             * 且中间没有 assistant/tool 事件时，回放片段是对 echo 的冗余确认，直接丢弃，
+             * 否则同一条用户输入会重开一轮渲染两遍。历史回放（上一轮消息）不受影响：
+             * 那里 last 是上一轮的 assistant 或已关轮的 user，不满足合并条件。 */
+            if (event.role == AgentMessageRole.User && isLiveEchoReplay(event)) {
+                safeDebugLog(
+                    "KiteConvStore",
+                    "merge live echo turn=$turnOrdinal chars=${(event.content as? AgentContent.Text)?.text?.length ?: -1}",
+                )
+                return
+            }
             prepareTurnForMessage(event)
             val previous = timeline.lastOrNull() as? MutableMessage
             val canAppend = previous != null &&
@@ -668,6 +680,15 @@ object AgentConversationStore {
             retainedTextChars += message.retainedTextChars
             retainedInlineBytes += message.retainedInlineBytes
             trimTimeline()
+        }
+
+        /** live 回放的冗余确认：不带 id 的 user 片段紧跟在本轮的 local-* echo 后。 */
+        private fun isLiveEchoReplay(event: AgentSessionEvent.MessageChunk): Boolean {
+            if (event.messageId != null || !turnActive) return false
+            val lastMessage = timeline.lastOrNull() as? MutableMessage ?: return false
+            return lastMessage.role == AgentMessageRole.User &&
+                lastMessage.turnOrdinal == turnOrdinal &&
+                lastMessage.messageId.orEmpty().startsWith("local-")
         }
 
         private fun prepareTurnForMessage(event: AgentSessionEvent.MessageChunk) {
