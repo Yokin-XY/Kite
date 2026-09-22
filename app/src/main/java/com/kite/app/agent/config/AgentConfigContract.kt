@@ -767,6 +767,13 @@ interface AgentConfigAdapter {
      */
     fun bundledSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> = emptyList()
 
+    /**
+     * 会话命令弹层的完整数据：静态清单 + 从该 Agent 真实目录扫描的动态命令
+     * （自定义命令、Skill 等）。默认即静态清单；只在目录事实真实存在时覆盖。
+     */
+    suspend fun readSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> =
+        bundledSlashCommands(agentId)
+
     /** 用户下拉刷新时扫描无需登录免费目录；普通页面打开、绑定和会话加载不得调用。 */
     suspend fun scanFreeProviderCatalog(agentId: String): AgentFreeProviderCatalogResult =
         AgentFreeProviderCatalogResult.Unsupported

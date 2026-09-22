@@ -1296,12 +1296,16 @@ internal class RunAgentSurfaceBinding(
         elevation = ui.dp(6).toFloat()
     }
 
-    private fun availableSlashCommands(): List<com.kite.app.agent.contract.AgentCommand> =
-        currentSnapshot?.commands.orEmpty().ifEmpty {
-            AgentRuntimeRegistry.draftCapabilityCatalog(instanceId, generation)?.commands.orEmpty()
-        }.ifEmpty {
-            agentId?.let { draftCapabilityCacheStore.catalog(it)?.commands }.orEmpty()
-        }
+    private fun availableSlashCommands(): List<com.kite.app.agent.contract.AgentCommand> {
+        // 三层源按名称去重合并（先到者优先）：会话快照（协议实时）→ 运行时能力目录
+        // （协议 ∪ Adapter）→ 目录缓存。协议到达不裁掉 Adapter 兜底集。
+        val seen = HashSet<String>()
+        return sequenceOf(
+            currentSnapshot?.commands.orEmpty(),
+            AgentRuntimeRegistry.draftCapabilityCatalog(instanceId, generation)?.commands.orEmpty(),
+            agentId?.let { draftCapabilityCacheStore.catalog(it)?.commands }.orEmpty(),
+        ).flatten().filter { seen.add(it.name) }.toList()
+    }
 
     private fun renderCommandSuggestions(text: String) {
         val host = commandSuggestionHost

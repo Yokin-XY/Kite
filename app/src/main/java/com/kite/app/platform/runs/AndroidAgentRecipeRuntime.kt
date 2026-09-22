@@ -852,10 +852,12 @@ internal class AndroidAgentRecipeRuntime(
             },
             modes = storedCatalog.workModes,
             currentModeId = storedCatalog.selectedWorkModeId,
-            /* 命令清单：协议 available_commands 优先；Agent 未公布时用 Adapter 核验的原生清单兜底。 */
-            commands = cachedDraftCatalog.commands.ifEmpty {
-                configAdapter?.bundledSlashCommands(draftCatalogKey).orEmpty()
-            },
+            /* 命令清单：协议 available_commands ∪ Adapter 清单（静态核验 + 真实目录扫描），
+               按名称去重、协议事实优先——Agent 广告到达后自动补齐，而不是替换掉兜底集。 */
+            commands = mergeSlashCommands(
+                protocolCommands = cachedDraftCatalog.commands,
+                adapterCommands = configAdapter?.readSlashCommands(draftCatalogKey).orEmpty(),
+            ),
         )
         val initialDraftPreferences = AgentDraftPersistenceSnapshot(
             modelSelection = storedCatalog.selectedProviderId?.let { selectedProviderId ->
@@ -1375,4 +1377,16 @@ internal class AndroidAgentRecipeRuntime(
                 }
             },
         )
+}
+
+
+/** 命令目录合并：协议清单在前（同名列优先），Adapter 清单去重后追加。 */
+private fun mergeSlashCommands(
+    protocolCommands: List<com.kite.app.agent.contract.AgentCommand>,
+    adapterCommands: List<com.kite.app.agent.contract.AgentCommand>,
+): List<com.kite.app.agent.contract.AgentCommand> {
+    if (adapterCommands.isEmpty()) return protocolCommands
+    if (protocolCommands.isEmpty()) return adapterCommands
+    val seen = protocolCommands.map { it.name }.toHashSet()
+    return protocolCommands + adapterCommands.filter { seen.add(it.name) }
 }

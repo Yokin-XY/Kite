@@ -434,9 +434,35 @@ private class CodexAppServerConnection(
             )
         }
 
+    private suspend fun compactSession(sessionId: String, session: CodexSession): AgentOperationResult<AgentTurnResult> {
+        endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting))
+        return try {
+            rpc.request("thread/compact/start", JSONObject().put("threadId", session.id))
+            endpoint.eventSink.onEvent(
+                sessionId,
+                AgentSessionEvent.MessageChunk(
+                    role = AgentMessageRole.Assistant,
+                    content = AgentContent.Text("已请求 Codex 压缩当前会话上下文。"),
+                    messageId = "codex-compact",
+                ),
+            )
+            endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready))
+            AgentOperationResult.Success(AgentTurnResult(stopReason = AgentStopReason.EndTurn))
+        } catch (error: Throwable) {
+            endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Failed, error.message))
+            AgentOperationResult.Failure("Codex 上下文压缩失败: ${error.message}", error)
+        }
+    }
+
     override suspend fun prompt(request: AgentPromptRequest): AgentOperationResult<AgentTurnResult> {
         val session = sessions[request.sessionId]
             ?: return AgentOperationResult.Failure("会话不存在: ${request.sessionId}")
+        // Codex TUI 的斜杠命令是 TUI 层功能，app-server 不解释文本；桥把有对应 op 的命令
+        // 翻译执行（与 pi-bridge 的 NATIVE 命令同一模式），其余照常透传。
+        val promptText = request.content.filterIsInstance<AgentContent.Text>().joinToString("") { it.text }.trim()
+        if (promptText == "/compact") {
+            return compactSession(request.sessionId, session)
+        }
         val input = request.content.toCodexInput()
             ?: return AgentOperationResult.Unsupported("codex-app-server-unsupported-input")
         val completion = CompletableDeferred<AgentTurnResult>()

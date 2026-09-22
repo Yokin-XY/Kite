@@ -1881,16 +1881,47 @@ internal class OpenCodeAgentConfigAdapter(
             .build()
     }
     override fun bundledSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> = listOf(
-        AgentCommand(name = "new", description = "新建会话"),
-        AgentCommand(name = "init", description = "在当前项目生成 AGENTS.md 规则文件"),
-        AgentCommand(name = "share", description = "分享当前会话链接"),
-        AgentCommand(name = "export", description = "导出当前会话记录"),
-        AgentCommand(name = "models", description = "查看与切换模型"),
+        // OpenCode 官方 ACP 对 prompt 内 / 命令有执行通道：命令注册表内的走 session.command，
+        // /compact 特判走 summarize（acp/service.ts）——透传即执行。协议广告到达后与其合并。
         AgentCommand(name = "compact", description = "压缩对话历史，释放上下文窗口"),
-        AgentCommand(name = "undo", description = "撤销上一轮 Agent 修改"),
-        AgentCommand(name = "redo", description = "重做被撤销的修改"),
-        AgentCommand(name = "usage", description = "查看 token 用量与额度"),
-        AgentCommand(name = "themes", description = "切换界面主题"),
-        AgentCommand(name = "quit", description = "退出 OpenCode"),
+        AgentCommand(name = "init", description = "在当前项目生成 AGENTS.md"),
+        AgentCommand(name = "review", description = "审查改动（commit|branch|pr，默认未提交）"),
     )
+
+    override suspend fun readSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> {
+        // OpenCode 的命令注册表（command/index.ts）= 内置 + 配置命令 + MCP prompts + skills：
+        // skill 名即斜杠命令，扫真实目录即得；自定义命令目录（command/*.md，frontmatter
+        // name/description/agent/model）同理。与静态清单去重合并。
+        val dynamic = mutableListOf<com.kite.app.agent.contract.AgentCommand>()
+        runCatching {
+            for (entry in skillDirectory.discover()) {
+                dynamic += com.kite.app.agent.contract.AgentCommand(
+                    name = entry.id,
+                    description = entry.displayName,
+                )
+            }
+        }
+        projection.resolve("$CONFIG_CONTAINER_PATH/command")?.let { rootProjection ->
+            val commandRoot = rootProjection.readFile.parentFile ?: return@let
+            runCatching {
+                commandRoot.walkTopDown().maxDepth(2)
+                    .filter { it.isFile && it.name.endsWith(".md", ignoreCase = true) && !it.name.startsWith('.') }
+                    .forEach { md ->
+                        val text = runCatching { md.readText() }.getOrNull() ?: return@forEach
+                        val frontmatter = text.substringAfter("---", "").substringBefore("---", "")
+                        val description = frontmatter.lineSequence()
+                            .firstOrNull { it.startsWith("description:") }?.removePrefix("description:")?.trim()?.trim('"')
+                            ?: ""
+                        dynamic += com.kite.app.agent.contract.AgentCommand(
+                            name = md.nameWithoutExtension,
+                            description = description,
+                        )
+                    }
+            }
+        }
+        val bundled = bundledSlashCommands(agentId)
+        if (dynamic.isEmpty()) return bundled
+        val seen = bundled.map { it.name }.toHashSet()
+        return bundled + dynamic.filter { seen.add(it.name) }
+    }
 }

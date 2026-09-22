@@ -543,6 +543,7 @@ internal class ClaudeCodeAgentConfigAdapter(
         private const val STATE_KEY = "state"
         private const val STATE_PATH = "/root/.claude.json"
         private const val SKILL_ROOT = "/root/.claude/skills"
+        private const val COMMANDS_ROOT = "/root/.claude/commands"
         private const val GLOBAL_CLAUDE_PATH = "/root/.claude/CLAUDE.md"
         private const val MCP_KEY = "mcpServers"
         private const val NATIVE_MODE_OPTION_ID = "mode"
@@ -568,10 +569,12 @@ internal class ClaudeCodeAgentConfigAdapter(
         )
     }
     override fun bundledSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> = listOf(
+        // 官方内置命令全集（docs.anthropic.com slash-commands），按 claude-code-acp 的
+        // UNSUPPORTED 规则排除 ACP 通道下不可用的（context/cost/login/logout/output-style:new/
+        // release-notes/todos）；协议 supportedCommands 全量到达后与其合并去重。
         AgentCommand(name = "compact", description = "压缩对话历史，释放上下文窗口"),
         AgentCommand(name = "clear", description = "清空会话历史，重新开始"),
         AgentCommand(name = "model", description = "查看或切换模型"),
-        AgentCommand(name = "cost", description = "查看本次会话的 token 用量与费用"),
         AgentCommand(name = "status", description = "查看当前账号、版本与连接状态"),
         AgentCommand(name = "review", description = "请求对代码或 PR 进行审查"),
         AgentCommand(name = "init", description = "在当前项目初始化 CLAUDE.md 记忆文件"),
@@ -580,8 +583,46 @@ internal class ClaudeCodeAgentConfigAdapter(
         AgentCommand(name = "mcp", description = "查看与管理 MCP 服务器连接"),
         AgentCommand(name = "resume", description = "恢复之前的会话"),
         AgentCommand(name = "export", description = "导出当前会话记录"),
+        AgentCommand(name = "add-dir", description = "为会话添加可访问的额外工作目录"),
+        AgentCommand(name = "agents", description = "管理子 Agent 配置"),
+        AgentCommand(name = "bug", description = "提交问题反馈"),
+        AgentCommand(name = "doctor", description = "检查 Claude Code 运行环境健康状态"),
         AgentCommand(name = "help", description = "查看可用命令帮助"),
-        AgentCommand(name = "login", description = "登录账号"),
-        AgentCommand(name = "logout", description = "退出登录"),
+        AgentCommand(name = "hooks", description = "查看与管理生命周期钩子"),
+        AgentCommand(name = "ide", description = "连接 IDE 获取编辑器上下文"),
+        AgentCommand(name = "pr-comments", description = "查看当前 PR 的评论"),
+        AgentCommand(name = "skills", description = "查看与管理 Skills"),
+        AgentCommand(name = "terminal-setup", description = "配置终端按键与提示符集成"),
+        AgentCommand(name = "vim", description = "切换 Vim 输入模式"),
     )
+
+    override suspend fun readSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> {
+        // 自定义命令是 Claude 自己的事实（~/.claude/commands/*.md，frontmatter 带
+        // name/description），扫目录即得——与 claudecodeui 的发现方式一致；与静态全集去重合并。
+        val custom = mutableListOf<com.kite.app.agent.contract.AgentCommand>()
+        projection.resolve(COMMANDS_ROOT)?.let { rootProjection ->
+            val commandsRoot = rootProjection.readFile.parentFile ?: return@let
+            runCatching {
+                commandsRoot.walkTopDown().maxDepth(2)
+                    .filter { it.isFile && it.name.endsWith(".md", ignoreCase = true) && !it.name.startsWith('.') }
+                    .forEach { md ->
+                        val text = runCatching { md.readText() }.getOrNull() ?: return@forEach
+                        val frontmatter = text.substringAfter("---", "").substringBefore("---", "")
+                        val name = frontmatter.lineSequence()
+                            .firstOrNull { it.startsWith("name:") }?.removePrefix("name:")?.trim()?.trim('"')
+                            ?: md.nameWithoutExtension
+                        val description = frontmatter.lineSequence()
+                            .firstOrNull { it.startsWith("description:") }?.removePrefix("description:")?.trim()?.trim('"')
+                            ?: ""
+                        if (name.isNotBlank()) {
+                            custom += AgentCommand(name = name, description = description)
+                        }
+                    }
+            }
+        }
+        val bundled = bundledSlashCommands(agentId)
+        if (custom.isEmpty()) return bundled
+        val seen = bundled.map { it.name }.toHashSet()
+        return bundled + custom.filter { seen.add(it.name) }
+    }
 }
