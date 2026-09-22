@@ -24,6 +24,7 @@ import com.kite.app.browser.BrowserHandoffRequest
 import com.kite.app.browser.automation.BrowserAutomationController
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.storage.KiteManagedStorage
+import kotlin.concurrent.thread
 import java.io.File
 import java.net.URI
 
@@ -239,8 +240,75 @@ class KiteWebShell(
             source = openSource,
             url = preparedUrl
         )
-        webView.loadUrl(preparedUrl)
+        if (isLocalUrl(preparedUrl)) {
+            loadLocalGatewayDocument(preparedUrl)
+        } else {
+            webView.loadUrl(preparedUrl)
+        }
         publishNavigationState(preparedUrl, loading = true, progress = 0)
+    }
+
+    /**
+     * 本地回环网关页面依赖 Promise.withResolvers（Chrome 119+），旧 WebView 直接崩成空白页。
+     * 这里取回主文档 HTML、内联 polyfill 后用 loadDataWithBaseURL 加载：
+     * baseURL 保持同源让资源与 ws 正常寻址，且不走 HTTP 响应头（无 CSP）内联脚本可执行。
+     * 取回失败时回退普通 loadUrl，不打断既有行为。
+     */
+    private fun loadLocalGatewayDocument(url: String) {
+        thread(name = "kite-local-doc", isDaemon = true) {
+            var attempt = 0
+            var html: String? = null
+            var lastError = ""
+            while (html == null && attempt < 3) {
+                if (attempt > 0) Thread.sleep(700)
+                val outcome = runCatching { fetchLocalGatewayDocument(url) }
+                html = outcome.getOrNull()
+                lastError = outcome.exceptionOrNull()?.message.orEmpty()
+                attempt += 1
+            }
+            val document = html
+            android.util.Log.i(
+                "KiteWebShell",
+                "local-doc url=$url ok=${document != null} len=${document?.length ?: 0} err=$lastError"
+            )
+            webView.post {
+                if (document == null) {
+                    webView.loadUrl(url)
+                } else {
+                    webView.loadDataWithBaseURL(url, document, "text/html", "utf-8", url)
+                }
+            }
+        }
+    }
+
+    /** 要求 200 且拿到非空 HTML，否则抛错交由上层重试。 */
+    private fun fetchLocalGatewayDocument(url: String): String {
+        val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        connection.connectTimeout = 8000
+        connection.readTimeout = 8000
+        connection.setRequestProperty("Accept-Encoding", "identity")
+        try {
+            val code = connection.responseCode
+            require(code == 200) { "http_$code" }
+            val contentType = connection.contentType ?: "text/html"
+            require(contentType.contains("html", ignoreCase = true)) { "content_type=$contentType" }
+            val rawStream = connection.inputStream
+            val stream = if (connection.contentEncoding?.contains("gzip", ignoreCase = true) == true) {
+                java.util.zip.GZIPInputStream(rawStream)
+            } else {
+                rawStream
+            }
+            val html = stream.use { it.bufferedReader(Charsets.UTF_8).readText() }
+            require(html.contains("<html", ignoreCase = true)) { "empty_document" }
+            val inlinePolyfill = "<script>$LOCAL_GATEWAY_POLYFILL_JS</script>"
+            return if (html.contains("<head>", ignoreCase = true)) {
+                html.replaceFirst("(?i)<head>".toRegex(), "<head>$inlinePolyfill")
+            } else {
+                html.replaceFirst("(?i)<html".toRegex(), "$inlinePolyfill<html")
+            }
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun publishNavigationState(
@@ -425,5 +493,12 @@ class KiteWebShell(
             val currentPort = runCatching { Uri.parse(currentUrl).port }.getOrDefault(-1)
             return port <= 0 || currentPort <= 0 || currentPort == port
         }
+    }
+
+    private companion object {
+        const val LOCAL_GATEWAY_POLYFILL_JS =
+            "if(typeof Promise.withResolvers!=='function'){" +
+                "Promise.withResolvers=function(){var r,j;var p=new this(function(a,b){r=a;j=b});" +
+                "return{promise:p,resolve:r,reject:j}};}"
     }
 }
