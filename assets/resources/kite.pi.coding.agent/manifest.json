@@ -76,7 +76,7 @@
   "package": "@earendil-works/pi-coding-agent",
   "command": "npm install -g @earendil-works/pi-coding-agent@latest",
   "uninstallCommand": "npm uninstall -g @earendil-works/pi-coding-agent",
-  "latestVersion": "0.87.0"
+  "latestVersion": "0.87.1"
  },
  "paths": {
   "cacheRoot": "/workspace/.kf/cache/resources/kite.pi.coding.agent",

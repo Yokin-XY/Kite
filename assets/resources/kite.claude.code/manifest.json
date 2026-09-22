@@ -82,7 +82,7 @@
     "package": "@anthropic-ai/claude-code",
     "command": "npm install -g @anthropic-ai/claude-code@latest && npm install -g @agentclientprotocol/claude-agent-acp@latest",
     "uninstallCommand": "npm uninstall -g @anthropic-ai/claude-code && npm uninstall -g @agentclientprotocol/claude-agent-acp",
-    "latestVersion": "2.1.278"
+    "latestVersion": "2.1.280"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.claude.code",

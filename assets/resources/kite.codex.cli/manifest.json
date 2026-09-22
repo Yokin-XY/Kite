@@ -84,7 +84,7 @@
     "package": "@openai/codex",
     "command": "npm install -g @openai/codex@latest",
     "uninstallCommand": "npm uninstall -g @openai/codex",
-    "latestVersion": "0.155.1",
+    "latestVersion": "0.156.0",
     "repository": "https://github.com/openai/codex"
   },
   "paths": {
