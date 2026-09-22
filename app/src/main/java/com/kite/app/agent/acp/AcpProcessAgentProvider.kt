@@ -721,7 +721,7 @@ private class AcpClientOperations(
         _meta: kotlinx.serialization.json.JsonElement?
     ) {
         val updateKind = notification::class.simpleName
-        safeDebugLog(TAG, "update kind=$updateKind messageId=${(notification as? SessionUpdate.AgentMessageChunk)?.messageId?.value ?: (notification as? SessionUpdate.AgentThoughtChunk)?.messageId?.value ?: "-"}")
+        safeDebugLog(TAG, "update kind=$updateKind messageId=${(notification as? SessionUpdate.AgentMessageChunk)?.messageId?.value ?: (notification as? SessionUpdate.AgentThoughtChunk)?.messageId?.value ?: "-"}${(notification as? SessionUpdate.AvailableCommandsUpdate)?.let { " commands=${it.availableCommands.size} first=${it.availableCommands.firstOrNull()?.name}" } ?: ""}")
         inlineSessionUpdateRelay?.fromSdk(notification)
             ?: endpoint.eventSink.onEvent(sessionId, AcpAgentMapper.sessionEvent(notification))
     }

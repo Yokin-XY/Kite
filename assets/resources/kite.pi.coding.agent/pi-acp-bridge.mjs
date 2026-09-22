@@ -211,15 +211,21 @@ function replayMessages(sessionId, messages) {
 }
 
 function emitCommands(sessionId, loader) {
-  const prompts = loader?.getPrompts?.() ?? [];
-  if (!prompts.length) return;
+  // 命令清单 = pi SDK 会话内真正能被文本触发的命令（agent-session.prompt 的展开路径）：
+  // prompt 模板（/name）与 skills（/skill:name）。内置 TUI 命令（compact/new/quit…）
+  // 不走 SDK 文本路径，广告了也无法执行，故不列入。
+  const commands = [];
+  for (const p of loader?.getPrompts?.()?.prompts ?? []) {
+    commands.push({ name: p.name, description: p.description ?? '', input: null });
+  }
+  for (const s of loader?.getSkills?.()?.skills ?? []) {
+    if (s.disableModelInvocation) continue;
+    commands.push({ name: `skill:${s.name}`, description: s.description ?? '', input: null });
+  }
+  if (!commands.length) return;
   sessionUpdate(sessionId, {
     sessionUpdate: 'available_commands_update',
-    availableCommands: prompts.map((p) => ({
-      name: p.name,
-      description: p.description ?? '',
-      input: null,
-    })),
+    availableCommands: commands,
   });
 }
 
