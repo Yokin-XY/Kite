@@ -1,6 +1,7 @@
 package com.kite.app.agent.config.native
 
 import android.content.Context
+import com.kite.app.agent.contract.AgentCommand
 import com.kite.app.agent.config.AgentConfigApplyRequest
 import com.kite.app.agent.config.AgentConfigApplyResult
 import com.kite.app.agent.config.AgentConfigCapabilities
@@ -620,6 +621,16 @@ internal class CodexAgentConfigAdapter(
             if (Regex("[A-Za-z0-9_-]+").matches(value)) value
             else "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
     }
+    override fun bundledSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> = listOf(
+        AgentCommand(name = "init", description = "为当前项目生成 AGENTS.md"),
+        AgentCommand(name = "diff", description = "查看本次会话的代码改动"),
+        AgentCommand(name = "compact", description = "压缩对话历史，释放上下文窗口"),
+        AgentCommand(name = "status", description = "查看账号与当前会话状态"),
+        AgentCommand(name = "model", description = "查看或切换模型"),
+        AgentCommand(name = "approvals", description = "调整命令执行与写入的审批策略"),
+        AgentCommand(name = "logout", description = "退出当前账号登录"),
+        AgentCommand(name = "quit", description = "退出 Codex"),
+    )
 }
 
 private data class TomlTextEditor(val text: String) {

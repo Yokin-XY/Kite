@@ -8,6 +8,7 @@ import blue.endless.jankson.JsonGrammar
 import blue.endless.jankson.JsonNull
 import blue.endless.jankson.JsonObject
 import blue.endless.jankson.JsonPrimitive
+import com.kite.app.agent.contract.AgentCommand
 import com.kite.app.agent.config.AgentConfigAdapter
 import com.kite.app.agent.config.AgentConfigApplyRequest
 import com.kite.app.agent.config.AgentConfigApplyResult
@@ -1879,4 +1880,17 @@ internal class OpenCodeAgentConfigAdapter(
             .printUnquotedKeys(false)
             .build()
     }
+    override fun bundledSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> = listOf(
+        AgentCommand(name = "new", description = "新建会话"),
+        AgentCommand(name = "init", description = "在当前项目生成 AGENTS.md 规则文件"),
+        AgentCommand(name = "share", description = "分享当前会话链接"),
+        AgentCommand(name = "export", description = "导出当前会话记录"),
+        AgentCommand(name = "models", description = "查看与切换模型"),
+        AgentCommand(name = "compact", description = "压缩对话历史，释放上下文窗口"),
+        AgentCommand(name = "undo", description = "撤销上一轮 Agent 修改"),
+        AgentCommand(name = "redo", description = "重做被撤销的修改"),
+        AgentCommand(name = "usage", description = "查看 token 用量与额度"),
+        AgentCommand(name = "themes", description = "切换界面主题"),
+        AgentCommand(name = "quit", description = "退出 OpenCode"),
+    )
 }

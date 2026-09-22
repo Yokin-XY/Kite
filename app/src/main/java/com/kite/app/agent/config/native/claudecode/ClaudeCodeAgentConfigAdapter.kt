@@ -1,6 +1,7 @@
 package com.kite.app.agent.config.native
 
 import android.content.Context
+import com.kite.app.agent.contract.AgentCommand
 import blue.endless.jankson.JsonArray
 import blue.endless.jankson.JsonObject
 import blue.endless.jankson.JsonPrimitive
@@ -566,4 +567,21 @@ internal class ClaudeCodeAgentConfigAdapter(
             AgentSkillActivation.Disabled,
         )
     }
+    override fun bundledSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> = listOf(
+        AgentCommand(name = "compact", description = "压缩对话历史，释放上下文窗口"),
+        AgentCommand(name = "clear", description = "清空会话历史，重新开始"),
+        AgentCommand(name = "model", description = "查看或切换模型"),
+        AgentCommand(name = "cost", description = "查看本次会话的 token 用量与费用"),
+        AgentCommand(name = "status", description = "查看当前账号、版本与连接状态"),
+        AgentCommand(name = "review", description = "请求对代码或 PR 进行审查"),
+        AgentCommand(name = "init", description = "在当前项目初始化 CLAUDE.md 记忆文件"),
+        AgentCommand(name = "memory", description = "查看与编辑项目记忆文件"),
+        AgentCommand(name = "permissions", description = "查看与调整工具权限规则"),
+        AgentCommand(name = "mcp", description = "查看与管理 MCP 服务器连接"),
+        AgentCommand(name = "resume", description = "恢复之前的会话"),
+        AgentCommand(name = "export", description = "导出当前会话记录"),
+        AgentCommand(name = "help", description = "查看可用命令帮助"),
+        AgentCommand(name = "login", description = "登录账号"),
+        AgentCommand(name = "logout", description = "退出登录"),
+    )
 }

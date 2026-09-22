@@ -852,6 +852,10 @@ internal class AndroidAgentRecipeRuntime(
             },
             modes = storedCatalog.workModes,
             currentModeId = storedCatalog.selectedWorkModeId,
+            /* 命令清单：协议 available_commands 优先；Agent 未公布时用 Adapter 核验的原生清单兜底。 */
+            commands = cachedDraftCatalog.commands.ifEmpty {
+                configAdapter?.bundledSlashCommands(draftCatalogKey).orEmpty()
+            },
         )
         val initialDraftPreferences = AgentDraftPersistenceSnapshot(
             modelSelection = storedCatalog.selectedProviderId?.let { selectedProviderId ->

@@ -759,6 +759,14 @@ interface AgentConfigAdapter {
      */
     fun bundledWorkModeCatalog(agentId: String): AgentWorkModeCatalog? = null
 
+    /**
+     * 该 Agent 已核验的原生斜杠命令清单，作为会话输入 "/" 的触发选项。
+     *
+     * 仅在 Agent 未通过 ACP available_commands 公布时兜底；只列官方文档确认的命令，
+     * 执行始终作为普通 prompt 文本透传，Kite 不解释任何命令语义。
+     */
+    fun bundledSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> = emptyList()
+
     /** 用户下拉刷新时扫描无需登录免费目录；普通页面打开、绑定和会话加载不得调用。 */
     suspend fun scanFreeProviderCatalog(agentId: String): AgentFreeProviderCatalogResult =
         AgentFreeProviderCatalogResult.Unsupported

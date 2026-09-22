@@ -408,6 +408,8 @@ internal class RunAgentSurfaceBinding(
     private var composerSkillLoadRevision: Long = 0L
     private var composerSkillLoading: Boolean = false
     private var composerSkillError: String? = null
+    private var commandSuggestionSignature: String? = null
+    private val commandSuggestionHost by lazy(LazyThreadSafetyMode.NONE) { buildCommandSuggestionHost() }
 
     private val mainContent: View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -447,6 +449,10 @@ internal class RunAgentSurfaceBinding(
             visibility = View.GONE
             setPadding(ui.dp(14), ui.dp(8), ui.dp(14), 0)
         })
+        addView(commandSuggestionHost, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(ui.dp(14), ui.dp(6), ui.dp(14), 0) })
         addView(buildComposerArea(context), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1019,7 +1025,9 @@ internal class RunAgentSurfaceBinding(
                         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                             updateComposer()
                         }
-                        override fun afterTextChanged(s: Editable?) = Unit
+                        override fun afterTextChanged(s: Editable?) {
+                            renderCommandSuggestions(s?.toString().orEmpty())
+                        }
                     })
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 addView(actionButton.apply {
@@ -1272,6 +1280,96 @@ internal class RunAgentSurfaceBinding(
                 restoreComposerAfterFailure(text, attachments, skills)
             }
             showOperationResult(result, null)
+        }
+    }
+
+    /** 输入以 / 开头时在输入框上方弹出 Agent 公布的命令清单（ACP available_commands）。 */
+    private fun buildCommandSuggestionHost(): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        visibility = View.GONE
+        background = ui.roundedBox(
+            tokens.surfaceElevated,
+            tokens.border,
+            ui.dp(16).toFloat(),
+        )
+        setPadding(0, ui.dp(6), 0, ui.dp(6))
+        elevation = ui.dp(6).toFloat()
+    }
+
+    private fun availableSlashCommands(): List<com.kite.app.agent.contract.AgentCommand> =
+        currentSnapshot?.commands.orEmpty().ifEmpty {
+            AgentRuntimeRegistry.draftCapabilityCatalog(instanceId, generation)?.commands.orEmpty()
+        }.ifEmpty {
+            agentId?.let { draftCapabilityCacheStore.catalog(it)?.commands }.orEmpty()
+        }
+
+    private fun renderCommandSuggestions(text: String) {
+        val host = commandSuggestionHost
+        val trimmed = text.trimStart()
+        if (!trimmed.startsWith("/")) {
+            hideCommandSuggestions()
+            return
+        }
+        val query = trimmed.drop(1).takeWhile { !it.isWhitespace() }.lowercase()
+        val matches = availableSlashCommands()
+            .filter { it.name.isNotBlank() }
+            .filter { query.isEmpty() || it.name.lowercase().startsWith(query) }
+        if (matches.isEmpty()) {
+            hideCommandSuggestions()
+            return
+        }
+        val signature = matches.joinToString("|") { it.name }
+        if (signature != commandSuggestionSignature) {
+            commandSuggestionSignature = signature
+            host.removeAllViews()
+            matches.take(MAX_COMMAND_SUGGESTIONS).forEach { command ->
+                host.addView(commandSuggestionRow(command))
+            }
+        }
+        if (host.visibility != View.VISIBLE) host.visibility = View.VISIBLE
+    }
+
+    private fun commandSuggestionRow(command: com.kite.app.agent.contract.AgentCommand): View =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(ui.dp(14), ui.dp(9), ui.dp(14), ui.dp(9))
+            isClickable = true
+            isFocusable = true
+            foreground = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(tokens.border),
+                null,
+                null
+            )
+            setOnClickListener {
+                input.setText("/${command.name} ")
+                input.setSelection(input.text?.length ?: 0)
+                input.requestFocus()
+            }
+            addView(TextView(context).apply {
+                text = "/${command.name}"
+                textSize = 14.5f
+                typeface = Typeface.DEFAULT_BOLD
+                includeFontPadding = false
+                setTextColor(tokens.textPrimary)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = ui.dp(10)
+            })
+            addView(TextView(context).apply {
+                text = command.description
+                textSize = 12.5f
+                includeFontPadding = false
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                maxLines = 1
+                setTextColor(tokens.textSecondary)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+
+    private fun hideCommandSuggestions() {
+        commandSuggestionSignature = null
+        if (commandSuggestionHost.visibility != View.GONE) {
+            commandSuggestionHost.visibility = View.GONE
+            commandSuggestionHost.removeAllViews()
         }
     }
 
@@ -10255,6 +10353,7 @@ internal class RunAgentSurfaceBinding(
         const val COPY_BUFFER_SIZE = 8 * 1024
         const val MAX_INLINE_IMAGE_BYTES = 12 * 1024 * 1024
         const val SESSION_LOADING_FEEDBACK_DELAY_MS = 140L
+        const val MAX_COMMAND_SUGGESTIONS = 8
     }
 }
 private data class AgentComposerModeOption(
