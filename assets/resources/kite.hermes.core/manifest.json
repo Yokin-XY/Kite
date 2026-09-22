@@ -131,9 +131,9 @@
             ],
             "destination": "$install_root/hermes-agent",
             "latestVersionWindow": [
+              { "version": "v2026.9.21", "ref": "v2026.9.21", "commit": "d337b736aa1e8ebecfab043842d13e4a2d2f48a3" },
               { "version": "v2026.9.14", "ref": "v2026.9.14", "commit": "345cd2b057a452236de401d3534b8502a7465e8d" },
-              { "version": "v2026.9.11", "ref": "v2026.9.11", "commit": "939e45c91d751fadd94dcd1b873ac3cb44846213" },
-              { "version": "v2026.9.7", "ref": "v2026.9.7", "commit": "2237be355906fbe6065ce1815711eee52b2d646e" }
+              { "version": "v2026.9.11", "ref": "v2026.9.11", "commit": "939e45c91d751fadd94dcd1b873ac3cb44846213" }
             ],
             "depth": 1,
             "retryAttempts": 1,

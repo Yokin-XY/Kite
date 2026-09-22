@@ -53,9 +53,9 @@
     "latestFormat": "regex",
     "latestRegex": "cdn-zcode\\.z\\.ai/zcode/electron/releases/([0-9]+\\.[0-9]+\\.[0-9]+)/linux-arm64/ZCode-",
     "latestVersionWindow": [
+      { "version": "3.14.1", "artifact": "ZCode-3.14.1-linux-arm64.deb", "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.14.1/linux-arm64/ZCode-3.14.1-linux-arm64.deb", "sha256": "9995e1b5bd3f5786387f39cbc1c376e85dd4b001a94aa7bbc290125bac1ddf14" },
       { "version": "3.14.0", "artifact": "ZCode-3.14.0-linux-arm64.deb", "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.14.0/linux-arm64/ZCode-3.14.0-linux-arm64.deb", "sha256": "a98f767484dbd0128dc1ce5d8fa9cd6e1db9a3c3f8b626aa9714872af816124d" },
-      { "version": "3.12.3", "artifact": "ZCode-3.12.3-linux-arm64.deb", "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.12.3/linux-arm64/ZCode-3.12.3-linux-arm64.deb", "sha256": "b6fcb0ddce028c8c5c6fe821d4c5033196da0841e5c0e64b4b54ce281180d652" },
-      { "version": "3.11.2", "artifact": "ZCode-3.11.2-linux-arm64.deb", "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.11.2/linux-arm64/ZCode-3.11.2-linux-arm64.deb", "sha256": "de31487b97aade1365bdbf1c3a1624336cd163db8996416a4f8946f491eeedb0" }
+      { "version": "3.12.3", "artifact": "ZCode-3.12.3-linux-arm64.deb", "url": "https://cdn-zcode.z.ai/zcode/electron/releases/3.12.3/linux-arm64/ZCode-3.12.3-linux-arm64.deb", "sha256": "b6fcb0ddce028c8c5c6fe821d4c5033196da0841e5c0e64b4b54ce281180d652" }
     ],
     "maxBytes": 167772160
   },
