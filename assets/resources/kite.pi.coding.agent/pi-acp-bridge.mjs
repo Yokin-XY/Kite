@@ -210,23 +210,142 @@ function replayMessages(sessionId, messages) {
   }
 }
 
-function emitCommands(sessionId, loader) {
-  // 命令清单 = pi SDK 会话内真正能被文本触发的命令（agent-session.prompt 的展开路径）：
-  // prompt 模板（/name）与 skills（/skill:name）。内置 TUI 命令（compact/new/quit…）
-  // 不走 SDK 文本路径，广告了也无法执行，故不列入。
+// ---------- 斜杠命令（模式抄自 pi-web-ui server/slash-commands.ts）----------
+// NATIVE_COMMANDS：桥端原生实现的命令（pi CLI 的交互式内置命令不经 SDK prompt()，
+// 不拦截会被当普通文本发给模型）。exec() 与此清单保持同步。
+const NATIVE_COMMANDS = [
+  { name: 'compact', description: '压缩上下文', argumentHint: '[说明]' },
+  { name: 'model', description: '查看或切换模型', argumentHint: '[provider/model 或 model]' },
+  { name: 'thinking', description: '设置思考强度', argumentHint: '<off|minimal|low|medium|high|xhigh|max>' },
+  { name: 'name', description: '重命名当前会话', argumentHint: '<名称>' },
+  { name: 'reload', description: '重新加载扩展、技能与模板' },
+  { name: 'help', description: '显示全部命令' },
+];
+
+function collectSlashCommands(pi) {
+  // 目录 = 桥端原生 + SDK 会话可触发的命令（extension/prompt/skill），与
+  // pi-web-ui SlashCommandsService.push() 同源：AgentSession.prompt() 的展开路径。
   const commands = [];
-  for (const p of loader?.getPrompts?.()?.prompts ?? []) {
-    commands.push({ name: p.name, description: p.description ?? '', input: null });
+  const seen = new Set();
+  for (const c of NATIVE_COMMANDS) {
+    commands.push({ name: c.name, description: c.description, input: c.argumentHint ? { hint: c.argumentHint } : null });
+    seen.add(c.name);
   }
-  for (const s of loader?.getSkills?.()?.skills ?? []) {
-    if (s.disableModelInvocation) continue;
-    commands.push({ name: `skill:${s.name}`, description: s.description ?? '', input: null });
-  }
+  try {
+    const runner = pi?.extensionRunnerRef?.runner ?? pi?.extensionRunner;
+    for (const cmd of runner?.getRegisteredCommands?.() ?? []) {
+      const name = cmd.invocationName ?? cmd.name;
+      if (!name || seen.has(name)) continue;
+      commands.push({ name, description: cmd.description ?? '', input: null });
+      seen.add(name);
+    }
+  } catch { /* extension runner 未就绪：目录仍可用 */ }
+  try {
+    for (const t of pi?.promptTemplates ?? []) {
+      if (seen.has(t.name)) continue;
+      commands.push({ name: t.name, description: t.description ?? '', input: null });
+      seen.add(t.name);
+    }
+  } catch { /* 同上 */ }
+  try {
+    for (const s of pi?.resourceLoader?.getSkills?.()?.skills ?? []) {
+      if (s.disableModelInvocation) continue;
+      const name = `skill:${s.name}`;
+      if (seen.has(name)) continue;
+      commands.push({ name, description: s.description ?? '', input: null });
+      seen.add(name);
+    }
+  } catch { /* 同上 */ }
+  return commands;
+}
+
+function emitCommands(sessionId, pi) {
+  const commands = collectSlashCommands(pi);
   if (!commands.length) return;
   sessionUpdate(sessionId, {
     sessionUpdate: 'available_commands_update',
     availableCommands: commands,
   });
+}
+
+function parseSlash(text) {
+  const trimmed = (text ?? '').trim();
+  if (!trimmed.startsWith('/')) return null;
+  const m = trimmed.match(/^\/([^\s]+)\s*([\s\S]*)$/);
+  if (!m || !m[1]) return null;
+  return { name: m[1], args: m[2].trim() };
+}
+
+/** 桥端原生命令执行：返回 true 表示已拦截（不再透传 SDK）。结果以 agent 消息回显。 */
+async function execNativeCommand(sessionId, entry, name, args) {
+  const { pi } = entry;
+  const reply = (text) => {
+    sessionUpdate(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+  };
+  if (name === 'compact') {
+    reply(args ? `正在压缩上下文（说明：${args}）…` : '正在压缩上下文…');
+    try {
+      await pi.compact(args || undefined);
+      reply('上下文压缩完成。');
+    } catch (err) {
+      reply(`压缩失败：${err?.message ?? err}`);
+    }
+    return true;
+  }
+  if (name === 'model') {
+    try {
+      const runtime = await modelRuntimeP;
+      const all = [];
+      for (const pid of configuredProviders()) {
+        for (const m of runtime.getModels(pid)) all.push({ pid, m, modelId: `${pid}/${m.id}` });
+      }
+      if (!args) {
+        const current = pi.model;
+        reply(`当前模型：${current ? `${current.providerId}/${current.id}` : '未知'}\n可用：\n` +
+          all.map((x) => `- ${x.modelId}${x.m.name ? `（${x.m.name}）` : ''}`).join('\n'));
+        return true;
+      }
+      const hit = all.find((x) => x.modelId === args) ?? all.find((x) => x.m.id === args);
+      if (!hit) { reply(`未找到模型 ${args}。用 /model 查看可用列表。`); return true; }
+      await pi.setModel(hit.m);
+      reply(`已切换模型：${hit.modelId}`);
+    } catch (err) {
+      reply(`切换模型失败：${err?.message ?? err}`);
+    }
+    return true;
+  }
+  if (name === 'thinking') {
+    const levels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+    if (!levels.includes(args)) {
+      reply(`用法：/thinking <${levels.join('|')}>`);
+      return true;
+    }
+    pi.setThinkingLevel(args);
+    reply(`思考强度已设为 ${args}。`);
+    return true;
+  }
+  if (name === 'name') {
+    if (!args) { reply('用法：/name <名称>'); return true; }
+    pi.setSessionName(args);
+    reply(`会话已重命名为：${args}`);
+    return true;
+  }
+  if (name === 'reload') {
+    reply('正在重新加载扩展、技能与模板…');
+    try {
+      await pi.reload?.();
+      emitCommands(sessionId, pi);
+      reply('重新加载完成，命令清单已更新。');
+    } catch (err) {
+      reply(`重新加载失败：${err?.message ?? err}`);
+    }
+    return true;
+  }
+  if (name === 'help') {
+    reply('可用命令：\n' + collectSlashCommands(pi).map((c) => `/${c.name}${c.input?.hint ? ' ' + c.input.hint : ''} — ${c.description}`).join('\n'));
+    return true;
+  }
+  return false;
 }
 
 // ---------- 模型选择（session/set_model，UNSTABLE 但广泛实现） ----------
@@ -324,7 +443,7 @@ const methods = {
     const pi = result.session;
     const sessionId = pi.sessionId ?? `pi_${randomUUID()}`;
     sessions.set(sessionId, { pi, unsubscribe: wireSession(sessionId, pi), file: pi.sessionFile ?? null, cwd });
-    emitCommands(sessionId, loader);
+    emitCommands(sessionId, pi);
     debug('session/new', sessionId, 'file:', pi.sessionFile);
     return { sessionId, models: await modelState(sessions.get(sessionId)) };
   },
@@ -341,7 +460,7 @@ const methods = {
     const pi = result.session;
     const resolvedId = pi.sessionId ?? sessionId;
     sessions.set(resolvedId, { pi, unsubscribe: wireSession(resolvedId, pi), file: pi.sessionFile ?? null, cwd });
-    emitCommands(resolvedId, loader);
+    emitCommands(resolvedId, pi);
     replayMessages(resolvedId, pi.agent?.state?.messages);
     return { sessionId: resolvedId, models: await modelState(sessions.get(resolvedId)) };
   },
@@ -391,6 +510,18 @@ const methods = {
         content: { type: 'text', text },
         messageId: undefined,
       });
+    }
+    // 桥端原生命令拦截（与 NATIVE_COMMANDS 同步）：命中则本地执行，不透传 SDK。
+    const slash = parseSlash(text);
+    if (slash && NATIVE_COMMANDS.some((c) => c.name === slash.name)) {
+      phase(`native command: /${slash.name}`);
+      try {
+        await execNativeCommand(params.sessionId, entry, slash.name, slash.args);
+      } catch (err) {
+        phase(`native command FAILED: ${err?.message ?? err}`);
+        throw err;
+      }
+      return { stopReason: 'end_turn' };
     }
     try {
       await pi.prompt(text);
