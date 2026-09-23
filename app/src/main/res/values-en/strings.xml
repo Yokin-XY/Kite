@@ -155,10 +155,6 @@
     <string name="settings_startup_report_summary">Review first-space setup problems and generate a complete report file</string>
     <string name="settings_logs_title">Runtime logs</string>
     <string name="settings_logs_summary">View, refresh, clear, or share Kite application logs.</string>
-    <string name="settings_version_title">Version</string>
-    <string name="settings_version_summary">%1$s (versionCode %2$d)</string>
-    <string name="settings_diagnostics_scope_title">Diagnostics boundary</string>
-    <string name="settings_diagnostics_scope_summary">This page exposes logs and real status entry points. It does not continuously scan the network, files, or runtime in the background.</string>
     <string name="settings_about_version_value">%1$s (build %2$d)</string>
     <string name="settings_about_description">Manage local Linux environments, terminals, and AI tools on Android.</string>
     <string name="settings_about_project_section">Project</string>
@@ -225,7 +221,6 @@
     <string name="settings_drop_zone_unavailable_summary">Card registration storage has an error. Tap to retry.</string>
     <string name="settings_theme_color_section">Color scheme</string>
     <string name="settings_theme_color_title">Current color scheme</string>
-    <string name="settings_background_color_section">Background color</string>
     <string name="settings_theme_mode_section">Display mode</string>
     <string name="settings_theme_mode_title">Light and dark mode</string>
     <string name="settings_theme_mode_dialog_title">Light and dark mode</string>
@@ -243,16 +238,6 @@
     <string name="settings_theme_preview_title">Theme preview</string>
     <string name="settings_theme_preview_summary">Buttons, cards, and supporting text follow these colors.</string>
     <string name="settings_theme_preview_action">Start / Open</string>
-    <string name="theme_choice_cool_cyan">Cool cyan</string>
-    <string name="theme_choice_purple">Purple</string>
-    <string name="theme_choice_green">Green</string>
-    <string name="theme_choice_blue">Blue</string>
-    <string name="theme_choice_orange">Orange</string>
-    <string name="theme_choice_cool_gray">Cool gray</string>
-    <string name="theme_choice_white">White</string>
-    <string name="theme_choice_ivory">Ivory</string>
-    <string name="theme_choice_mist_blue">Mist blue</string>
-    <string name="theme_choice_light_cyan">Light cyan</string>
 
     <string name="home_tabs_description">Card categories</string>
     <string name="home_search_hint">Search configurations</string>
@@ -326,13 +311,8 @@
 
     <string name="startup_failure_title">Kite startup diagnostics</string>
     <string name="startup_failure_summary">The previous startup did not finish. Only problems are shown here; generate a report file for the complete raw record.</string>
-    <string name="startup_copy_diagnostics">Copy diagnostics</string>
-    <string name="startup_share_diagnostics">Share diagnostics</string>
     <string name="startup_open_app_settings">Open app settings</string>
     <string name="startup_retry">Try starting again</string>
-    <string name="startup_diagnostics_clip_label">Kite startup diagnostics</string>
-    <string name="startup_diagnostics_copied">Diagnostics copied</string>
-    <string name="startup_share_chooser">Share Kite startup diagnostics</string>
     <string name="startup_report_title">First-run report</string>
     <string name="startup_report_raw_title">Raw report</string>
     <string name="startup_report_raw_summary">Keeps device, startup-stage, rootfs, bundled-component, and log details. Raw content is never expanded on this page.</string>
@@ -422,9 +402,7 @@
     <string name="runtime_management_refresh">Refresh runtime status</string>
     <string name="runtime_management_empty_title">Nothing is running</string>
     <string name="runtime_management_empty_summary">Start a card or terminal to inspect its status and process ownership here.</string>
-    <string name="runtime_management_standalone_terminals">Standalone terminals · %1$d</string>
     <string name="runtime_management_run_process_count">%1$s · %2$d processes</string>
-    <string name="runtime_management_count_description">%1$s count</string>
     <string name="runtime_management_card_fallback">Kite card</string>
     <string name="runtime_management_section_background">Background services</string>
     <string name="runtime_management_section_resource">Resource tasks</string>
@@ -507,46 +485,18 @@
     <string name="service_notification_title">Kite is running in the background</string>
     <string name="service_notification_text">The container environment stays available for cards and terminals</string>
 
-    <string name="status_memory">Memory</string>
-    <string name="status_cpu">CPU</string>
-    <string name="status_disk">Disk</string>
-    <string name="status_network">Network</string>
 
-    <string name="bridge_adb">ADB connection</string>
-    <string name="bridge_wifi">Wireless connection</string>
-    <string name="bridge_usb">USB mode</string>
 
-    <string name="terminal_session_note">This is the real PTY output from the current in-app terminal session. Commands run through an external ADB connection are not replayed here automatically.</string>
-    <string name="terminal_session_section">Spaces and terminal sessions</string>
-    <string name="terminal_agent_section">Agent entry points</string>
     <string name="terminal_title_short">Terminal</string>
-    <string name="terminal_quick_actions">Quick checks</string>
-    <string name="terminal_start">Start container</string>
-    <string name="terminal_restart">Reconnect session</string>
-    <string name="terminal_reset">Rebuild container</string>
     <string name="terminal_clear">Clear</string>
     <string name="terminal_new_session">New terminal</string>
-    <string name="terminal_open_current">Continue current</string>
-    <string name="terminal_back_to_list">Back to list</string>
     <string name="terminal_empty_sessions">No terminal sessions yet. Use the new-session button in the top-right corner to begin.</string>
-    <string name="terminal_session_active">In use</string>
-    <string name="terminal_session_shell">Shell terminal</string>
-    <string name="terminal_session_agent">Agent terminal</string>
     <string name="terminal_status_running">Running</string>
     <string name="terminal_status_connected">Connected</string>
-    <string name="terminal_status_disconnected">Disconnected</string>
     <string name="terminal_status_exited">Exited</string>
     <string name="terminal_status_failed">Exited with error</string>
     <string name="terminal_status_idle">Idle</string>
     <string name="terminal_time_yesterday">Yesterday</string>
-    <string name="terminal_shortcut_reserved">Reserved</string>
-    <string name="terminal_quick_whoami">whoami</string>
-    <string name="terminal_quick_kernel">uname -a</string>
-    <string name="terminal_quick_workspace">ls /workspace</string>
-    <string name="terminal_quick_claude">claude auth</string>
-    <string name="terminal_quick_node">node -v</string>
-    <string name="terminal_quick_smoke">Smoke test</string>
-    <string name="terminal_launch_claude">Start Claude</string>
     <string name="terminal_ctrl_c">Ctrl+C</string>
     <string name="terminal_ctrl_l">Ctrl+L</string>
     <string name="terminal_tab">Tab</string>
@@ -596,46 +546,15 @@
     <string name="terminal_direction_down">Down</string>
     <string name="terminal_direction_left">Left</string>
     <string name="terminal_direction_right">Right</string>
-    <string name="terminal_key_up">↑</string>
-    <string name="terminal_key_down">↓</string>
-    <string name="terminal_key_left">←</string>
-    <string name="terminal_key_right">→</string>
-    <string name="terminal_restore_clean">Restore clean Ubuntu</string>
     <string name="terminal_copy_transcript">Copy current output</string>
     <string name="terminal_copy_success">Current output copied</string>
     <string name="terminal_copy_empty">There is no output to copy yet</string>
 
-    <string name="files_workspace">Workspace</string>
-    <string name="files_rootfs">Container rootfs</string>
     <string name="files_exchange">Kite Ubuntu</string>
-    <string name="files_logs">Logs</string>
-    <string name="files_up">Up</string>
-    <string name="files_refresh">Refresh</string>
-    <string name="files_root_path">/</string>
 
-    <string name="bridge_toolchain_section">KF tool environment</string>
-    <string name="bridge_toolchain_prepare_repair">Check and repair</string>
-    <string name="bridge_toolchain_doctor">Environment diagnostics</string>
-    <string name="bridge_inventory_section">Version inventory / diagnostic output</string>
-    <string name="bridge_adb_automation">ADB automation</string>
-    <string name="bridge_copy_prepare_adb">Copy one-step ADB setup command</string>
-    <string name="bridge_copy_doctor_adb">Copy environment diagnostic ADB command</string>
-    <string name="bridge_copy_tcpip">Copy adb tcpip</string>
-    <string name="bridge_copy_wifi">Copy wireless connection command</string>
-    <string name="bridge_copy_usb">Copy adb usb</string>
-    <string name="bridge_refresh">Refresh status</string>
 
-    <string name="status_proot_calibration_title">PRoot device calibration</string>
-    <string name="status_proot_calibration_description">Automatically find the peak starting at 1: write the plan, run the tests, then generate a PRoot policy for this device.</string>
-    <string name="status_proot_calibration_start">Start PRoot calibration</string>
-    <string name="status_proot_calibration_debug_title">PRoot device calibration (Debug)</string>
-    <string name="status_proot_calibration_p0">Run P0: single-PRoot tracee limit</string>
-    <string name="status_telemetry_repair_debug_title">Manual telemetry repair (Debug)</string>
-    <string name="status_telemetry_repair_action">Archive and clear contaminated telemetry</string>
-    <string name="placeholder_pending">--</string>
 
     <string name="log_title">Runtime logs</string>
-    <string name="log_path_prefix">Log file:</string>
     <string name="log_file_title">Log file</string>
     <string name="log_recent_title">Recent logs</string>
     <string name="log_refresh">Refresh</string>
@@ -770,7 +689,6 @@
     <string name="resource_maintenance_check_failed">Update check or update failed: %1$s</string>
     <string name="resource_maintenance_installed_version">Current version: %1$s</string>
     <string name="resource_maintenance_unknown_version">Not checked</string>
-    <string name="resource_maintenance_update_to">Update to %1$s</string>
     <string name="resource_action_cancel">Cancel</string>
     <string name="resource_action_processing">Processing</string>
     <string name="resource_action_unavailable">Unavailable</string>
@@ -943,7 +861,5 @@
     <string name="terminal_font_changed">Terminal font size changed to %1$dsp</string>
     <string name="copy_text">Copy</string>
     <string name="paste_text">Select all</string>
-    <string name="text_selection_more">More</string>
-    <string name="terminal_select_all_title">Select all output</string>
     <string name="terminal_copy_all_output">Copy all output</string>
 </resources>

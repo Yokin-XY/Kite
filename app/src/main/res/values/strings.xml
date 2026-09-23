@@ -154,10 +154,6 @@
     <string name="settings_startup_report_summary">查看首次空间准备中的异常，并生成完整报告文件</string>
     <string name="settings_logs_title">运行日志</string>
     <string name="settings_logs_summary">查看、刷新、清空或分享 Kite 应用日志</string>
-    <string name="settings_version_title">版本</string>
-    <string name="settings_version_summary">%1$s（versionCode %2$d）</string>
-    <string name="settings_diagnostics_scope_title">诊断边界</string>
-    <string name="settings_diagnostics_scope_summary">此页只提供日志和真实状态入口，不在后台持续扫描网络、文件或运行时。</string>
     <string name="settings_about_version_value">%1$s（构建 %2$d）</string>
     <string name="settings_about_description">在 Android 上管理本地 Linux 环境、终端与 AI 工具。</string>
     <string name="settings_about_project_section">项目</string>
@@ -224,7 +220,6 @@
     <string name="settings_drop_zone_unavailable_summary">卡片登记存储异常；点击重试。</string>
     <string name="settings_theme_color_section">配色方案</string>
     <string name="settings_theme_color_title">当前配色</string>
-    <string name="settings_background_color_section">背景色</string>
     <string name="settings_theme_mode_section">显示模式</string>
     <string name="settings_theme_mode_title">明暗模式</string>
     <string name="settings_theme_mode_dialog_title">明暗模式</string>
@@ -242,16 +237,6 @@
     <string name="settings_theme_preview_title">主题预览</string>
     <string name="settings_theme_preview_summary">按钮、卡片和辅助信息会跟随这里的颜色。</string>
     <string name="settings_theme_preview_action">启动 / 打开</string>
-    <string name="theme_choice_cool_cyan">冷青</string>
-    <string name="theme_choice_purple">紫</string>
-    <string name="theme_choice_green">绿</string>
-    <string name="theme_choice_blue">蓝</string>
-    <string name="theme_choice_orange">橙</string>
-    <string name="theme_choice_cool_gray">冷灰</string>
-    <string name="theme_choice_white">白</string>
-    <string name="theme_choice_ivory">米白</string>
-    <string name="theme_choice_mist_blue">雾蓝</string>
-    <string name="theme_choice_light_cyan">浅青</string>
 
     <string name="home_tabs_description">卡片分类</string>
     <string name="home_search_hint">搜索配置</string>
@@ -325,13 +310,8 @@
 
     <string name="startup_failure_title">Kite 启动失败诊断</string>
     <string name="startup_failure_summary">上一次启动没有完成。页面只显示异常项，完整原文请生成报告文件。</string>
-    <string name="startup_copy_diagnostics">复制诊断信息</string>
-    <string name="startup_share_diagnostics">分享诊断信息</string>
     <string name="startup_open_app_settings">打开应用设置</string>
     <string name="startup_retry">重新尝试启动</string>
-    <string name="startup_diagnostics_clip_label">Kite 启动诊断</string>
-    <string name="startup_diagnostics_copied">诊断信息已复制</string>
-    <string name="startup_share_chooser">分享 Kite 启动诊断</string>
     <string name="startup_report_title">首次运行报告</string>
     <string name="startup_report_raw_title">原始报告</string>
     <string name="startup_report_raw_summary">完整保留设备、启动阶段、rootfs、内置组件状态和日志；内容不会在页面展开。</string>
@@ -421,9 +401,7 @@
     <string name="runtime_management_refresh">刷新运行状态</string>
     <string name="runtime_management_empty_title">暂无运行项</string>
     <string name="runtime_management_empty_summary">启动卡片或终端后，可在这里查看运行状态与进程归属</string>
-    <string name="runtime_management_standalone_terminals">独立终端 · %1$d</string>
     <string name="runtime_management_run_process_count">%1$s · %2$d 个进程</string>
-    <string name="runtime_management_count_description">%1$s数量</string>
     <string name="runtime_management_card_fallback">Kite 卡片</string>
     <string name="runtime_management_section_background">后台服务</string>
     <string name="runtime_management_section_resource">资源任务</string>
@@ -506,46 +484,18 @@
     <string name="service_notification_title">Kite 后台运行</string>
     <string name="service_notification_text">容器环境正在为卡片和终端保持可用</string>
 
-    <string name="status_memory">内存</string>
-    <string name="status_cpu">CPU</string>
-    <string name="status_disk">磁盘</string>
-    <string name="status_network">网络</string>
 
-    <string name="bridge_adb">ADB 连接</string>
-    <string name="bridge_wifi">无线连接</string>
-    <string name="bridge_usb">USB 模式</string>
 
-    <string name="terminal_session_note">这里显示的是当前 App 这条终端会话里的真实 PTY 输出；如果从外部 ADB 直连容器执行命令，那些动作不会自动回放到这里。</string>
-    <string name="terminal_session_section">空间与终端会话</string>
-    <string name="terminal_agent_section">智能体入口</string>
     <string name="terminal_title_short">终端</string>
-    <string name="terminal_quick_actions">常用验收</string>
-    <string name="terminal_start">启动容器</string>
-    <string name="terminal_restart">重连会话</string>
-    <string name="terminal_reset">重建容器</string>
     <string name="terminal_clear">清屏</string>
     <string name="terminal_new_session">新建终端</string>
-    <string name="terminal_open_current">继续当前</string>
-    <string name="terminal_back_to_list">返回列表</string>
     <string name="terminal_empty_sessions">还没有终端会话。使用右上角的新建按钮开始。</string>
-    <string name="terminal_session_active">当前使用</string>
-    <string name="terminal_session_shell">Shell 终端</string>
-    <string name="terminal_session_agent">智能体终端</string>
     <string name="terminal_status_running">运行中</string>
     <string name="terminal_status_connected">已连接</string>
-    <string name="terminal_status_disconnected">已断开</string>
     <string name="terminal_status_exited">已退出</string>
     <string name="terminal_status_failed">异常退出</string>
     <string name="terminal_status_idle">空闲</string>
     <string name="terminal_time_yesterday">昨天</string>
-    <string name="terminal_shortcut_reserved">预留</string>
-    <string name="terminal_quick_whoami">whoami</string>
-    <string name="terminal_quick_kernel">uname -a</string>
-    <string name="terminal_quick_workspace">ls /workspace</string>
-    <string name="terminal_quick_claude">claude auth</string>
-    <string name="terminal_quick_node">node -v</string>
-    <string name="terminal_quick_smoke">基础验收</string>
-    <string name="terminal_launch_claude">启动 Claude</string>
     <string name="terminal_ctrl_c">Ctrl+C</string>
     <string name="terminal_ctrl_l">Ctrl+L</string>
     <string name="terminal_tab">Tab</string>
@@ -595,46 +545,15 @@
     <string name="terminal_direction_down">向下</string>
     <string name="terminal_direction_left">向左</string>
     <string name="terminal_direction_right">向右</string>
-    <string name="terminal_key_up">↑</string>
-    <string name="terminal_key_down">↓</string>
-    <string name="terminal_key_left">←</string>
-    <string name="terminal_key_right">→</string>
-    <string name="terminal_restore_clean">恢复纯净 Ubuntu</string>
     <string name="terminal_copy_transcript">复制当前输出</string>
     <string name="terminal_copy_success">已复制当前输出</string>
     <string name="terminal_copy_empty">当前还没有可复制的输出</string>
 
-    <string name="files_workspace">工作区</string>
-    <string name="files_rootfs">容器 rootfs</string>
     <string name="files_exchange">Kite Ubuntu</string>
-    <string name="files_logs">日志</string>
-    <string name="files_up">上一层</string>
-    <string name="files_refresh">刷新</string>
-    <string name="files_root_path">/</string>
 
-    <string name="bridge_toolchain_section">KF 工具环境</string>
-    <string name="bridge_toolchain_prepare_repair">检查并修复</string>
-    <string name="bridge_toolchain_doctor">环境诊断</string>
-    <string name="bridge_inventory_section">版本清单 / 诊断输出</string>
-    <string name="bridge_adb_automation">ADB 自动化</string>
-    <string name="bridge_copy_prepare_adb">复制一键补全 ADB 命令</string>
-    <string name="bridge_copy_doctor_adb">复制环境诊断 ADB 命令</string>
-    <string name="bridge_copy_tcpip">复制 adb tcpip</string>
-    <string name="bridge_copy_wifi">复制无线连接命令</string>
-    <string name="bridge_copy_usb">复制 adb usb</string>
-    <string name="bridge_refresh">刷新状态</string>
 
-    <string name="status_proot_calibration_title">PRoot 设备校准</string>
-    <string name="status_proot_calibration_description">从 1 开始自动寻峰：先写计划，再执行测试；完成后生成本机 PRoot 策略。</string>
-    <string name="status_proot_calibration_start">开始 PRoot 校准</string>
-    <string name="status_proot_calibration_debug_title">PRoot 设备校准（Debug）</string>
-    <string name="status_proot_calibration_p0">运行 P0：单 PRoot tracee 上限</string>
-    <string name="status_telemetry_repair_debug_title">Telemetry 手动修复（Debug）</string>
-    <string name="status_telemetry_repair_action">归档并清空污染 telemetry</string>
-    <string name="placeholder_pending">--</string>
 
     <string name="log_title">运行日志</string>
-    <string name="log_path_prefix">日志文件：</string>
     <string name="log_file_title">日志文件</string>
     <string name="log_recent_title">最近日志</string>
     <string name="log_refresh">刷新</string>
@@ -769,7 +688,6 @@
     <string name="resource_maintenance_check_failed">更新检查或更新失败：%1$s</string>
     <string name="resource_maintenance_installed_version">当前版本：%1$s</string>
     <string name="resource_maintenance_unknown_version">待检测</string>
-    <string name="resource_maintenance_update_to">更新到 %1$s</string>
     <string name="resource_action_cancel">取消</string>
     <string name="resource_action_processing">处理中</string>
     <string name="resource_action_unavailable">不可用</string>
@@ -942,7 +860,5 @@
     <string name="terminal_font_changed">终端字号已切到 %1$dsp</string>
     <string name="copy_text">复制</string>
     <string name="paste_text">全选</string>
-    <string name="text_selection_more">更多</string>
-    <string name="terminal_select_all_title">全选输出</string>
     <string name="terminal_copy_all_output">复制全部输出</string>
 </resources>

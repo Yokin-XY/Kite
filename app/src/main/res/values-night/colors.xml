@@ -9,16 +9,11 @@
     <color name="surface_alt">#242424</color>
     <color name="outline">#373737</color>
 
-    <color name="terminal_bg">#081219</color>
-    <color name="terminal_text">#D8F88D</color>
 
     <color name="text_primary">#F5F5F5</color>
     <color name="text_secondary">#B2B2B2</color>
-    <color name="success">#34D399</color>
-    <color name="warning">#F2B84B</color>
     <color name="error">#FF7A7A</color>
     <color name="chip_bg">#2A2A2A</color>
-    <color name="input_bg">#202020</color>
 
     <color name="terminal_page_bg">#F2F3F5</color>
     <color name="terminal_page_header">#E8EBEE</color>
