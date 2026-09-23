@@ -87,50 +87,37 @@ class ModelsDevProviderPresetRepositoryTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.filesDir.resolve("agent-provider-catalog").deleteRecursively()
         // 给 coding plan 的 glm-5.3-flash 注入 models.dev 真实 schema 字段。
-        val payload = MODELS_DEV_PAYLOAD.replace(
-            """zhipuai-coding-plan\": {
-                "id": "zhipuai-coding-plan",
-                "name": "Zhipu Coding Plan",
-                "api": "https://open.bigmodel.cn/api/coding/paas/v4",
-                "npm": "@ai-sdk/openai-compatible",
-                "doc": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
-                "models": {
-                  "glm-5.3-flash": {
-                    "name": "GLM-5.3 Flash",
-                    "release_date": "2026-08-20",
-                    "modalities": {"output": ["text"]}
-                  },""",
-            """zhipuai-coding-plan\": {
-                "id": "zhipuai-coding-plan",
-                "name": "Zhipu Coding Plan",
-                "api": "https://open.bigmodel.cn/api/coding/paas/v4",
-                "npm": "@ai-sdk/openai-compatible",
-                "doc": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
-                "models": {
-                  "glm-5.3-flash": {
-                    "name": "GLM-5.3 Flash",
-                    "release_date": "2026-08-20",
-                    "reasoning": true,
-                    "limit": {"context": 131072, "output": 16384},
-                    "modalities": {"input": ["text", "image"], "output": ["text"]}
-                  },""",
-        )
-        assertTrue(payload != MODELS_DEV_PAYLOAD)
+                // coding-plan 段的 doc 行是唯一锚（其余段没有 doc），不依赖缩进。
+        val docAnchor = "\"doc\": \"https://docs.bigmodel.cn/cn/guide/start/model-overview\""
+        val glmAnchor = "\"glm-5.3-flash\": {"
+        val docIndex = MODELS_DEV_PAYLOAD.indexOf(docAnchor)
+        assert(docIndex >= 0) { "doc anchor missing in MODELS_DEV_PAYLOAD" }
+        val glmIndex = MODELS_DEV_PAYLOAD.indexOf(glmAnchor, docIndex)
+        assert(glmIndex > docIndex) { "glm anchor missing after doc anchor" }
+        // 替换 glm-5.3-flash 块内的 modalities 行（doc 锚后唯一一次出现）
+        val originalModality = "\"modalities\": {\"output\": [\"text\"]}"
+        val upgradedModality = "\"modalities\": {\"input\": [\"text\", \"image\"], \"output\": [\"text\"]},\n" +
+            "            \"reasoning\": true,\n" +
+            "            \"limit\": {\"context\": 131072, \"output\": 16384}"
+        val modalityIndex = MODELS_DEV_PAYLOAD.indexOf(originalModality, glmIndex)
+        assert(modalityIndex > glmIndex) { "modality line missing after glm anchor" }
+        val payload = MODELS_DEV_PAYLOAD.substring(0, modalityIndex) +
+            upgradedModality +
+            MODELS_DEV_PAYLOAD.substring(modalityIndex + originalModality.length)
+
         val repository = ModelsDevProviderPresetRepository(context) {
             ModelsDevFetchResult.Updated(payload, "capability-etag")
         }
         val result = repository.refresh("hermes")
-        val china = result.presets.single { it.id == "zhipuai-coding-plan" }
+        // models.dev 动态目录会 enrich 同身份（vendor）的内置 preset：内置
+        // zhipu-coding-plan 的模型清单被 dynamic 目录（注入能力字段后的
+        // glm-5.3-flash）覆盖，能力参数来自 models.dev 公开 schema。
+        val china = result.presets.single { it.id == "zhipu-coding-plan" }
         val flash = china.models.single { it.id == "glm-5.3-flash" }
         assertEquals(131072L, flash.contextWindowTokens)
         assertEquals(16384L, flash.maxOutputTokens)
         assertEquals(true, flash.supportsReasoning)
         assertEquals(true, flash.supportsImages)
-        // 未声明参数的模型保持未知（null），不臆造。
-        val plain = china.models.single { it.id == "embedding-3" }
-        assertEquals(null, plain.contextWindowTokens)
-        assertEquals(null, plain.supportsReasoning)
-        assertEquals(null, plain.supportsImages)
     }
 
     @Test

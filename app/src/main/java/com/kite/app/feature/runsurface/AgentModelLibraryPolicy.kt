@@ -55,10 +55,19 @@ internal object AgentModelLibraryPolicy {
                 ?: choicesByGroup.entries.firstOrNull { (_, choices) ->
                     choices.firstOrNull()?.groupName.equals(provider.displayName, ignoreCase = true)
                 }?.value
-            val models = protocolChoices
+            /*
+             * 选择器保留协议全集：模型下拉显示全部可选模型（含免费/未配置
+             * 组），目录删除只影响行计数不裁剪选择器——1d19a519 的产品语义。
+             * 选中值候选仍限定本供应商范围（协议本组选项/目录模型），避免
+             * 从全集里捡到其他供应商的默认模型。
+             */
+            val scopedChoices = protocolChoices
                 ?.map { choice -> withDisplayName(choice, library, provider.id) }
                 ?: displayProvider.models.map { model -> providerModelChoice(displayProvider, model) }
-            val selectedModel = selectedModelValue(snapshot, provider.id, models)
+            val models = modelOption?.choices.orEmpty()
+                .ifEmpty { scopedChoices }
+                .map { choice -> withDisplayName(choice, library, provider.id) }
+            val selectedModel = selectedModelValue(snapshot, provider.id, scopedChoices)
             AgentModelProviderProjection(
                 id = provider.id,
                 displayModelCount = displayProvider.models.size,

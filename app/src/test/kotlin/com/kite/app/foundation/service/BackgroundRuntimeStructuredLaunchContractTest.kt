@@ -125,5 +125,8 @@ class BackgroundRuntimeStructuredLaunchContractTest {
     private fun sourceFile(name: String): File = listOf(
         File("src/main/kotlin/com/kite/app/foundation/service/$name"),
         File("app/src/main/kotlin/com/kite/app/foundation/service/$name"),
+        File("src/main/kotlin/com/kite/app/foundation/runtime/$name"),
+        File("app/src/main/kotlin/com/kite/app/foundation/runtime/$name"),
+        File("../app/src/main/kotlin/com/kite/app/foundation/runtime/$name"),
     ).first(File::exists)
 }

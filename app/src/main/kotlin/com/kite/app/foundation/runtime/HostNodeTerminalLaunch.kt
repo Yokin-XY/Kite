@@ -74,7 +74,7 @@ internal object HostNodeRuntimeProvider :
         val workingDirectory = layout.mapContainerPath(request.workingDirectory)
             ?.takeIf(File::isDirectory)
             ?: return unsupported("working_directory_invalid")
-        // 声明 openat2_degrade 的调用（应用域雷区网关型依赖，典型是 openclaw）：
+        // 声明 openat2_degrade 的调用（应用域雷区网关型依赖的典型代表）：
         // 雷已由地基拔除（glibc 雷补丁随 preparer 发布、直发调用方由资源补丁处理），
         // 车道只注入 /tmp 重写与兼容层定位环境，不再套运行时监护进程（tracer 仅诊断用）。
         val minefieldLane = request.guarantees.contains(RuntimeExecutionGuarantee.OPENAT2_DEGRADE)
@@ -151,7 +151,7 @@ internal object HostNodeRuntimeProvider :
         if (certificateFile.isFile) {
             environment["SSL_CERT_FILE"] = certificateFile.absolutePath
         }
-        // GUEST_TMP 是宿主车道通用能力（AGENTS.md 运行车道策略），不再是 openclaw
+        // GUEST_TMP 是宿主车道通用能力（AGENTS.md 运行车道策略），不再是特定网关型 Agent
         // 特权：Node fs 钩子层对一切 node 程序生效；C 兼容层三件套供动态 glibc
         // ELF 的 loader 路由使用。双层指向同一宿主 tmp 目录，任何一层缺失都会
         // 让硬编码 /tmp 的程序退回不存在的 /tmp 导致 ENOENT。
