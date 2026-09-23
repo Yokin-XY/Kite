@@ -594,6 +594,7 @@ internal class ClaudeCodeAgentConfigAdapter(
         AgentCommand(name = "skills", description = "查看与管理 Skills"),
         AgentCommand(name = "terminal-setup", description = "配置终端按键与提示符集成"),
         AgentCommand(name = "vim", description = "切换 Vim 输入模式"),
+        AgentCommand(name = "output-style", description = "查看或切换输出风格"),
     )
 
     override suspend fun readSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> {

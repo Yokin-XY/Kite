@@ -248,6 +248,11 @@ class CodexAppServerAgentProvider(
     }
 }
 
+/** Kite 桥能翻译执行的 Codex 斜杠命令（与 execCodexCommand 保持同步）。 */
+private val CODEX_BRIDGED_COMMANDS = setOf(
+    "compact", "status", "usage", "mcp", "skills", "memory", "goal", "diff", "rename",
+)
+
 private data class CodexSession(
     val id: String,
     val cwd: String,
@@ -434,24 +439,113 @@ private class CodexAppServerConnection(
             )
         }
 
-    private suspend fun compactSession(sessionId: String, session: CodexSession): AgentOperationResult<AgentTurnResult> {
-        endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting))
-        return try {
-            rpc.request("thread/compact/start", JSONObject().put("threadId", session.id))
+    /**
+     * Codex TUI 斜杠命令的桥端翻译执行器（模式与 pi-bridge NATIVE 命令一致）。
+     *
+     * app-server 不解释 prompt 内的 / 文本（那是 TUI 层功能），这里把有对应 op 的命令
+     * 翻译为 JSON-RPC 调用并把结果回显为消息；纯终端 UI 类命令（theme/vim/pets 等）
+     * 与 Kite 已有等价 UI 的命令（model/resume/plan 等）不列清单也不翻译。
+     * reply: 结果文本（已格式化）；null = 无法回显的结构化结果时用原始 JSON。
+     */
+    private suspend fun execCodexCommand(sessionId: String, session: CodexSession, name: String, args: String): Boolean {
+        val reply: (String) -> Unit = { text ->
             endpoint.eventSink.onEvent(
                 sessionId,
                 AgentSessionEvent.MessageChunk(
                     role = AgentMessageRole.Assistant,
-                    content = AgentContent.Text("已请求 Codex 压缩当前会话上下文。"),
-                    messageId = "codex-compact",
+                    content = AgentContent.Text(text),
+                    messageId = "codex-cmd-$name",
+                ),
+            )
+        }
+        endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting))
+        val result: String = try {
+            when (name) {
+                "compact" -> {
+                    rpc.request("thread/compact/start", JSONObject().put("threadId", session.id))
+                    "已请求 Codex 压缩当前会话上下文。"
+                }
+                "status" -> {
+                    val thread = rpc.request("thread/read", JSONObject().put("threadId", session.id).put("includeTurns", false))
+                    "当前会话状态：\n" +
+                        "- 模型：${session.modelProvider}/${session.modelId}${session.effort?.let { "（推理强度 $it）" } ?: ""}\n" +
+                        "- 审批档位：${session.permission}\n" +
+                        "- 工作目录：${session.cwd}\n" +
+                        "- 会话 ID：${session.id}"
+                }
+                "usage" -> {
+                    val usage = rpc.request("account/usage/read", JSONObject().put("threadId", session.id))
+                    "账号用量：${usage}"
+                }
+                "mcp" -> {
+                    val list = rpc.request("mcpServerStatus/list", JSONObject())
+                    val servers = list.optJSONArray("servers") ?: list.optJSONArray("data")
+                    if (servers == null || servers.length() == 0) "未配置任何 MCP 服务器。"
+                    else buildString {
+                        append("MCP 服务器（${servers.length()}）：")
+                        for (i in 0 until servers.length()) {
+                            val s = servers.optJSONObject(i) ?: continue
+                            append("\n- ${s.optString("name")}: ${s.optString("status", "unknown")}")
+                        }
+                    }
+                }
+                "skills" -> {
+                    val list = rpc.request("skills/list", JSONObject().put("cwds", org.json.JSONArray().put(session.cwd)))
+                    val items = list.optJSONArray("skills") ?: list.optJSONArray("data")
+                    if (items == null || items.length() == 0) "当前目录未发现 Skills。"
+                    else buildString {
+                        append("Skills（${items.length()}）：")
+                        for (i in 0 until items.length()) {
+                            val s = items.optJSONObject(i) ?: continue
+                            append("\n- ${s.optString("name")}")
+                        }
+                    }
+                }
+                "memory" -> {
+                    val status = rpc.request("memory/status", JSONObject())
+                    "记忆状态：${status}"
+                }
+                "goal" -> {
+                    val goal = rpc.request("thread/goal/get", JSONObject().put("threadId", session.id))
+                    val objective = goal.optJSONObject("goal")?.optString("objective").orEmpty()
+                    if (objective.isBlank()) "当前会话未设置目标（/goal <目标> 可设置）。"
+                    else "当前目标：$objective"
+                }
+                "diff" -> {
+                    val diff = rpc.request("gitDiffToRemote", JSONObject().put("cwd", session.cwd))
+                    val text = diff.optString("diff", diff.toString())
+                    if (text.isBlank()) "工作区没有可展示的改动。"
+                    else "改动（相对远端）：\n```\n${text.take(4000)}\n```"
+                }
+                "rename" -> {
+                    if (args.isBlank()) {
+                        "用法：/rename <新名称>"
+                    } else {
+                        rpc.request("thread/name/set", JSONObject().put("threadId", session.id).put("name", args))
+                        "会话已重命名为：$args"
+                    }
+                }
+                else -> return run {
+                    endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready))
+                    false
+                }
+            }
+        } catch (error: Throwable) {
+            endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Failed, error.message))
+            endpoint.eventSink.onEvent(
+                sessionId,
+                AgentSessionEvent.MessageChunk(
+                    role = AgentMessageRole.Assistant,
+                    content = AgentContent.Text("/$name 执行失败：${error.message}"),
+                    messageId = "codex-cmd-$name",
                 ),
             )
             endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready))
-            AgentOperationResult.Success(AgentTurnResult(stopReason = AgentStopReason.EndTurn))
-        } catch (error: Throwable) {
-            endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Failed, error.message))
-            AgentOperationResult.Failure("Codex 上下文压缩失败: ${error.message}", error)
+            return true
         }
+        reply(result)
+        endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready))
+        return true
     }
 
     override suspend fun prompt(request: AgentPromptRequest): AgentOperationResult<AgentTurnResult> {
@@ -460,8 +554,15 @@ private class CodexAppServerConnection(
         // Codex TUI 的斜杠命令是 TUI 层功能，app-server 不解释文本；桥把有对应 op 的命令
         // 翻译执行（与 pi-bridge 的 NATIVE 命令同一模式），其余照常透传。
         val promptText = request.content.filterIsInstance<AgentContent.Text>().joinToString("") { it.text }.trim()
-        if (promptText == "/compact") {
-            return compactSession(request.sessionId, session)
+        if (promptText.startsWith("/")) {
+            val command = promptText.trimStart('/').split(' ', limit = 2)
+            val name = command.getOrNull(0).orEmpty()
+            val args = command.getOrNull(1).orEmpty().trim()
+            if (name in CODEX_BRIDGED_COMMANDS) {
+                if (execCodexCommand(request.sessionId, session, name, args)) {
+                    return AgentOperationResult.Success(AgentTurnResult(stopReason = AgentStopReason.EndTurn))
+                }
+            }
         }
         val input = request.content.toCodexInput()
             ?: return AgentOperationResult.Unsupported("codex-app-server-unsupported-input")

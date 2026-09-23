@@ -622,9 +622,18 @@ internal class CodexAgentConfigAdapter(
             else "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
     }
     override fun bundledSlashCommands(agentId: String): List<com.kite.app.agent.contract.AgentCommand> = listOf(
-        // Codex 的斜杠命令是 TUI 层功能，app-server 不解释文本；只有桥能翻译执行
-        //（thread/compact/start）的命令才列，透传无效的不误导用户。
-        AgentCommand(name = "compact", description = "压缩当前会话上下文（由 Kite 桥翻译执行）"),
+        // Codex 的斜杠命令是 TUI 层功能，app-server 不解释文本；只有桥能翻译执行对应
+        // app-server op 的命令才列（与 CodexAppServerAgentProvider 的翻译表同步），
+        // 纯终端 UI 类（theme/vim/pets 等）与 Kite 已有等价 UI 的（model/resume 等）不列。
+        AgentCommand(name = "compact", description = "压缩当前会话上下文"),
+        AgentCommand(name = "status", description = "查看会话状态（模型/审批/工作目录）"),
+        AgentCommand(name = "usage", description = "查看账号 token 用量"),
+        AgentCommand(name = "mcp", description = "查看 MCP 服务器连接状态"),
+        AgentCommand(name = "skills", description = "查看当前目录可用的 Skills"),
+        AgentCommand(name = "memory", description = "查看记忆功能状态"),
+        AgentCommand(name = "goal", description = "查看当前会话目标", ),
+        AgentCommand(name = "diff", description = "查看工作区改动"),
+        AgentCommand(name = "rename", description = "重命名当前会话", ),
     )
 }
 

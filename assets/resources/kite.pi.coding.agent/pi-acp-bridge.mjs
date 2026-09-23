@@ -218,6 +218,8 @@ const NATIVE_COMMANDS = [
   { name: 'model', description: '查看或切换模型', argumentHint: '[provider/model 或 model]' },
   { name: 'thinking', description: '设置思考强度', argumentHint: '<off|minimal|low|medium|high|xhigh|max>' },
   { name: 'name', description: '重命名当前会话', argumentHint: '<名称>' },
+  { name: 'session', description: '查看会话信息与用量' },
+  { name: 'export', description: '导出会话（默认 HTML，.jsonl 结尾则导 JSONL）', argumentHint: '[路径]' },
   { name: 'reload', description: '重新加载扩展、技能与模板' },
   { name: 'help', description: '显示全部命令' },
 ];
@@ -338,6 +340,39 @@ async function execNativeCommand(sessionId, entry, name, args) {
       reply('重新加载完成，命令清单已更新。');
     } catch (err) {
       reply(`重新加载失败：${err?.message ?? err}`);
+    }
+    return true;
+  }
+  if (name === 'session') {
+    try {
+      const stats = pi.getSessionStats?.() ?? {};
+      const ctx = pi.getContextUsage?.();
+      reply([
+        `会话 ID：${pi.sessionId ?? '未知'}`,
+        pi.sessionName ? `会话名：${pi.sessionName}` : null,
+        pi.sessionFile ? `会话文件：${pi.sessionFile}` : null,
+        `消息数：${pi.messages?.length ?? stats.messageCount ?? 0}`,
+        ctx ? `上下文用量：${JSON.stringify(ctx)}` : null,
+      ].filter(Boolean).join('\n'));
+    } catch (err) {
+      reply(`读取会话信息失败：${err?.message ?? err}`);
+    }
+    return true;
+  }
+  if (name === 'export') {
+    try {
+      const isJsonl = args.endsWith('.jsonl');
+      let out;
+      if (isJsonl) {
+        out = pi.exportToJsonl?.(args || undefined);
+        reply(`会话已导出为 JSONL：${out ?? (args || '(默认路径)')}`);
+      } else {
+        const result = await pi.exportToHtml?.(args || undefined);
+        const path = typeof result === 'string' ? result : result?.path ?? result?.outputPath;
+        reply(`会话已导出为 HTML：${path ?? '(默认路径)'}`);
+      }
+    } catch (err) {
+      reply(`导出失败：${err?.message ?? err}`);
     }
     return true;
   }
