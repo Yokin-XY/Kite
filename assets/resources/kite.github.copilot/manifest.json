@@ -83,7 +83,7 @@
     "package": "@github/copilot",
     "command": "npm install -g @github/copilot@latest",
     "uninstallCommand": "npm uninstall -g @github/copilot",
-    "latestVersion": "1.0.86"
+    "latestVersion": "1.0.88"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.github.copilot",

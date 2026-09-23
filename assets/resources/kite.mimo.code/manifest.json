@@ -84,7 +84,7 @@
     "package": "@mimo-ai/cli",
     "command": "npm install -g @mimo-ai/cli@latest",
     "uninstallCommand": "npm uninstall -g @mimo-ai/cli",
-    "latestVersion": "0.1.14"
+    "latestVersion": "0.1.15"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.mimo.code",

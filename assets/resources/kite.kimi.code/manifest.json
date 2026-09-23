@@ -120,7 +120,7 @@
     "package": "@moonshot-ai/kimi-code",
     "command": "npm install -g @moonshot-ai/kimi-code@latest",
     "uninstallCommand": "npm uninstall -g @moonshot-ai/kimi-code",
-    "latestVersion": "2.0.0"
+    "latestVersion": "2.0.2"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.kimi.code",

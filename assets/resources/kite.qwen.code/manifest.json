@@ -78,7 +78,7 @@
     "package": "@qwen-code/qwen-code",
     "command": "npm install -g @qwen-code/qwen-code@latest",
     "uninstallCommand": "npm uninstall -g @qwen-code/qwen-code",
-    "latestVersion": "0.24.0"
+    "latestVersion": "0.24.4"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.qwen.code",
