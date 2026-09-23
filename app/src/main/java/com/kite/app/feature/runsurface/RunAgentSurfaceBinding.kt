@@ -409,6 +409,29 @@ internal class RunAgentSurfaceBinding(
     private var composerSkillLoading: Boolean = false
     private var composerSkillError: String? = null
     private var commandSuggestionSignature: String? = null
+    /** 命令弹层滚动容器：命令全集可达数十条，固定最大高度内滚动，不挤压消息区。 */
+    private val commandSuggestionScroll by lazy(LazyThreadSafetyMode.NONE) {
+        object : ScrollView(context) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                val maxHeight = ui.dp(320)
+                super.onMeasure(
+                    widthMeasureSpec,
+                    View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST),
+                )
+            }
+        }.apply {
+            visibility = View.GONE
+            isVerticalScrollBarEnabled = true
+            clipToOutline = true
+            background = ui.roundedBox(
+                tokens.surfaceElevated,
+                tokens.border,
+                ui.dp(16).toFloat(),
+            )
+            elevation = ui.dp(6).toFloat()
+        }
+    }
+
     private val commandSuggestionHost by lazy(LazyThreadSafetyMode.NONE) { buildCommandSuggestionHost() }
 
     private val mainContent: View = LinearLayout(context).apply {
@@ -449,7 +472,7 @@ internal class RunAgentSurfaceBinding(
             visibility = View.GONE
             setPadding(ui.dp(14), ui.dp(8), ui.dp(14), 0)
         })
-        addView(commandSuggestionHost, LinearLayout.LayoutParams(
+        addView(commandSuggestionScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(ui.dp(14), ui.dp(6), ui.dp(14), 0) })
@@ -1286,14 +1309,7 @@ internal class RunAgentSurfaceBinding(
     /** 输入以 / 开头时在输入框上方弹出 Agent 公布的命令清单（ACP available_commands）。 */
     private fun buildCommandSuggestionHost(): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        visibility = View.GONE
-        background = ui.roundedBox(
-            tokens.surfaceElevated,
-            tokens.border,
-            ui.dp(16).toFloat(),
-        )
         setPadding(0, ui.dp(6), 0, ui.dp(6))
-        elevation = ui.dp(6).toFloat()
     }
 
     private fun availableSlashCommands(): List<com.kite.app.agent.contract.AgentCommand> {
@@ -1326,11 +1342,14 @@ internal class RunAgentSurfaceBinding(
         if (signature != commandSuggestionSignature) {
             commandSuggestionSignature = signature
             host.removeAllViews()
-            matches.take(MAX_COMMAND_SUGGESTIONS).forEach { command ->
+            matches.forEach { command ->
                 host.addView(commandSuggestionRow(command))
             }
         }
-        if (host.visibility != View.VISIBLE) host.visibility = View.VISIBLE
+        commandSuggestionScroll.removeAllViews()
+        commandSuggestionScroll.addView(host)
+        if (commandSuggestionScroll.visibility != View.VISIBLE) commandSuggestionScroll.visibility = View.VISIBLE
+        commandSuggestionScroll.scrollTo(0, 0)
     }
 
     private fun commandSuggestionRow(command: com.kite.app.agent.contract.AgentCommand): View =
@@ -1371,8 +1390,8 @@ internal class RunAgentSurfaceBinding(
 
     private fun hideCommandSuggestions() {
         commandSuggestionSignature = null
-        if (commandSuggestionHost.visibility != View.GONE) {
-            commandSuggestionHost.visibility = View.GONE
+        if (commandSuggestionScroll.visibility != View.GONE) {
+            commandSuggestionScroll.visibility = View.GONE
             commandSuggestionHost.removeAllViews()
         }
     }
