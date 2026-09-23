@@ -475,7 +475,15 @@ private class CodexAppServerConnection(
                 }
                 "usage" -> {
                     val usage = rpc.request("account/usage/read", JSONObject().put("threadId", session.id))
-                    "账号用量：${usage}"
+                    buildString {
+                        append("账号用量：")
+                        val primary = usage.optJSONObject("primary") ?: usage.optJSONObject("data") ?: usage
+                        val window = primary?.optString("window", "").orEmpty()
+                        val used = primary?.optString("usedPercent", "").orEmpty()
+                        if (window.isNotBlank()) append("\n- 窗口：$window")
+                        if (used.isNotBlank()) append("\n- 已用：$used%")
+                        if (length == "账号用量：".length) append(usage)
+                    }
                 }
                 "mcp" -> {
                     val list = rpc.request("mcpServerStatus/list", JSONObject())
@@ -503,13 +511,30 @@ private class CodexAppServerConnection(
                 }
                 "memory" -> {
                     val status = rpc.request("memory/status", JSONObject())
-                    "记忆状态：${status}"
+                    buildString {
+                        append("记忆状态：")
+                        val available = status.optBoolean("available", false).let { if (it) "可用" else "未启用" }
+                        append("\n- 功能：$available")
+                        val consolidated = status.optInt("consolidatedThreads", -1)
+                        if (consolidated >= 0) append("\n- 已归并线程：$consolidated")
+                    }
                 }
                 "goal" -> {
-                    val goal = rpc.request("thread/goal/get", JSONObject().put("threadId", session.id))
-                    val objective = goal.optJSONObject("goal")?.optString("objective").orEmpty()
-                    if (objective.isBlank()) "当前会话未设置目标（/goal <目标> 可设置）。"
-                    else "当前目标：$objective"
+                    if (args.isBlank()) {
+                        val goal = rpc.request("thread/goal/get", JSONObject().put("threadId", session.id))
+                        val objective = goal.optJSONObject("goal")?.optString("objective").orEmpty()
+                        if (objective.isBlank()) "当前会话未设置目标（/goal <目标> 可设置）。"
+                        else "当前目标：$objective"
+                    } else {
+                        rpc.request(
+                            "thread/goal/set",
+                            JSONObject()
+                                .put("threadId", session.id)
+                                .put("objective", args)
+                                .put("status", "active"),
+                        )
+                        "已设置会话目标：$args"
+                    }
                 }
                 "diff" -> {
                     val diff = rpc.request("gitDiffToRemote", JSONObject().put("cwd", session.cwd))
