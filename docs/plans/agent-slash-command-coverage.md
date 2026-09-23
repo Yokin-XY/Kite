@@ -85,9 +85,16 @@
    等Android 真实顶层不翻），env 未注入时零行为。WSL Ubuntu-24.04 用
    build-kite-node-glibc-compat.ps1 构建。
 
-修复方向（独立任务）：Claude/外部 Agent 的工具执行车道策略——bash 类
-工具应在 proot 内以容器路径（/workspace）执行，宿主路径参数需经
-sessionPathMapper 双向翻译；或为宿主车道提供受控白名单的直执行通道。
+修复进展（2026-09-24 第一层）：
+- kite-node-host-runtime.cjs routeFile 新增车道判定：spawn 的 cwd 为宿主
+  物理路径（/data、/storage、宿主工作区/控制/rootfs 前缀）时宿主直跑
+  （PATH 注入 rootfs 物理 bin，file/args 经 mapContainerPathToHost）；
+  容器视图 cwd 仍走 proot。已部署真机。
+- 验证：Claude /init 的 Bash 工具到达权限审批环节（此前直接 ENOENT 失败），
+  批准后 /bin/ls 已执行但模型仍报 "Bash is broken"——下一层疑似 claude CLI
+  自带 sandbox 机制（模型提及 dangerouslyDisableSandbox）在 Android 宿主
+  不可用。下一步：以 KITE_NODE_HOST_SPAWN_DEBUG=1 抓 routeFile 路由日志 +
+  排查 claude CLI sandbox 层（注意与登录/账号类问题一样属独立事务）。
 
 ## 下一步（按数量缺口排序）
 

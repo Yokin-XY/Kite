@@ -620,6 +620,27 @@ function routeFile(file, args, options) {
       options: nativeTool.options,
     };
   }
+  /*
+   * 车道判定：调用方 cwd 是宿主物理路径（宿主车道 Agent 的工作区）时，
+   * 子进程保持宿主上下文直跑（bash 等以 rootfs 物理 PATH 查找，C 兼容层
+   * execve 白名单翻译兜底）；cwd 是容器视图路径时维持 proot 车道。
+   * 否则 Claude Code 这类宿主 Agent 的 Bash 工具会在 proot 里访问宿主
+   * 数据目录路径，全部 ENOENT（实测 /init 工具调用全失败）。
+   */
+  const requestedCwd = options && typeof options.cwd === 'string' ? options.cwd : undefined;
+  if (isHostPhysicalPath(requestedCwd)) {
+    const directOptions = hostOptions(options);
+    const rootfsBin = hostRootfs ? `${hostRootfs}/usr/bin:${hostRootfs}/bin:${hostRootfs}/usr/sbin:` : '';
+    directOptions.env = {
+      ...directOptions.env,
+      PATH: `${rootfsBin}${directOptions.env.PATH || process.env.PATH || ''}`,
+    };
+    return {
+      file: mapContainerPathToHost(file),
+      args: normalizedArgs.map((value) => mapOptionPath(value, mapContainerPathToHost)),
+      options: directOptions,
+    };
+  }
   const prefix = prootPrefix(options && options.cwd);
   return {
     file: prefix[0],
@@ -630,6 +651,16 @@ function routeFile(file, args, options) {
     ],
     options: prootOptions(options),
   };
+}
+
+/** 宿主物理路径判定：Android 数据/存储路径或已知的宿主工作区/控制/rootfs 前缀。 */
+function isHostPhysicalPath(value) {
+  if (typeof value !== 'string' || !value.startsWith('/')) return false;
+  if (value.startsWith('/data/') || value.startsWith('/storage/')) return true;
+  const normalized = normalizedPath(value);
+  return [hostWorkspace, hostControl, hostRootfs].some(
+    (root) => root && isInside(normalized, root),
+  );
 }
 
 function shellRoute(command, options) {
