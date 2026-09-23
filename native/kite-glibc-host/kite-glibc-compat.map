@@ -34,6 +34,12 @@ GLIBC_2.17 {
     truncate;
     syscall;
     pthread_mutexattr_setrobust;
+    execve;
+    execv;
+    execvp;
+    execvpe;
+    posix_spawn;
+    posix_spawnp;
 
   local:
     *;

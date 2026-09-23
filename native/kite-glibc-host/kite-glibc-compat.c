@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <spawn.h>
 #include <unistd.h>
 
 /*
@@ -37,6 +38,39 @@
 static char kite_guest_tmp[KITE_PATH_BUFFER];
 static size_t kite_guest_tmp_len;
 
+/* 宿主物理 rootfs 前缀（KITE_NODE_HOST_ROOTFS）。容器视图的绝对路径只有
+ * 落在该前缀下才能在宿主上访问；未注入时关闭整条 rootfs 翻译。 */
+static char kite_rootfs[KITE_PATH_BUFFER];
+static size_t kite_rootfs_len;
+
+/*
+ * 顶层目录白名单：只有这些容器视图顶层才会翻译到 rootfs 物理。Android 真实
+ * 存在且必须保持宿主语义的路径（/system /data /dev /proc /sys /vendor /
+ * /storage /odm /product 等）一律不翻；/tmp 走独立的 GUEST_TMP 规则。
+ */
+static int kite_rootfs_member(const char *path) {
+    static const char *const members[] = {
+        "bin",  "usr",  "sbin", "etc",  "lib",   "lib64",
+        "lib32","opt",  "var",  "home", "root",  "media",
+        "mnt",  "run",  "srv",  "games", NULL,
+    };
+    if (path[0] != '/') {
+        return 0;
+    }
+    const char *name = path + 1;
+    for (int index = 0; members[index] != NULL; index += 1) {
+        const char *member = members[index];
+        size_t length = strlen(member);
+        if (strncmp(name, member, length) != 0) {
+            continue;
+        }
+        if (name[length] == '\0' || name[length] == '/') {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 typedef long (*kite_syscall_fn)(long number, ...);
 typedef int (*kite_pthread_mutexattr_setrobust_fn)(pthread_mutexattr_t *attribute, int robustness);
 
@@ -50,23 +84,42 @@ static void kite_resolve_symbols(void) {
         (kite_pthread_mutexattr_setrobust_fn) dlsym(RTLD_NEXT, "pthread_mutexattr_setrobust");
 
     const char *guest_tmp = getenv("KITE_GLIBC_HOST_GUEST_TMP");
-    if (guest_tmp == NULL || guest_tmp[0] != '/' || guest_tmp[1] == '\0') {
-        return;
+    if (guest_tmp != NULL && guest_tmp[0] == '/' && guest_tmp[1] != '\0') {
+        size_t length = strlen(guest_tmp);
+        while (length > 1 && guest_tmp[length - 1] == '/') {
+            length -= 1;
+        }
+        if (length > 0 && length + 1 <= sizeof(kite_guest_tmp)) {
+            memcpy(kite_guest_tmp, guest_tmp, length);
+            kite_guest_tmp[length] = '\0';
+            kite_guest_tmp_len = length;
+        }
     }
-    size_t length = strlen(guest_tmp);
-    while (length > 1 && guest_tmp[length - 1] == '/') {
-        length -= 1;
+
+    const char *rootfs = getenv("KITE_NODE_HOST_ROOTFS");
+    if (rootfs != NULL && rootfs[0] == '/' && rootfs[1] != '\0') {
+        size_t length = strlen(rootfs);
+        while (length > 1 && rootfs[length - 1] == '/') {
+            length -= 1;
+        }
+        if (length > 0 && length + 1 <= sizeof(kite_rootfs)) {
+            memcpy(kite_rootfs, rootfs, length);
+            kite_rootfs[length] = '\0';
+            kite_rootfs_len = length;
+        }
     }
-    if (length == 0 || length + 1 > sizeof(kite_guest_tmp)) {
-        return;
-    }
-    memcpy(kite_guest_tmp, guest_tmp, length);
-    kite_guest_tmp[length] = '\0';
-    kite_guest_tmp_len = length;
 }
 
+static const char *kite_map_rootfs_path(const char *path, char *buffer);
+
 static const char *kite_map_path(const char *path, char *buffer) {
-    if (kite_guest_tmp_len == 0 || path == NULL || path[0] != '/') {
+    if (path == NULL || path[0] != '/') {
+        return path;
+    }
+    if (kite_rootfs_len != 0 && kite_rootfs_member(path)) {
+        return kite_map_rootfs_path(path, buffer);
+    }
+    if (kite_guest_tmp_len == 0) {
         return path;
     }
     const char *rest;
@@ -99,6 +152,22 @@ static const char *kite_map_path(const char *path, char *buffer) {
         offset += rest_length;
     }
     buffer[offset] = '\0';
+    return buffer;
+}
+
+/* rootfs 白名单翻译：容器视图绝对路径（/usr/bin/bash 等）→ 宿主物理
+ * rootfs 下的同路径。仅当 KITE_NODE_HOST_ROOTFS 已注入且顶层命中白名单。 */
+static const char *kite_map_rootfs_path(const char *path, char *buffer) {
+    if (kite_rootfs_len == 0) {
+        return path;
+    }
+    size_t path_length = strlen(path);
+    size_t needed = kite_rootfs_len + path_length + 1;
+    if (needed > KITE_PATH_BUFFER) {
+        return path;
+    }
+    memcpy(buffer, kite_rootfs, kite_rootfs_len);
+    memcpy(buffer + kite_rootfs_len, path, path_length + 1);
     return buffer;
 }
 
@@ -597,4 +666,72 @@ static int kite_set_mutex_robustness(
 
 int pthread_mutexattr_setrobust(pthread_mutexattr_t *attribute, int robustness) {
     return kite_set_mutex_robustness(attribute, robustness, real_pthread_mutexattr_setrobust);
+}
+
+
+/*
+ * execve 族路径重写。
+ *
+ * 背景：libuv（node 的 child_process）和被管 Agent 自己派生的子进程
+ * （Claude Code 的 Bash 工具等）都以容器视图路径 exec（/bin/sh、PATH
+ * 查找拼出的 rootfs/usr/bin/...）。宿主上这些文件只存在于物理 rootfs
+ * 下，exec 前必须重写；否则全部 ENOENT（实测 Claude 工具调用全失败）。
+ *
+ * 覆盖面：execve/execv/execvp/execvpe（libuv 的 uv_spawn 走 execvp 或
+ * execve）与 posix_spawn/posix_spawnp（glibc 新路径）。PATH 查找由调用
+ * 方逐候选 execvp 完成，每个候选路径在这里重写后自然命中物理文件。
+ */
+typedef int (*kite_execve_fn)(const char *, char *const [], char *const []);
+typedef int (*kite_execvp_fn)(const char *, char *const []);
+typedef int (*kite_posix_spawn_fn)(pid_t *, const char *,
+                                   const posix_spawn_file_actions_t *,
+                                   const posix_spawnattr_t *,
+                                   char *const [], char *const []);
+typedef int (*kite_posix_spawnp_fn)(pid_t *, const char *,
+                                    const posix_spawn_file_actions_t *,
+                                    const posix_spawnattr_t *,
+                                    char *const [], char *const []);
+
+int execve(const char *path, char *const argv[], char *const envp[]) {
+    char buffer[KITE_PATH_BUFFER];
+    KITE_RESOLVE("execve", kite_execve_fn, kite_real_execve)
+    return kite_real_execve(kite_map_path(path, buffer), argv, envp);
+}
+
+int execv(const char *path, char *const argv[]) {
+    char buffer[KITE_PATH_BUFFER];
+    KITE_RESOLVE("execve", kite_execve_fn, kite_real_execve)
+    return kite_real_execve(kite_map_path(path, buffer), argv, environ);
+}
+
+int execvp(const char *file, char *const argv[]) {
+    char buffer[KITE_PATH_BUFFER];
+    KITE_RESOLVE("execvp", kite_execvp_fn, kite_real_execvp)
+    return kite_real_execvp(kite_map_path(file, buffer), argv);
+}
+
+int execvpe(const char *file, char *const argv[], char *const envp[]) {
+    char buffer[KITE_PATH_BUFFER];
+    KITE_RESOLVE("execvpe", kite_execve_fn, kite_real_execvpe)
+    return kite_real_execvpe(kite_map_path(file, buffer), argv, envp);
+}
+
+int posix_spawn(pid_t *pid, const char *path,
+                const posix_spawn_file_actions_t *actions,
+                const posix_spawnattr_t *attributes,
+                char *const argv[], char *const envp[]) {
+    char buffer[KITE_PATH_BUFFER];
+    KITE_RESOLVE("posix_spawn", kite_posix_spawn_fn, kite_real_posix_spawn)
+    return kite_real_posix_spawn(
+        pid, kite_map_path(path, buffer), actions, attributes, argv, envp);
+}
+
+int posix_spawnp(pid_t *pid, const char *file,
+                 const posix_spawn_file_actions_t *actions,
+                 const posix_spawnattr_t *attributes,
+                 char *const argv[], char *const envp[]) {
+    char buffer[KITE_PATH_BUFFER];
+    KITE_RESOLVE("posix_spawnp", kite_posix_spawnp_fn, kite_real_posix_spawnp)
+    return kite_real_posix_spawnp(
+        pid, kite_map_path(file, buffer), actions, attributes, argv, envp);
 }

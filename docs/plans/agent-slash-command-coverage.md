@@ -67,6 +67,28 @@
 | Claude | /（弹层数量） | 22 条全集 ✓（协议迟到前兜底） |
 | Hermes | /（弹层数量） | 协议 9 条直达 ✓ |
 
+## Claude Bash 工具执行环境（独立问题，2026-09-24 定性）
+
+现象：Claude /init 透传执行正常，但模型的所有 Bash/Read 工具调用失败
+（ls/读 README 全 ENOENT，工作目录显示为宿主数据目录路径）。
+
+排查结论（证据链）：
+1. 宿主车道 node 的 child_process 被 kite-node-host-runtime.cjs 全量拦截
+   （spawn/spawnSync/execFile/exec）：node 命令→宿主启动器；bash 等外部
+   命令→prootPrefix 路由进 proot 车道执行
+2. 因此 Claude 的 Bash 工具实际跑在 proot 里；它看到的 /data/user/0/...
+   宿主数据目录路径在 proot 视图 = /storage/emulate/... 映射，访问语义
+   不成立 → 全部失败
+3. 附带加固：C 兼容层（kite-glibc-compat.c）新增 execve/execv/execvp/
+   execvpe/posix_spawn/posix_spawnp 钩子 + KITE_NODE_HOST_ROOTFS 白名单
+   前缀翻译（/bin /usr /etc /lib /opt /var /home /root 等；/system /data
+   等Android 真实顶层不翻），env 未注入时零行为。WSL Ubuntu-24.04 用
+   build-kite-node-glibc-compat.ps1 构建。
+
+修复方向（独立任务）：Claude/外部 Agent 的工具执行车道策略——bash 类
+工具应在 proot 内以容器路径（/workspace）执行，宿主路径参数需经
+sessionPathMapper 双向翻译；或为宿主车道提供受控白名单的直执行通道。
+
 ## 下一步（按数量缺口排序）
 
 1. **Codex 63→N**：逐条映射 app-server op（最大件）
