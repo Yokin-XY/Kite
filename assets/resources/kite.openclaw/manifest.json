@@ -72,7 +72,7 @@
     "package": "openclaw",
     "command": "npm install -g openclaw@latest",
     "uninstallCommand": "npm uninstall -g openclaw",
-    "latestVersion": "2026.9.5"
+    "latestVersion": "2026.9.6"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.openclaw",

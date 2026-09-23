@@ -77,7 +77,7 @@
     "package": "reasonix",
     "command": "npm install -g reasonix@latest",
     "uninstallCommand": "npm uninstall -g reasonix",
-    "latestVersion": "1.38.11"
+    "latestVersion": "1.38.12"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.reasonix",
