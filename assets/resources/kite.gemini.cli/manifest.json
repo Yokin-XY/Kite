@@ -81,7 +81,7 @@
     "package": "@google/gemini-cli",
     "command": "npm install -g @google/gemini-cli@latest",
     "uninstallCommand": "npm uninstall -g @google/gemini-cli",
-    "latestVersion": "0.60.0"
+    "latestVersion": "0.61.0"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.gemini.cli",
