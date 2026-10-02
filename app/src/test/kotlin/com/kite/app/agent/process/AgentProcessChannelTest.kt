@@ -254,7 +254,6 @@ class AgentProcessChannelTest {
             "PATH=/usr/bin\u0000$PROCESS_OWNER_ENV=$ownerId\u0000".toByteArray(),
         )
     }
-}
 
     @Test
     fun `filterDeniedEnvironment matches exact names and glob patterns`() {
@@ -283,4 +282,5 @@ class AgentProcessChannelTest {
         // 空 denylist 零行为。
         assertTrue(filterDeniedEnvironment(source, emptySet()).isEmpty())
     }
+}
 

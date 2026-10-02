@@ -252,24 +252,24 @@ class RunOrchestratorTest {
     }
 
     @Test
-    fun `等待步骤只靠运行事实即可由新编排器继续`() {
+    fun `确认步骤只靠运行事实即可由新编排器继续`() {
         val gateway = FakeRunStateGateway()
         val firstExecutor = FakeRecipeExecutor()
-        val recipe = recipe("resume", KiteRecipe.STEP_TERMINAL, KiteRecipe.STEP_SHELL)
+        val recipe = recipe("resume", KiteRecipe.STEP_SHELL, KiteRecipe.STEP_TERMINAL)
         val first = RunOrchestrator(gateway, firstExecutor)
         first.start(RunStartRequest(recipe, "resume-instance"))
         val request = firstExecutor.executeRequests.single()
+        // 组合驱动语义：非链尾 AwaitingUser 自动推进，用户确认入口是报告就绪的中段步骤
         firstExecutor.emit(
-            RecipeExecutionEvent.AwaitingUser(
+            RecipeExecutionEvent.Progress(
                 instanceId = request.instanceId,
                 generation = request.generation,
                 stepIndex = request.stepIndex,
                 mutation = RunStateMutation(
-                    status = CardRunStatus.WaitingTerminal,
-                    surface = CardRunSurface.Terminal,
+                    status = CardRunStatus.Running,
+                    surface = CardRunSurface.Report,
                     currentStepIndex = request.stepIndex,
-                    terminalSessionId = "terminal-1",
-                    lastMeaningfulOutput = "等待终端完成"
+                    shellReportText = "报告内容"
                 )
             )
         )
@@ -278,13 +278,13 @@ class RunOrchestratorTest {
         val resumed = RunOrchestrator(gateway, resumedExecutor)
         val result = resumed.completeStep(
             RunStepActionPolicy.completionCommand(recipe, gateway.state("resume-instance")!!)!!
-                .copy(output = "终端已完成")
+                .copy(output = "报告已确认")
         )
 
         assertEquals(RunCommandResult.Accepted("resume-instance"), result)
-        assertEquals(listOf(KiteRecipe.STEP_SHELL), resumedExecutor.executeRequests.map { it.step.type })
+        assertEquals(listOf(KiteRecipe.STEP_TERMINAL), resumedExecutor.executeRequests.map { it.step.type })
         assertEquals(CardRunStatus.Completed, gateway.state("resume-instance")?.status)
-        assertEquals(null, gateway.state("resume-instance")?.terminalSessionId)
+        assertEquals(2, gateway.state("resume-instance")?.currentStepIndex)
 
         firstExecutor.emit(
             RecipeExecutionEvent.Completed(
@@ -294,47 +294,47 @@ class RunOrchestratorTest {
                 mutation = RunStateMutation(
                     status = CardRunStatus.Running,
                     currentStepIndex = request.stepIndex,
-                    terminalSessionId = "terminal-1",
-                    lastMeaningfulOutput = "迟到的终端完成"
+                    lastMeaningfulOutput = "迟到的旧步骤结果"
                 )
             )
         )
         assertEquals(CardRunStatus.Completed, gateway.state("resume-instance")?.status)
-        assertEquals(null, gateway.state("resume-instance")?.terminalSessionId)
+        assertEquals(2, gateway.state("resume-instance")?.currentStepIndex)
     }
 
     @Test
-    fun `完成等待步骤时先撤销旧执行回调再分派下一步`() {
+    fun `完成确认步骤时先撤销旧执行回调再分派下一步`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor(emitExecutionWhileCompleting = true)
         val orchestrator = RunOrchestrator(gateway, executor)
-        val recipe = recipe("completion-race", KiteRecipe.STEP_TERMINAL, KiteRecipe.STEP_SHELL)
+        val recipe = recipe("completion-race", KiteRecipe.STEP_SHELL, KiteRecipe.STEP_TERMINAL)
         orchestrator.start(RunStartRequest(recipe, "completion-race-instance"))
-        val terminalRequest = executor.executeRequests.single()
+        val shellRequest = executor.executeRequests.single()
         executor.emit(
-            RecipeExecutionEvent.AwaitingUser(
-                instanceId = terminalRequest.instanceId,
-                generation = terminalRequest.generation,
-                stepIndex = terminalRequest.stepIndex,
+            RecipeExecutionEvent.Progress(
+                instanceId = shellRequest.instanceId,
+                generation = shellRequest.generation,
+                stepIndex = shellRequest.stepIndex,
                 mutation = RunStateMutation(
-                    status = CardRunStatus.WaitingTerminal,
-                    surface = CardRunSurface.Terminal,
-                    currentStepIndex = 0,
-                    runId = "terminal-race",
-                    terminalSessionId = "terminal-race"
+                    status = CardRunStatus.Running,
+                    surface = CardRunSurface.Report,
+                    currentStepIndex = shellRequest.stepIndex,
+                    runId = "shell-race",
+                    shellReportText = "报告内容"
                 )
             )
         )
 
         orchestrator.completeStep(
             RunStepActionPolicy.completionCommand(recipe, gateway.state("completion-race-instance")!!)!!
-                .copy(output = "终端完成")
+                .copy(output = "报告已确认")
         )
 
         assertEquals(2, executor.executeRequests.size)
         assertEquals(1, executor.executeRequests.last().stepIndex)
+        // 迟到的旧步骤执行回调不得写入运行事实
         assertEquals(null, gateway.state("completion-race-instance")?.terminalSessionId)
-        assertEquals(null, gateway.state("completion-race-instance")?.runId)
+        assertEquals("正在创建终端", gateway.state("completion-race-instance")?.lastMeaningfulOutput)
     }
 
     @Test
@@ -775,19 +775,19 @@ class RunOrchestratorTest {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
         val orchestrator = RunOrchestrator(gateway, executor)
-        val recipe = recipe("exact-step", KiteRecipe.STEP_TERMINAL, KiteRecipe.STEP_SHELL)
+        val recipe = recipe("exact-step", KiteRecipe.STEP_SHELL, KiteRecipe.STEP_TERMINAL)
         orchestrator.start(RunStartRequest(recipe, "exact-step-instance"))
         val request = executor.executeRequests.single()
         executor.emit(
-            RecipeExecutionEvent.AwaitingUser(
+            RecipeExecutionEvent.Progress(
                 instanceId = request.instanceId,
                 generation = request.generation,
                 stepIndex = request.stepIndex,
                 mutation = RunStateMutation(
-                    status = CardRunStatus.WaitingTerminal,
-                    surface = CardRunSurface.Terminal,
-                    currentStepIndex = 0,
-                    terminalSessionId = "terminal-exact"
+                    status = CardRunStatus.Running,
+                    surface = CardRunSurface.Report,
+                    currentStepIndex = request.stepIndex,
+                    shellReportText = "报告内容"
                 )
             )
         )
@@ -805,15 +805,16 @@ class RunOrchestratorTest {
             RunCommandResult.Ignored("step_id_mismatch"),
             orchestrator.completeStep(exact.copy(expectedStepId = "other-step"))
         )
-        assertEquals(CardRunStatus.WaitingTerminal, gateway.state(request.instanceId)?.status)
+        assertEquals(CardRunStatus.Running, gateway.state(request.instanceId)?.status)
+        assertEquals(0, gateway.state(request.instanceId)?.currentStepIndex)
 
         assertEquals(
             RunCommandResult.Accepted(request.instanceId),
-            orchestrator.completeStep(exact.copy(output = "当前步骤完成"))
+            orchestrator.completeStep(exact.copy(output = "报告已确认"))
         )
         assertEquals(CardRunStatus.Running, gateway.state(request.instanceId)?.status)
         assertEquals(1, gateway.state(request.instanceId)?.currentStepIndex)
-        assertEquals(KiteRecipe.STEP_SHELL, executor.executeRequests.last().step.type)
+        assertEquals(KiteRecipe.STEP_TERMINAL, executor.executeRequests.last().step.type)
     }
 
     private fun recipe(id: String, vararg types: String): KiteRecipe = KiteRecipe(

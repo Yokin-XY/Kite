@@ -301,7 +301,7 @@ class AgentProviderCatalogApiTest {
     }
 
     @Test
-    fun `同一用户Provider换模型会按所选模型更新原生激活值`() = runTest {
+    fun `同一用户Provider换模型交由会话热切换不重写原生配置`() = runTest {
         api.saveUserProvider(
             target,
             AgentProviderDraft(
@@ -329,10 +329,11 @@ class AgentProviderCatalogApiTest {
             AgentDraftModelSelection("custom", "model-a", usesAgentDefault = false),
         )
 
-        assertEquals(2, adapter.applyCalls)
-        assertEquals(AgentPersistentConfigChange.SelectProvider("custom", "model-a"), adapter.lastChange)
+        // CC Switch 分界线：同供应商仅切模型交给会话级热切换（专用 RPC / ACP set_model），
+        // 不重写 live 配置、不重连；选择仍随 thread/start|resume 的 override 生效。
+        assertEquals(1, adapter.applyCalls)
         assertEquals("custom", adapter.activeProviderId)
-        assertEquals("model-a", adapter.defaultModel)
+        assertEquals("model-b", adapter.defaultModel)
     }
 
     @Test
