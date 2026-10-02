@@ -530,7 +530,7 @@ class StoreBackedAgentProviderCatalogApi(
         }
         val existing = before.providers.firstOrNull { it.id == selected.id }
         // 供应商就绪判定只看连接事实（baseUrl + 凭据状态）。模型清单属于目录事实：
-        // Codex 等工具的供应商段本不含模型清单（模型是顶层单字段），比较清单必然
+        // 部分工具的供应商段本不含模型清单（模型是顶层单字段），比较清单必然
         // 失配并把同供应商切模型升级成重写配置+重连（CC Switch 分工：供应商级变化
         // 才重写配置，模型切换走 Agent 内部通道）。模型清单变化不触发重连。
         val samePublicConfiguration = existing?.let { native ->
@@ -545,7 +545,7 @@ class StoreBackedAgentProviderCatalogApi(
         android.util.Log.d("KiteProviderFlow", "prepare: pendingNativeWrite=$pendingNativeWrite sameConfig=$samePublicConfiguration existing=${existing?.id}")
         if (!pendingNativeWrite && samePublicConfiguration) {
             if (before.activeProviderId == selected.id) {
-                // 同供应商仅切模型：交给会话级热切换（Codex thread/settings/update、
+                // 同供应商仅切模型：交给会话级热切换（专用 RPC 或
                 // ACP set_model 等），不重写 live 配置、不重连——CC Switch 的分界线：
                 // 供应商级变化才需要重启进程，模型变化是 Agent 原生运行时能力。
                 // 会话未连接时该选择仍会随 thread/start|resume 的 override 生效。
