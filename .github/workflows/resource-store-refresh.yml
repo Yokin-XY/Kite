@@ -15,6 +15,10 @@ permissions:
 
 jobs:
   refresh:
+    # 仓库门禁：商店刷新只在正式仓跑。镜像仓（Kite-Private 等）携带同一份
+    # workflow 但没有签名 Secrets，且会与正式仓竞争同一 store 仓库的 revision，
+    # 因此镜像仓上直接跳过（定时触发会显示 skipped，不再报失败）。
+    if: github.repository == 'Yokin-XY/Kite'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Kite
