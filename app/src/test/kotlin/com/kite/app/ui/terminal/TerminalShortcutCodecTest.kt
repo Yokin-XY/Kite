@@ -37,6 +37,46 @@ class TerminalShortcutCodecTest {
     }
 
     @Test
+    fun encodesShiftDigitsAsSymbols() {
+        val shiftedDigits = listOf(
+            TerminalShortcutKey.ZERO to ")",
+            TerminalShortcutKey.ONE to "!",
+            TerminalShortcutKey.TWO to "@",
+            TerminalShortcutKey.THREE to "#",
+            TerminalShortcutKey.FOUR to "$",
+            TerminalShortcutKey.FIVE to "%",
+            TerminalShortcutKey.SIX to "^",
+            TerminalShortcutKey.SEVEN to "&",
+            TerminalShortcutKey.EIGHT to "*",
+            TerminalShortcutKey.NINE to "(",
+        )
+
+        for ((key, expected) in shiftedDigits) {
+            assertEquals(key.label, expected, TerminalShortcutCodec.encode(shortcut(TerminalShortcutModifier.SHIFT, key)))
+        }
+    }
+
+    @Test
+    fun encodesAltShiftDigitByPrefixingEscapeToSymbol() {
+        val definition = shortcut(
+            setOf(TerminalShortcutModifier.ALT, TerminalShortcutModifier.SHIFT),
+            TerminalShortcutKey.TWO,
+        )
+
+        assertEquals("\u001b@", TerminalShortcutCodec.encode(definition))
+    }
+
+    @Test
+    fun keepsCtrlDigitEncodingWhenShiftIsPresent() {
+        val definition = shortcut(
+            setOf(TerminalShortcutModifier.CTRL, TerminalShortcutModifier.SHIFT),
+            TerminalShortcutKey.TWO,
+        )
+
+        assertEquals("\u0000", TerminalShortcutCodec.encode(definition))
+    }
+
+    @Test
     fun encodesShiftTabAsBacktabSequence() {
         assertEquals("\u001b[Z", TerminalShortcutCodec.encode(shortcut(TerminalShortcutModifier.SHIFT, TerminalShortcutKey.TAB)))
     }
